@@ -2,12 +2,48 @@ name: Build mihomo
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * *'
 
 permissions:
   contents: write
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      update: ${{ steps.check.outputs.update }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check latest mihomo version
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const release = await github.rest.repos.getLatestRelease({
+              owner: 'MetaCubeX',
+              repo: 'mihomo',
+            });
+            const latest = release.data.tag_name.replace(/^v/, '');
+            const makefile = fs.readFileSync('mihomo/Makefile', 'utf8');
+            const match = makefile.match(/^PKG_VERSION:=([^\n]+)$/m);
+            if (!match) {
+              core.setFailed('Could not find PKG_VERSION in mihomo/Makefile');
+              return;
+            }
+            const current = match[1].trim();
+            core.info(`Current package version: ${current}`);
+            core.info(`Latest mihomo release: ${latest}`);
+            core.setOutput('version', latest);
+            core.setOutput('update', latest !== current ? 'true' : 'false');
+
   build:
+    needs: check-version
+    if: needs.check-version.outputs.update == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -28,7 +64,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Resolve latest mihomo version
+      - name: Resolve mihomo version
         id: mihomo-version
         uses: actions/github-script@v8
         with:
@@ -37,7 +73,6 @@ jobs:
               owner: 'MetaCubeX',
               repo: 'mihomo',
             });
-
             core.setOutput('version', release.data.tag_name.replace(/^v/, ''));
 
       - name: Patch package version for CI build
@@ -67,7 +102,8 @@ jobs:
 
   publish-latest-release:
     runs-on: ubuntu-latest
-    needs: [ build ]
+    needs: [build, check-version]
+    if: needs.check-version.outputs.update == 'true' || github.event_name == 'workflow_dispatch'
     env:
       GH_REPO: ${{ github.repository }}
     steps:
@@ -83,7 +119,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const releases = await github.paginate(github.rest.repos.listReleases, {
+            const releases = await github.paginate(github.rest.releases.listReleases, {
               owner,
               repo,
               per_page: 100,
