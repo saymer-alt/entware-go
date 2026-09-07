@@ -5,19 +5,20 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sing-box
-PKG_VERSION:=1.12.22
-PKG_RELEASE:=1
+PKG_VERSION:=1.13.3
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 PKG_SOURCE_URL:=https://github.com/SagerNet/sing-box
-PKG_MIRROR_HASH:=745c47bf121f80b3ec35cb00ba8b3b43d7d9bd60a2715d9a503035a49f5d4d57
+PKG_MIRROR_HASH:=6720ade8cf657d615ba08ebc43c2381f4e4c33f3f5e6da1c1660c94a108243f3
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=Entware team, https://entware.net
 
 PKG_BUILD_PARALLEL:=1
+PKG_CGO_ENABLED:=1
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/golang.mk
@@ -29,6 +30,7 @@ define Package/sing-box/Default
   TITLE:=The universal proxy platform
   URL:=https://sing-box.sagernet.org
   PROVIDES:=sing-box sing-box-go
+  DEPENDS:=+libatomic +libc +libgcc +libpthread +librt
 endef
 
 define Package/sing-box-go
@@ -40,7 +42,7 @@ endef
 define Package/sing-box-go_nohf
   $(call Package/sing-box/Default)
   VARIANT:=nohf
-  DEPENDS:=@arm
+  DEPENDS+=@arm
 endef
 
 define Package/sing-box-go/description
@@ -59,23 +61,33 @@ Package/sing-box-go_nohf/conffiles=$(Package/sing-box-go/conffiles)
 XIMPORTPATH:=$(call tolower,$(XIMPORTPATH))
 
 GO_LDFLAGS += \
-	-X '$(XIMPORTPATH)/constant.Version=$(PKG_VERSION)'
+	-X '$(XIMPORTPATH)/constant.Version=$(PKG_VERSION)' \
+	-X 'internal/godebug.defaultGODEBUG=multipathtcp=0' \
+	-checklinkname=0
 
 GO_TARGET:=./cmd/sing-box
 
+ifeq ($(or $(CONFIG_aarch64),$(CONFIG_x86_64)),y)
+  GO_TAGS_EXT:=,with_naive_outbound,with_purego
+endif
+
 GO_TAGS:= \
+	badlinkname, \
+	tfogo_checklinkname0, \
 	with_acme, \
+	with_ccm, \
 	with_clash_api, \
 	with_dhcp, \
 	with_embedded_tor, \
 	with_grpc, \
 	with_gvisor, \
-	with_naive_outbound, \
+	with_ocm, \
 	with_quic, \
 	with_tailscale, \
 	with_utls, \
 	with_v2ray_api, \
-	with_wireguard
+	with_wireguard \
+	$(GO_TAGS_EXT)
 
 define Package/sing-box-go/install
 	$(INSTALL_DIR) $(1)/opt/bin

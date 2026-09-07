@@ -11,7 +11,7 @@ PKG_RELEASE:=1
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 PKG_SOURCE_URL:=https://github.com/henrygd/beszel
-PKG_MIRROR_HASH:=skip
+PKG_MIRROR_HASH:=64b66bf9c5466befdc7ac1e55cbc8a3934d84f2a344f19ef2432c49bb1b9eaa7
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -22,8 +22,8 @@ include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/golang.mk
 
 define Package/beszel-agent
-  SECTION:=admin
-  CATEGORY:=Administration
+  SECTION:=net
+  CATEGORY:=Network
   TITLE:=Beszel monitoring agent
   URL:=https://github.com/henrygd/beszel
   DEPENDS:=+ca-certificates
