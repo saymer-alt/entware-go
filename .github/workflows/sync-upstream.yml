@@ -1,0 +1,111 @@
+name: Sync upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream and check for new commits
+        id: check
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Entware/entware-go.git
+          git fetch upstream master
+          COUNT=$(git rev-list --count HEAD..upstream/master)
+          UPSTREAM_SHA=$(git rev-parse upstream/master)
+          echo "New upstream commits: ${COUNT} (upstream/master ${UPSTREAM_SHA})"
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Upstream unchanged - green exit
+        if: steps.check.outputs.count == '0'
+        run: |
+          echo "gh-action-build already contains upstream/master ($UPSTREAM_SHA). Nothing to do."
+
+      - name: Attempt clean merge
+        if: steps.check.outputs.count != '0'
+        id: merge
+        continue-on-error: true
+        run: git merge --no-commit --no-ff upstream/master
+
+      - name: Clean merge - commit and push
+        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'success'
+        env:
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
+        run: |
+          git commit -m "Sync upstream Entware/entware-go master ${UPSTREAM_SHA}" \
+            -m "Regular merge commit: no force push, no history rewrite, no conflict auto-resolution."
+          git push origin HEAD:gh-action-build
+
+      - name: Conflicts - create diagnostic branch (never auto-resolve)
+        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
+        env:
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
+        run: |
+          BRANCH="sync-upstream/conflict-${{ github.run_id }}"
+          git merge --abort || true
+          git checkout -b "$BRANCH"
+          git merge --no-commit --no-ff upstream/master || true
+          git diff --name-only --diff-filter=U > conflicted-files.txt
+          if [ ! -s conflicted-files.txt ]; then
+            echo "::error::Merge reported failure but no unmerged files were listed; refusing to publish anything."
+            exit 1
+          fi
+          echo "Conflicted files:"
+          cat conflicted-files.txt
+          git add -A
+          git commit -m "Sync upstream Entware/entware-go master ${UPSTREAM_SHA}: conflicts require manual resolution" \
+            -m "Merge committed with conflict markers for review only. Resolve the conflicts, then merge the result into gh-action-build. The target branch is never touched by this automation."
+          git push origin "HEAD:$BRANCH"
+          {
+            echo "### Upstream sync: conflicts detected"
+            echo ""
+            echo "Upstream: Entware/entware-go@${UPSTREAM_SHA}"
+            echo "Target branch: gh-action-build (untouched)"
+            echo ""
+            echo "Conflicted files (merge with conflict markers committed on ${BRANCH}):"
+            echo ""
+            sed 's/^/- /' conflicted-files.txt
+            echo ""
+            echo "Resolve the conflicts in this branch, then merge the result into gh-action-build."
+            echo "This run failed by design: conflicts are never resolved automatically (no ours/theirs), no force push is used."
+            echo "Stale sync-upstream/conflict-* branches can be deleted after manual resolution."
+          } > pr-body.md
+
+      - name: Conflicts - open pull request
+        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="sync-upstream/conflict-${{ github.run_id }}"
+          if gh pr view "$BRANCH" --json state >/dev/null 2>&1; then
+            echo "PR for $BRANCH already exists, not creating a duplicate."
+          else
+            gh pr create --base gh-action-build --head "$BRANCH" \
+              --title "Sync upstream: conflicts need manual resolution" \
+              --body-file pr-body.md
+          fi
+
+      - name: Conflicts - fail run with diagnostics
+        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
+        run: |
+          echo "::error::Upstream merge has conflicts. A PR from sync-upstream/conflict-* was created for manual resolution. gh-action-build was not modified."
+          exit 1
