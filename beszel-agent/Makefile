@@ -21,6 +21,16 @@ PKG_BUILD_PARALLEL:=1
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/golang.mk
 
+define Build/Install
+	$(call GoPackage/Install)
+	mkdir -p $(STAGING_DIR_HOST)/bin
+	wget -q -O /tmp/upx.tar.xz https://github.com/upx/upx/releases/download/v5.1.1/upx-5.1.1-amd64_linux.tar.xz
+	tar -xJf /tmp/upx.tar.xz -C /tmp
+	cp /tmp/upx-5.1.1-amd64_linux/upx $(STAGING_DIR_HOST)/bin/upx
+	chmod +x $(STAGING_DIR_HOST)/bin/upx
+	$(STAGING_DIR_HOST)/bin/upx -9 --lzma $(PKG_INSTALL_DIR)/bin/beszel-agent
+endef
+
 define Package/beszel-agent
   SECTION:=net
   CATEGORY:=Network
