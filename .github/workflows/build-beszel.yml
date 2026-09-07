@@ -110,13 +110,25 @@ jobs:
           SDK_TAG: ${{ steps.sdk.outputs.tag }}
         run: |
           mkdir -p sdk-root
-          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/bin/go'
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/bin/go' || true
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/VERSION' || true
           go_bin="$(find sdk-root -type f -path '*staging_dir/host/go/bin/go' | head -n1)"
-          if [ -z "$go_bin" ]; then
-            echo "::error::Could not find staging_dir/host/go/bin/go inside the Entware SDK tarball"
+          version_file="$(find sdk-root -type f -path '*staging_dir/host/go/VERSION' | head -n1)"
+          if [ -n "$version_file" ]; then
+            sdk_go="$(sed -n -E '1s/^go([0-9][0-9.]*).*/\1/p' "$version_file")"
+            echo "SDK Go version read from the GOROOT VERSION file"
+          elif [ -n "$go_bin" ]; then
+            go_root="$(cd "$(dirname "$go_bin")/.." && pwd)"
+            sdk_go="$(GOTOOLCHAIN=local GOENV=off GOROOT="${go_root}" "${go_bin}" version | sed -E 's/^go version go([0-9.]+).*/\1/')"
+            echo "SDK Go version read from 'go version' with GOROOT=${go_root}"
+          else
+            echo "::error::Could not find staging_dir/host/go/{VERSION,bin/go} inside the Entware SDK tarball"
             exit 1
           fi
-          sdk_go="$(GOTOOLCHAIN=local GOENV=off "${go_bin}" version | sed -E 's/^go version go([0-9.]+).*/\1/')"
+          if [ -z "$sdk_go" ]; then
+            echo "::error::Could not determine the Go version shipped by the Entware SDK (${SDK_TAG})"
+            exit 1
+          fi
           echo "Entware SDK ${SDK_TAG} ships Go: ${sdk_go}"
           lowest="$(printf '%s\n' "${REQUIRED}" "${sdk_go}" | sort -V | head -n1)"
           if [ "${lowest}" = "${sdk_go}" ] && [ "${sdk_go}" != "${REQUIRED}" ]; then
