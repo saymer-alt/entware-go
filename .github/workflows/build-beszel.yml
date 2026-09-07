@@ -1,13 +1,133 @@
+# Builds beszel-agent .ipk packages for a fixed, explicitly requested version.
+# The default 0.18.7 is the newest beszel known to build with the Go version
+# shipped by the Entware SDK (ownik/gh-action-entware-sdk@v1, GOTOOLCHAIN=local).
+# The preflight job fetches go.mod of the requested tag and compares its Go
+# requirement against the Go actually shipped in the SDK tarball; on mismatch
+# it fails with diagnostics before any matrix build. Never upgrade Go inside
+# this workflow — build an older beszel version or wait for an Entware SDK
+# with a newer Go.
+
 name: Build beszel-agent
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Beszel version to build (tag v<version> of henrygd/beszel, e.g. 0.18.7)'
+        required: false
+        default: '0.18.7'
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve requested version
+        id: resolve
+        shell: bash
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          version="${RAW_VERSION#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
+            echo "::error::Invalid version '${RAW_VERSION}' (expected something like 0.18.7)"
+            exit 1
+          fi
+          echo "Requested beszel-agent version: ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check beszel tag exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          if ! gh api "repos/henrygd/beszel/git/ref/tags/v${VERSION}" > /dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} not found in henrygd/beszel — check the version input"
+            exit 1
+          fi
+
+      - name: Read Go requirement from beszel go.mod
+        id: gomod
+        shell: bash
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          gomod="$(curl -fsSL "https://raw.githubusercontent.com/henrygd/beszel/v${VERSION}/go.mod")" || {
+            echo "::error::Could not fetch go.mod at tag v${VERSION} of henrygd/beszel"
+            exit 1
+          }
+          required="$(printf '%s\n' "${gomod}" | sed -n -E 's/^go ([0-9][0-9.]*)$/\1/p' | head -n1)"
+          echo "Beszel v${VERSION} go.mod requires Go: ${required:-<none>}"
+          echo "required=${required}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Entware SDK release asset
+        if: steps.gomod.outputs.required != ''
+        id: sdk
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh api repos/ownik/entware-sdk/releases/latest --jq .tag_name)"
+          url="$(gh api repos/ownik/entware-sdk/releases/latest \
+            --jq '.assets[] | select((.name | contains("aarch64")) and (.name | endswith(".sha256") | not)) | .browser_download_url' \
+            | head -n1)"
+          if [ -z "$url" ]; then
+            echo "::error::No aarch64 SDK asset found in ownik/entware-sdk release ${tag}"
+            exit 1
+          fi
+          echo "Entware SDK release: ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Entware SDK tarball
+        if: steps.gomod.outputs.required != ''
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: sdk.tar.zst
+          key: entware-sdk-${{ steps.sdk.outputs.tag }}
+
+      - name: Download Entware SDK tarball
+        if: steps.gomod.outputs.required != '' && steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SDK_URL: ${{ steps.sdk.outputs.url }}
+        run: |
+          curl -fsSL "${SDK_URL}" -o sdk.tar.zst
+
+      - name: Compare SDK Go version with beszel requirement
+        if: steps.gomod.outputs.required != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+          REQUIRED: ${{ steps.gomod.outputs.required }}
+          SDK_TAG: ${{ steps.sdk.outputs.tag }}
+        run: |
+          mkdir -p sdk-root
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/bin/go'
+          go_bin="$(find sdk-root -type f -path '*staging_dir/host/go/bin/go' | head -n1)"
+          if [ -z "$go_bin" ]; then
+            echo "::error::Could not find staging_dir/host/go/bin/go inside the Entware SDK tarball"
+            exit 1
+          fi
+          sdk_go="$(GOTOOLCHAIN=local GOENV=off "${go_bin}" version | sed -E 's/^go version go([0-9.]+).*/\1/')"
+          echo "Entware SDK ${SDK_TAG} ships Go: ${sdk_go}"
+          lowest="$(printf '%s\n' "${REQUIRED}" "${sdk_go}" | sort -V | head -n1)"
+          if [ "${lowest}" = "${sdk_go}" ] && [ "${sdk_go}" != "${REQUIRED}" ]; then
+            echo "::error::Beszel v${VERSION} requires Go >= ${REQUIRED}, but the Entware SDK (${SDK_TAG}) provides Go ${sdk_go} (GOTOOLCHAIN=local)."
+            echo "::error::Not building. Build an older beszel version or wait for an Entware SDK with a newer Go; do not bump the Go toolchain inside this workflow."
+            exit 1
+          fi
+          echo "Go requirement satisfied: ${sdk_go} >= ${REQUIRED}"
+
   build:
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -24,24 +144,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Resolve latest beszel-agent version
-        id: beszel-agent-version
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const release = await github.rest.repos.getLatestRelease({
-              owner: 'henrygd',
-              repo: 'beszel',
-            });
-
-            core.setOutput('version', release.data.tag_name.replace(/^v/, ''));
-
       - name: Patch package version for CI build
         shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          version='${{ steps.beszel-agent-version.outputs.version }}'
-          echo "Building beszel-agent version: ${version}"
-          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${version}/" beszel-agent/Makefile
+          echo "Building beszel-agent version: ${VERSION}"
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" beszel-agent/Makefile
           sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" beszel-agent/Makefile
 
       - name: Build beszel-agent packages
@@ -56,14 +165,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: beszel-agent-${{ steps.beszel-agent-version.outputs.version }}-${{ matrix.arch }}
+          name: beszel-agent-${{ needs.preflight.outputs.version }}-${{ matrix.arch }}
           path: bin/targets/**/packages/beszel-agent_*.ipk
           if-no-files-found: warn
           compression-level: 0
 
   publish-latest-release:
     runs-on: ubuntu-latest
-    needs: [ build ]
+    needs: [ preflight, build ]
     env:
       GH_REPO: ${{ github.repository }}
     steps:
