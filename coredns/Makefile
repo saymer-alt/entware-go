@@ -7,13 +7,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=coredns
-PKG_VERSION:=1.14.2
+PKG_VERSION:=1.14.7
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 PKG_SOURCE_URL:=https://github.com/coredns/coredns
-PKG_MIRROR_HASH:=6d82a06f7fe8b0f54a919058e8cd2839a113b81dd9d0217e280d2bea665668ce
+PKG_MIRROR_HASH:=c89b0abdd671f86f0b139bfa1530abbefc5c67f16a1ff7dc76aa0aaed5c2fabb
 
 PKG_MAINTAINER:=Entware team, https://entware.net
 PKG_LICENSE:=Apache-2.0
@@ -60,6 +60,7 @@ define Build/Compile
 	( cd $(PKG_BUILD_DIR); \
 		$(GO_BIN_MOD_DOWNLOAD); \
 		$(GO_BIN_GENERATE) coredns.go; \
+		$(GO_BIN_GET) github.com/mdlayher/netlink@v1.11.2; \
 		$(GO_BIN_GET); \
 	)
 	$(call Build/Compile/Go)
