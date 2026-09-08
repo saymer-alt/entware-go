@@ -11,16 +11,16 @@
  	}
 --- a/service/conf/environmentConfig_other.go
 +++ b/service/conf/environmentConfig_other.go
-@@ -20,5 +20,5 @@ func defaultConfigDir(isLite bool) strin
+@@ -26,5 +26,5 @@ func defaultConfigDir(isLite bool) strin
  		return filepath.Join(os.TempDir(), "v2raya")
  	}
  
 -	return "/etc/v2raya"
 +	return "/opt/etc/v2raya"
  }
---- a/service/core/v2ray/asset/asset.go
-+++ b/service/core/v2ray/asset/asset.go
-@@ -64,8 +64,8 @@ func GetV2rayLocationAsset(filename stri
+--- a/service/kernel/v2ray/asset/asset.go
++++ b/service/kernel/v2ray/asset/asset.go
+@@ -50,8 +50,8 @@ func GetV2rayLocationAsset(filename stri
  		if runtime.GOOS != "windows" {
  			searchPaths = append(
  				searchPaths,
