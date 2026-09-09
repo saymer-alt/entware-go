@@ -5,14 +5,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alertmanager
-PKG_VERSION:=0.31.1
+PKG_VERSION:=0.34.0
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_DATE:=2026-02-12
-PKG_SOURCE_VERSION:=7a639ba087d6e877038cabfdaa645230f79001b8
+PKG_SOURCE_DATE:=2026-08-16
+PKG_SOURCE_VERSION:=085f0ef7eb41da24cab8cd000f1345b6250f2edb
 PKG_SOURCE_URL:=https://github.com/prometheus/alertmanager
-PKG_MIRROR_HASH:=ed4d5c8c8232eceb3dda4742b1c9dcf95316e39aa14ebae5641afdb3136a8a4a
+PKG_MIRROR_HASH:=410d47ccc71159147a543524d027d338bc7fb7013799b542a1c45d506a207dc3
 
 PKG_LICENSE:=Apache-2.0
 PKG_LICENSE_FILES:=LICENSE
@@ -60,6 +60,14 @@ endef
 
 Package/alertmanager_nohf/conffiles=$(Package/alertmanager/conffiles)
 
+WEB_FILE:=$(PKG_NAME)-web-ui-$(PKG_VERSION).tar.gz
+define Download/alertmanager-web-ui
+  URL:=$(PKG_SOURCE_URL)/releases/download/v$(PKG_VERSION)/
+  URL_FILE:=$(WEB_FILE)
+  FILE:=$(WEB_FILE)
+  HASH:=990d0be563b733bd0eae180dd609591164028f80cdf47ee8c1c3a1bfafff8d23
+endef
+
 GO_LDFLAGS += \
 	-X 'github.com/prometheus/common/version.Version=v$(PKG_VERSION)' \
 	-X 'github.com/prometheus/common/version.Revision=$(COMMIT_SHORT)'  \
@@ -69,6 +77,11 @@ GO_LDFLAGS += \
 
 GO_TAGS:=netgo
 GO_TARGET:=./cmd/alertmanager ./cmd/amtool
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	$(HOST_TAR) -xzf $(DL_DIR)/$(WEB_FILE) -C $(PKG_BUILD_DIR)/ui/app
+endef
 
 define Package/alertmanager/install
 	$(INSTALL_DIR) $(1)/opt/bin
@@ -81,5 +94,6 @@ endef
 
 Package/alertmanager_nohf/install=$(Package/alertmanager/install)
 
+$(eval $(call Download,alertmanager-web-ui))
 $(eval $(call BuildPackage,alertmanager))
 $(eval $(call BuildPackage,alertmanager_nohf))

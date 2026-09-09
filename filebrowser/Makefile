@@ -2,16 +2,18 @@
 #
 # Copyright (C) 2024-2026 Entware
 
+# Project archived by the owner on Aug 31, 2026.
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=filebrowser
-PKG_VERSION:=2.62.1
+PKG_VERSION:=2.63.23
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=b5f970731be11d3fc8f59b194b15089b6c13bd5f
+PKG_SOURCE_VERSION:=e8a388f840173580116f2743813d03b22286e44e
 PKG_SOURCE_URL:=https://github.com/filebrowser/filebrowser
-PKG_MIRROR_HASH:=326cd6fe3df6a000b859b1fff58fca8c062e590a83cd133d981956fc47b18ede
+PKG_MIRROR_HASH:=b3eb979cf1d00ef91527816c0ced0d79d3d0a4fd91421bfa8d2f8de49f22abca
 
 PKG_LICENSE:=Apache-2.0
 PKG_LICENSE_FILES:=LICENSE
@@ -28,7 +30,7 @@ define Package/filebrowser/Default
   CATEGORY:=Network
   SUBMENU:=Filesystem
   TITLE:=Web File Browser
-  URL:=https://filebrowser.org
+  URL:=https://github.com/filebrowser/filebrowser
   PROVIDES:=filebrowser
 endef
 
