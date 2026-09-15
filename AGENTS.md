@@ -21,11 +21,11 @@ When something is unclear or dangerous: stop and report to the owner — do not 
 - `mihomo/`, `beszel-agent/` — package dirs: `Makefile` (PKG_NAME/PKG_VERSION/PKG_RELEASE/
   PKG_SOURCE_*/PKG_MIRROR_HASH), `files/` (procd init `S99<pkg>` + config), `patches/` if needed.
 - `.github/workflows/`:
-  - `build-mihomo.yml` — every six hours + manual; checks whether the `latest` package
-    release already has the complete asset set for the latest MetaCubeX/mihomo release,
-    then runs an SDK Go-version preflight before building. Manual dispatch always builds.
-    Publication validates and uploads the complete new set before pruning older Mihomo
-    assets.
+  - `build-mihomo.yml` — every six hours + manual + changes to this workflow; checks
+    whether the `latest` package release already has the complete asset set for the
+    latest MetaCubeX/mihomo release, then runs an SDK Go-version preflight before
+    building. Manual dispatch always builds. Publication validates and uploads the
+    complete new set before pruning older Mihomo assets.
   - `build-beszel.yml` — manual only; the version is explicit via the `version` input,
     default is pinned in the workflow. It never follows the upstream latest release
     automatically; the `preflight` job gates the build (see Go compatibility rule).

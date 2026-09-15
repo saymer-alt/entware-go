@@ -2,6 +2,11 @@ name: Build mihomo
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - gh-action-build
+    paths:
+      - .github/workflows/build-mihomo.yml
   schedule:
     # 07:17, 13:17, 19:17 and 01:17 Moscow time (UTC+3).
     - cron: '17 4,10,16,22 * * *'
