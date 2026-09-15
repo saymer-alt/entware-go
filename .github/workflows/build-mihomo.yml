@@ -3,10 +3,15 @@ name: Build mihomo
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 4 * * *'
+    # 07:17, 13:17, 19:17 and 01:17 Moscow time (UTC+3).
+    - cron: '17 4,10,16,22 * * *'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: build-mihomo
+  cancel-in-progress: false
 
 jobs:
   check-version:
@@ -23,26 +28,148 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const fs = require('fs');
-            const release = await github.rest.repos.getLatestRelease({
+            const upstream = await github.rest.repos.getLatestRelease({
               owner: 'MetaCubeX',
               repo: 'mihomo',
             });
-            const latest = release.data.tag_name.replace(/^v/, '');
-            const makefile = fs.readFileSync('mihomo/Makefile', 'utf8');
-            const match = makefile.match(/^PKG_VERSION:=([^\n]+)$/m);
-            if (!match) {
-              core.setFailed('Could not find PKG_VERSION in mihomo/Makefile');
+            const latest = upstream.data.tag_name.replace(/^v/, '');
+            if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latest)) {
+              core.setFailed(`Unexpected mihomo release tag: ${upstream.data.tag_name}`);
               return;
             }
-            const current = match[1].trim();
-            core.info(`Current package version: ${current}`);
+
+            const { owner, repo } = context.repo;
+            const target = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag: 'latest',
+            });
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: target.data.id,
+              per_page: 100,
+            });
+
+            const escaped = latest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const required = [
+              ...['x64', 'aarch64', 'armv7', 'mipsel', 'mips'].map((arch) => ({
+                label: `mihomo/${arch}`,
+                pattern: new RegExp(`^mihomo_${escaped}-\\d+_${arch}-[^/]+\\.ipk$`),
+              })),
+              {
+                label: 'mihomo_nohf/armv7',
+                pattern: new RegExp(`^mihomo_nohf_${escaped}-\\d+_armv7-[^/]+\\.ipk$`),
+              },
+            ];
+            const missing = required
+              .filter(({ pattern }) => !assets.some(({ name }) => pattern.test(name)))
+              .map(({ label }) => label);
+
             core.info(`Latest mihomo release: ${latest}`);
+            core.info(`Target package release: ${target.data.tag_name}`);
+            if (missing.length === 0) {
+              core.info(`All ${required.length} package assets for ${latest} are already published`);
+            } else {
+              core.info(`Missing package assets for ${latest}: ${missing.join(', ')}`);
+            }
             core.setOutput('version', latest);
-            core.setOutput('update', latest !== current ? 'true' : 'false');
+            core.setOutput('update', missing.length === 0 ? 'false' : 'true');
+
+  preflight:
+    needs: check-version
+    if: needs.check-version.outputs.update == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Go requirement from mihomo go.mod
+        id: gomod
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gomod="$(curl -fsSL "https://raw.githubusercontent.com/MetaCubeX/mihomo/v${VERSION}/go.mod")" || {
+            echo "::error::Could not fetch go.mod at tag v${VERSION} of MetaCubeX/mihomo"
+            exit 1
+          }
+          required="$(printf '%s\n' "${gomod}" | sed -n -E 's/^go ([0-9][0-9.]*)$/\1/p' | head -n1)"
+          if [ -z "${required}" ]; then
+            echo "::error::Could not read the Go requirement from mihomo v${VERSION} go.mod"
+            exit 1
+          fi
+          echo "Mihomo v${VERSION} go.mod requires Go: ${required}"
+          echo "required=${required}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Entware SDK release asset
+        id: sdk
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh api repos/ownik/entware-sdk/releases/latest --jq .tag_name)"
+          url="$(gh api repos/ownik/entware-sdk/releases/latest \
+            --jq '.assets[] | select((.name | contains("aarch64")) and (.name | endswith(".sha256") | not)) | .browser_download_url' \
+            | head -n1)"
+          if [ -z "$url" ]; then
+            echo "::error::No aarch64 SDK asset found in ownik/entware-sdk release ${tag}"
+            exit 1
+          fi
+          echo "Entware SDK release: ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Entware SDK tarball
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: sdk.tar.zst
+          key: entware-sdk-${{ steps.sdk.outputs.tag }}
+
+      - name: Download Entware SDK tarball
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SDK_URL: ${{ steps.sdk.outputs.url }}
+        run: |
+          curl -fsSL "${SDK_URL}" -o sdk.tar.zst
+
+      - name: Compare SDK Go version with mihomo requirement
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          REQUIRED: ${{ steps.gomod.outputs.required }}
+          SDK_TAG: ${{ steps.sdk.outputs.tag }}
+        run: |
+          mkdir -p sdk-root
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/bin/go' || true
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/VERSION' || true
+          go_bin="$(find sdk-root -type f -path '*staging_dir/host/go/bin/go' | head -n1)"
+          version_file="$(find sdk-root -type f -path '*staging_dir/host/go/VERSION' | head -n1)"
+          if [ -n "$version_file" ]; then
+            sdk_go="$(sed -n -E '1s/^go([0-9][0-9.]*).*/\1/p' "$version_file")"
+            echo "SDK Go version read from the GOROOT VERSION file"
+          elif [ -n "$go_bin" ]; then
+            go_root="$(cd "$(dirname "$go_bin")/.." && pwd)"
+            sdk_go="$(GOTOOLCHAIN=local GOENV=off GOROOT="${go_root}" "${go_bin}" version | sed -E 's/^go version go([0-9.]+).*/\1/')"
+            echo "SDK Go version read from 'go version' with GOROOT=${go_root}"
+          else
+            echo "::error::Could not find staging_dir/host/go/{VERSION,bin/go} inside the Entware SDK tarball"
+            exit 1
+          fi
+          if [ -z "$sdk_go" ]; then
+            echo "::error::Could not determine the Go version shipped by the Entware SDK (${SDK_TAG})"
+            exit 1
+          fi
+          echo "Entware SDK ${SDK_TAG} ships Go: ${sdk_go}"
+          lowest="$(printf '%s\n' "${REQUIRED}" "${sdk_go}" | sort -V | head -n1)"
+          if [ "${lowest}" = "${sdk_go}" ] && [ "${sdk_go}" != "${REQUIRED}" ]; then
+            echo "::error::Mihomo v${VERSION} requires Go >= ${REQUIRED}, but the Entware SDK (${SDK_TAG}) provides Go ${sdk_go} (GOTOOLCHAIN=local)."
+            echo "::error::Not building. Wait for an Entware SDK with a newer Go; do not bump the Go toolchain inside this workflow."
+            exit 1
+          fi
+          echo "Go requirement satisfied: ${sdk_go} >= ${REQUIRED}"
 
   build:
-    needs: check-version
+    needs: [check-version, preflight]
     if: needs.check-version.outputs.update == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
@@ -64,23 +191,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Resolve mihomo version
-        id: mihomo-version
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const release = await github.rest.repos.getLatestRelease({
-              owner: 'MetaCubeX',
-              repo: 'mihomo',
-            });
-            core.setOutput('version', release.data.tag_name.replace(/^v/, ''));
-
       - name: Patch package version for CI build
         shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          version='${{ steps.mihomo-version.outputs.version }}'
-          echo "Building mihomo version: ${version}"
-          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${version}/" mihomo/Makefile
+          echo "Building mihomo version: ${VERSION}"
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" mihomo/Makefile
           sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" mihomo/Makefile
 
       - name: Build mihomo packages
@@ -95,15 +212,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: mihomo-${{ steps.mihomo-version.outputs.version }}-${{ matrix.arch }}
+          name: mihomo-${{ needs.check-version.outputs.version }}-${{ matrix.arch }}
           path: bin/targets/**/packages/mihomo_*.ipk
-          if-no-files-found: warn
+          if-no-files-found: error
           compression-level: 0
 
   publish-latest-release:
     runs-on: ubuntu-latest
-    needs: [build, check-version]
+    needs: [check-version, preflight, build]
     if: needs.check-version.outputs.update == 'true' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
     env:
       GH_REPO: ${{ github.repository }}
     steps:
@@ -119,32 +238,53 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const releases = await github.paginate(github.rest.repos.listReleases, {
+            const release = await github.rest.repos.getReleaseByTag({
               owner,
               repo,
-              per_page: 100,
+              tag: 'latest',
             });
+            core.setOutput('id', String(release.data.id));
+            core.setOutput('tag', release.data.tag_name);
 
-            const picked = releases.find((rel) => !rel.draft && !rel.prerelease);
-            if (!picked) {
-              core.setFailed('No release found to update');
-              return;
-            }
-
-            core.setOutput('id', String(picked.id));
-            core.setOutput('tag', picked.tag_name);
-
-      - name: Remove previous mihomo ipk assets
+      - name: Validate complete mihomo package set
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ steps.target-release.outputs.id }}
+          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
-            --jq '.[] | select(.name | test("^mihomo_.*\\.ipk$")) | .id' \
-            | while read -r asset_id; do
-                [ -n "$asset_id" ] || continue
-                gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
-              done
+          mapfile -t files < <(find out -type f -name 'mihomo_*.ipk' | sort)
+          if [ ${#files[@]} -ne 6 ]; then
+            echo "::error::Expected exactly 6 mihomo IPKs, found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+
+          for arch in x64 aarch64 armv7 mipsel mips; do
+            count=0
+            for file in "${files[@]}"; do
+              name="$(basename "$file")"
+              if [[ "$name" == "mihomo_${VERSION}-"*"_${arch}-"*.ipk ]]; then
+                count=$((count + 1))
+              fi
+            done
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected one mihomo ${VERSION} package for ${arch}, found ${count}"
+              exit 1
+            fi
+          done
+
+          nohf_count=0
+          for file in "${files[@]}"; do
+            name="$(basename "$file")"
+            if [[ "$name" == "mihomo_nohf_${VERSION}-"*"_armv7-"*.ipk ]]; then
+              nohf_count=$((nohf_count + 1))
+            fi
+          done
+          if [ "$nohf_count" -ne 1 ]; then
+            echo "::error::Expected one mihomo_nohf ${VERSION} package for armv7, found ${nohf_count}"
+            exit 1
+          fi
+
+          printf 'Validated package: %s\n' "${files[@]}"
 
       - name: Upload new mihomo ipk assets to latest release
         env:
@@ -159,6 +299,40 @@ jobs:
 
           printf '%s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
+
+      - name: Verify uploaded assets and remove older mihomo versions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.target-release.outputs.id }}
+        run: |
+          mapfile -t files < <(find out -type f -name 'mihomo_*.ipk' | sort)
+          remote_assets="$(mktemp)"
+          trap 'rm -f "$remote_assets"' EXIT
+          gh api --paginate \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?per_page=100" \
+            --jq '.[] | [.id, .name] | @tsv' > "$remote_assets"
+
+          declare -A keep=()
+          for file in "${files[@]}"; do
+            name="$(basename "$file")"
+            keep["$name"]=1
+            if ! awk -F '\t' -v target="$name" '$2 == target { found = 1 } END { exit !found }' "$remote_assets"; then
+              echo "::error::Uploaded asset is missing from release: ${name}"
+              exit 1
+            fi
+          done
+
+          while IFS=$'\t' read -r asset_id name; do
+            case "$name" in
+              mihomo_*.ipk)
+                if [ -z "${keep[$name]+x}" ]; then
+                  echo "Removing old package asset: ${name}"
+                  gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
+                fi
+                ;;
+            esac
+          done < "$remote_assets"
 
       - name: Dispatch to feedly
         if: success()
