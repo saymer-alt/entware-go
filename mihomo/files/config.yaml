@@ -1,4 +1,8 @@
-tproxy-port: 1181
-redir-port: 1182
+# HTTP + SOCKS5 mixed proxy.
+# Keenetic Proxy interfaces (keenetic-auto-setup) bridge to Mihomo via SOCKS5
+# on 127.0.0.1:7890. Transparent-proxy ports (tproxy-port, redir-port) are
+# not substitutes for this endpoint.
+mixed-port: 7890
+
 # Setup documentation:
 # https://wiki.metacubex.one/en/config/
