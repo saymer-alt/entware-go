@@ -1,68 +1,133 @@
-# Experimental ARM64-only WARPSCOUT package build for Keenetic-class Entware targets.
-# It repacks the official upstream Linux/ARM64 release asset because WARPSCOUT v0.16.0
-# requires Go 1.26.3 while the current Entware SDK ships Go 1.26.1 with GOTOOLCHAIN=local.
+# ARM64-only WARPSCOUT package build for Keenetic-class Entware targets.
+# WARPSCOUT currently requires a newer Go patch level than the Entware SDK,
+# so this workflow repacks the official upstream Linux/ARM64 release binary instead
+# of replacing the SDK Go toolchain.
 #
-# This workflow intentionally publishes only an Actions artifact. It does NOT modify the
-# repository's "latest" release/feed until a real Keenetic install/runtime test has passed.
+# Scheduled runs are cheap when no update exists: check-version exits before build.
+# PR runs always build/verify but never publish.
 
 name: Build WARPSCOUT aarch64
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'WARPSCOUT version (tag v<version>, e.g. 0.16.0)'
-        required: false
-        default: '0.16.0'
-        type: string
+  push:
+    branches:
+      - gh-action-build
+    paths:
+      - warpscout/Makefile
+      - .github/workflows/build-warpscout.yml
   pull_request:
     branches:
       - gh-action-build
     paths:
       - warpscout/**
       - .github/workflows/build-warpscout.yml
+      - README.md
+      - AGENTS.md
+  schedule:
+    # 07:37, 13:37, 19:37 and 01:37 Moscow time (UTC+3).
+    # Offset from the Mihomo workflow to avoid starting both SDK jobs together.
+    - cron: '37 4,10,16,22 * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-warpscout-aarch64-${{ github.ref }}
+  group: build-warpscout-aarch64
   cancel-in-progress: false
 
 jobs:
-  preflight:
+  check-version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.release.outputs.version }}
+      update: ${{ steps.check.outputs.update }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check latest WARPSCOUT version
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const upstream = await github.rest.repos.getLatestRelease({
+              owner: 'vernette',
+              repo: 'warpscout',
+            });
+            const latest = upstream.data.tag_name.replace(/^v/, '');
+            if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latest)) {
+              core.setFailed(`Unexpected WARPSCOUT release tag: ${upstream.data.tag_name}`);
+              return;
+            }
+
+            const assetName = `warpscout_${latest}_linux_arm64.tar.gz`;
+            const upstreamAsset = upstream.data.assets.find((asset) => asset.name === assetName);
+            if (!upstreamAsset) {
+              core.setFailed(`Official Linux/ARM64 asset is missing: ${assetName}`);
+              return;
+            }
+            if (!/^sha256:[0-9a-f]{64}$/.test(upstreamAsset.digest || '')) {
+              core.setFailed(`Official asset has no usable sha256 digest: ${assetName}`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const target = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag: 'latest',
+            });
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: target.data.id,
+              per_page: 100,
+            });
+
+            const escaped = latest.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`^warpscout_${escaped}-\\d+_aarch64-[^/]+\\.ipk$`);
+            const published = assets.some(({ name }) => pattern.test(name));
+
+            core.info(`Latest WARPSCOUT release: ${latest}`);
+            core.info(`Official upstream asset: ${assetName}`);
+            core.info(`Target package release: ${target.data.tag_name}`);
+            core.info(published
+              ? `WARPSCOUT ${latest} aarch64 package is already published`
+              : `WARPSCOUT ${latest} aarch64 package is missing`);
+
+            core.setOutput('version', latest);
+            core.setOutput('update', published ? 'false' : 'true');
+
+  preflight:
+    needs: check-version
+    if: >-
+      needs.check-version.outputs.update == 'true' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
       hash: ${{ steps.release.outputs.hash }}
       binary_hash: ${{ steps.release.outputs.binary_hash }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Resolve official Linux ARM64 release asset
+      - name: Resolve and verify official Linux ARM64 release asset
         id: release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RAW_VERSION: ${{ inputs.version || '0.16.0' }}
+          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          version="${RAW_VERSION#v}"
-          if ! printf '%s' "$version" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
-            echo "::error::Invalid WARPSCOUT version '${RAW_VERSION}'"
-            exit 1
-          fi
-
-          asset="warpscout_${version}_linux_arm64.tar.gz"
-          release="$(gh api "repos/vernette/warpscout/releases/tags/v${version}")" || {
-            echo "::error::WARPSCOUT release v${version} was not found"
+          asset="warpscout_${VERSION}_linux_arm64.tar.gz"
+          release="$(gh api "repos/vernette/warpscout/releases/tags/v${VERSION}")" || {
+            echo "::error::WARPSCOUT release v${VERSION} was not found"
             exit 1
           }
           digest="$(printf '%s' "$release" | jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' | head -n1)"
           url="$(printf '%s' "$release" | jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .browser_download_url' | head -n1)"
 
           if [ -z "$url" ] || [ "$url" = "null" ]; then
-            echo "::error::Official asset ${asset} is missing from WARPSCOUT v${version}"
+            echo "::error::Official asset ${asset} is missing from WARPSCOUT v${VERSION}"
             exit 1
           fi
           case "$digest" in
@@ -77,10 +142,6 @@ jobs:
             exit 1
           fi
 
-          echo "WARPSCOUT release: v${version}"
-          echo "Official asset: ${asset}"
-          echo "Official sha256: ${hash}"
-
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           curl -fsSL "$url" -o "$tmp/asset.tar.gz"
@@ -91,48 +152,47 @@ jobs:
             echo "actual=${actual}"
             exit 1
           }
+
           tar -xzf "$tmp/asset.tar.gz" -C "$tmp"
           test -x "$tmp/warpscout" || {
             echo "::error::Official archive does not contain executable warpscout"
             exit 1
           }
           binary_hash="$(sha256sum "$tmp/warpscout" | awk '{print $1}')"
-          echo "Official binary sha256: ${binary_hash}"
 
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          pinned_version="$(sed -n 's/^PKG_VERSION:=//p' warpscout/Makefile)"
+          pinned_hash="$(sed -n 's/^PKG_HASH:=//p' warpscout/Makefile)"
+          if [ "$pinned_version" = "$VERSION" ]; then
+            [ "$pinned_hash" = "$hash" ] || {
+              echo "::error::Pinned PKG_HASH does not match official WARPSCOUT v${VERSION} asset"
+              exit 1
+            }
+          else
+            echo "Makefile baseline is v${pinned_version}; CI will build latest v${VERSION}"
+          fi
+
+          echo "WARPSCOUT release: v${VERSION}"
+          echo "Official asset sha256: ${hash}"
+          echo "Official binary sha256: ${binary_hash}"
           echo "hash=${hash}" >> "$GITHUB_OUTPUT"
           echo "binary_hash=${binary_hash}" >> "$GITHUB_OUTPUT"
 
-      - name: Check pinned package metadata for default build
-        if: (inputs.version || '0.16.0') == '0.16.0'
-        shell: bash
-        env:
-          EXPECTED_HASH: ${{ steps.release.outputs.hash }}
-        run: |
-          pinned_version="$(sed -n 's/^PKG_VERSION:=//p' warpscout/Makefile)"
-          pinned_hash="$(sed -n 's/^PKG_HASH:=//p' warpscout/Makefile)"
-          [ "$pinned_version" = "0.16.0" ] || {
-            echo "::error::warpscout/Makefile default version drifted: ${pinned_version}"
-            exit 1
-          }
-          [ "$pinned_hash" = "$EXPECTED_HASH" ] || {
-            echo "::error::warpscout/Makefile PKG_HASH does not match the official v0.16.0 release digest"
-            echo "pinned=${pinned_hash}"
-            echo "official=${EXPECTED_HASH}"
-            exit 1
-          }
-
   build:
-    needs: preflight
+    needs: [check-version, preflight]
+    if: >-
+      needs.check-version.outputs.update == 'true' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Patch requested WARPSCOUT release metadata for CI
+      - name: Patch latest WARPSCOUT release metadata for CI
         shell: bash
         env:
-          VERSION: ${{ needs.preflight.outputs.version }}
+          VERSION: ${{ needs.check-version.outputs.version }}
           HASH: ${{ needs.preflight.outputs.hash }}
         run: |
           sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" warpscout/Makefile
@@ -147,9 +207,10 @@ jobs:
           V: s
           FEEDNAME: local
 
-      - name: Verify package payload and architecture
+      - name: Verify package payload and upstream binary identity
         shell: bash
         env:
+          VERSION: ${{ needs.check-version.outputs.version }}
           OFFICIAL_BINARY_HASH: ${{ needs.preflight.outputs.binary_hash }}
         run: |
           mapfile -t packages < <(find bin/targets -type f -name 'warpscout_*.ipk' | sort)
@@ -160,9 +221,17 @@ jobs:
           fi
 
           ipk="${packages[0]}"
+          name="$(basename "$ipk")"
+          case "$name" in
+            warpscout_${VERSION}-*_aarch64-*.ipk) ;;
+            *)
+              echo "::error::Unexpected WARPSCOUT package name: ${name}"
+              exit 1
+              ;;
+          esac
+
           echo "Built: ${ipk}"
           file "$ipk" || true
-
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
           abs_ipk="$(realpath "$ipk")"
@@ -199,26 +268,126 @@ jobs:
 
             file "$bin"
             file "$bin" | grep -Eiq 'ARM aarch64|ARM64|aarch64' || {
-              echo "::error::Packaged WARPSCOUT binary is not identified as ARM64/AArch64"
+              echo "::error::Packaged WARPSCOUT binary is not ARM64/AArch64"
               exit 1
             }
 
             packaged_hash="$(sha256sum "$bin" | awk '{print $1}')"
-            echo "Packaged binary sha256: ${packaged_hash}"
-            echo "Official binary sha256: ${OFFICIAL_BINARY_HASH}"
             [ "$packaged_hash" = "$OFFICIAL_BINARY_HASH" ] || {
-              echo "::error::Packaged binary differs from the official upstream ARM64 binary"
+              echo "::error::Packaged binary differs from official upstream ARM64 binary"
+              echo "packaged=${packaged_hash}"
+              echo "official=${OFFICIAL_BINARY_HASH}"
               exit 1
             }
 
+            echo "Packaged binary sha256: ${packaged_hash}"
             readelf -h "$bin" | grep -E 'Class:|Machine:' || true
             du -h "$bin"
           )
 
-      - name: Upload experimental IPK
+      - name: Upload build artifact
         uses: actions/upload-artifact@v6
         with:
-          name: warpscout-${{ needs.preflight.outputs.version }}-aarch64
+          name: warpscout-${{ needs.check-version.outputs.version }}-aarch64
           path: bin/targets/**/packages/warpscout_*.ipk
           if-no-files-found: error
           compression-level: 0
+
+  publish-latest-release:
+    runs-on: ubuntu-latest
+    needs: [check-version, preflight, build]
+    if: >-
+      github.event_name != 'pull_request' &&
+      (
+        needs.check-version.outputs.update == 'true' ||
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'push'
+      )
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Resolve latest target release
+        id: target-release
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const release = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag: 'latest',
+            });
+            core.setOutput('id', String(release.data.id));
+            core.setOutput('tag', release.data.tag_name);
+
+      - name: Validate WARPSCOUT package
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          mapfile -t files < <(find out -type f -name 'warpscout_*.ipk' | sort)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one WARPSCOUT IPK, found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+
+          name="$(basename "${files[0]}")"
+          case "$name" in
+            warpscout_${VERSION}-*_aarch64-*.ipk) ;;
+            *)
+              echo "::error::Unexpected WARPSCOUT package name: ${name}"
+              exit 1
+              ;;
+          esac
+          echo "Validated package: ${name}"
+
+      - name: Upload WARPSCOUT IPK to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.target-release.outputs.tag }}
+        run: |
+          file="$(find out -type f -name 'warpscout_*.ipk' | head -n1)"
+          gh release upload "$TAG" "$file" --clobber
+
+      - name: Verify uploaded asset and prune older WARPSCOUT versions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.target-release.outputs.id }}
+        run: |
+          file="$(find out -type f -name 'warpscout_*.ipk' | head -n1)"
+          keep="$(basename "$file")"
+          remote_assets="$(mktemp)"
+          trap 'rm -f "$remote_assets"' EXIT
+
+          gh api --paginate             "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?per_page=100"             --jq '.[] | [.id, .name] | @tsv' > "$remote_assets"
+
+          if ! awk -F '\t' -v target="$keep" '$2 == target { found = 1 } END { exit !found }' "$remote_assets"; then
+            echo "::error::Uploaded WARPSCOUT asset is missing from latest release: ${keep}"
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r asset_id name; do
+            case "$name" in
+              warpscout_*.ipk)
+                if [ "$name" != "$keep" ]; then
+                  echo "Removing old WARPSCOUT package asset: ${name}"
+                  gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
+                fi
+                ;;
+            esac
+          done < "$remote_assets"
+
+      - name: Dispatch to feedly
+        if: success()
+        run: |
+          curl -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: token ${{ secrets.AGGREGATOR_PAT }}"             -H "X-GitHub-Api-Version: 2022-11-28"             https://api.github.com/repos/spatiumstas/feedly/dispatches             -d '{"event_type":"package-built","client_payload":{"package":"'${{ github.repository }}'","channel":"release","tag":"'${{ steps.target-release.outputs.tag }}'"}}'
