@@ -1,6 +1,6 @@
 # WARPSCOUT for Keenetic / Entware (ARM64)
 
-Experimental Entware package for WARPSCOUT, targeted at the owner's ARM64 Keenetic routers
+Entware package for WARPSCOUT, targeted at the owner's ARM64 Keenetic routers
 (KN-1012 / KN-1812 / KN-3811 / KN-3812 class).
 
 ## Packaging choice
@@ -23,6 +23,26 @@ Pinned v0.16.0 asset SHA-256:
 When the Entware SDK reaches Go >= 1.26.3, source-building WARPSCOUT through `golang.mk`
 can be reconsidered. Until then binary repack keeps the full current feature set (including
 MASQUE H2) without weakening the SDK/toolchain contract.
+
+## One-line installer
+
+With Entware present on an ARM64 Keenetic:
+
+```sh
+opkg update && opkg install curl ca-bundle && \
+curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/install.sh | sh
+```
+
+`warpscout/install.sh` is intentionally idempotent. It checks the target architecture, tries
+the configured Entware feed first, falls back to the current `warpscout_*.ipk` asset in the
+repository's `latest` release when necessary, creates the persistent state directory, preserves
+an existing account, and registers a fresh account only when none exists.
+
+The installer uses `umask 077`, keeps the state directory private, and sets the account file to
+mode 600 when possible. It never prints the account contents.
+
+The script exits after setup and prints example scan commands; WARPSCOUT remains an on-demand CLI,
+not a background service.
 
 ## Target and layout
 
