@@ -92,8 +92,22 @@ the built-in relay fallback succeeded and created the local account file.
 
 WG scans executed correctly at `-jt 4`, `-jt 8`, `-jt 10` and `-jt 16`. The complete
 `-jt 10` run finished in about 57 seconds and the complete `-jt 16` run in about 40 seconds.
-Both returned no working WG endpoints. That is consistent with the known WARP blocking on that
-home-provider path and is treated as a connectivity result, not a package/runtime failure.
+Plain WG returned **0 working endpoints** on that home path.
+
+The same router was then scanned with AWG plus generated QUIC I1:
+
+```sh
+warpscout scan -p awg -P -jt 16 -gen-i1 quic
+```
+
+That run completed in about **11 seconds** and returned **70/70 working endpoints**. WARPSCOUT
+observed `DME` and `RIX` nodes, `SEEN AS=RU`; the best DME paths were about **2 ms**
+in-tunnel with 0% loss, while RIX was around **37-38 ms**.
+
+This contrast — WG 0/70 versus AWG 70/70 on the same router/path — is strong live evidence that
+the Entware package and WARPSCOUT runtime are healthy and that transport/path filtering is the
+dominant cause of the plain-WG failure. It does not by itself identify the provider's exact filtering
+mechanism.
 
 This live test closes the basic ARM64 package smoke-test gate: install, executable startup,
 registration fallback and real scanning all work on Keenetic.
