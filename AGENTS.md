@@ -18,8 +18,15 @@ When something is unclear or dangerous: stop and report to the owner — do not 
 
 ## Layout
 
-- `mihomo/`, `beszel-agent/` — package dirs: `Makefile` (PKG_NAME/PKG_VERSION/PKG_RELEASE/
-  PKG_SOURCE_*/PKG_MIRROR_HASH), `files/` (procd init `S99<pkg>` + config), `patches/` if needed.
+- `mihomo/`, `beszel-agent/` — source-built Go package dirs: `Makefile`
+  (PKG_NAME/PKG_VERSION/PKG_RELEASE/PKG_SOURCE_*/PKG_MIRROR_HASH), `files/`
+  (procd init `S99<pkg>` + config), `patches/` if needed.
+- `warpscout/` — fork-specific ARM64 diagnostic package for Keenetic-class Entware targets.
+  WARPSCOUT v0.16.0 requires Go 1.26.3 while the current Entware SDK v2026.07.04 ships
+  Go 1.26.1, so this package intentionally repacks the official upstream
+  `linux_arm64` release asset with a pinned SHA-256 instead of weakening
+  `GOTOOLCHAIN=local`. It installs only `/opt/bin/warpscout` and
+  `/opt/etc/warpscout`; there is no init script or daemon.
 - `.github/workflows/`:
   - `build-mihomo.yml` — every six hours + manual + changes to this workflow; checks
     whether the `latest` package release already has the complete asset set for the
@@ -29,13 +36,19 @@ When something is unclear or dangerous: stop and report to the owner — do not 
   - `build-beszel.yml` — manual only; the version is explicit via the `version` input,
     default is pinned in the workflow. It never follows the upstream latest release
     automatically; the `preflight` job gates the build (see Go compatibility rule).
+  - `build-warpscout.yml` — aarch64-only WARPSCOUT packaging workflow. It checks upstream
+    every six hours (offset from Mihomo), packages the official Linux/ARM64 release asset,
+    verifies GitHub's asset SHA-256 plus the packaged binary identity, and publishes only
+    `warpscout_*.ipk` into the shared `latest` release. PR runs build/verify only and never
+    publish. The first live KN-1812 install/register/scan test passed on 2026-09-23.
   - `sync-upstream.yml` — daily + manual; merges `upstream/master` into `gh-action-build`.
     Clean merge → merge commit + fast-forward push. Conflict → push a
     `sync-upstream/conflict-*` branch and open a PR; the job itself never resolves conflicts.
   - `telegram-push.yml` — arrived from upstream, triggers only on push to `master`, so it
     is inert here. Keep it as-is; do not wire it up.
 - The `latest` release of this repo is the package feed: each workflow replaces only the
-  assets matching its own package glob (`mihomo_*`, `beszel-agent_*`).
+  assets matching its own package glob (`mihomo_*`, `beszel-agent_*`, `warpscout_*`).
+  A WARPSCOUT publication must never delete or overwrite Mihomo/Beszel assets.
 
 ## Go compatibility rule (high-care)
 
@@ -49,10 +62,17 @@ that tag's `go.mod` requires a newer Go. Therefore:
 - `build-beszel.yml` implements this check (preflight reads the SDK's Go version from
   `staging_dir/host/go/VERSION`). Keep the preflight when copying this pattern.
 
+WARPSCOUT exception is explicit and narrow: when the selected current WARPSCOUT release
+requires a newer Go patch level than the SDK, do not lower its `go` directive and do not
+inject another Go toolchain. The current experimental ARM64 package instead repacks the
+official upstream Linux/ARM64 release binary and verifies its release digest plus binary
+identity. Reconsider source-building only after the Entware SDK satisfies upstream's Go
+requirement.
+
 ## Fork-specific vs upstream
 
 - Fork-specific workflows (do not exist upstream; they must survive every upstream sync):
-  `build-mihomo.yml`, `build-beszel.yml`, `sync-upstream.yml`.
+  `build-mihomo.yml`, `build-beszel.yml`, `build-warpscout.yml`, `sync-upstream.yml`.
 - Package dirs may carry fork-specific changes, but they are not automatically "ours".
   On every upstream merge, review the actual diff of each package dir and analyze any
   conflict or divergence separately.
