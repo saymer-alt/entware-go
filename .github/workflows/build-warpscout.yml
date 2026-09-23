@@ -35,6 +35,7 @@ jobs:
     outputs:
       version: ${{ steps.release.outputs.version }}
       hash: ${{ steps.release.outputs.hash }}
+      binary_hash: ${{ steps.release.outputs.binary_hash }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -79,8 +80,28 @@ jobs:
           echo "WARPSCOUT release: v${version}"
           echo "Official asset: ${asset}"
           echo "Official sha256: ${hash}"
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl -fsSL "$url" -o "$tmp/asset.tar.gz"
+          actual="$(sha256sum "$tmp/asset.tar.gz" | awk '{print $1}')"
+          [ "$actual" = "$hash" ] || {
+            echo "::error::Downloaded official asset digest mismatch"
+            echo "expected=${hash}"
+            echo "actual=${actual}"
+            exit 1
+          }
+          tar -xzf "$tmp/asset.tar.gz" -C "$tmp"
+          test -x "$tmp/warpscout" || {
+            echo "::error::Official archive does not contain executable warpscout"
+            exit 1
+          }
+          binary_hash="$(sha256sum "$tmp/warpscout" | awk '{print $1}')"
+          echo "Official binary sha256: ${binary_hash}"
+
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+          echo "binary_hash=${binary_hash}" >> "$GITHUB_OUTPUT"
 
       - name: Check pinned package metadata for default build
         if: (inputs.version || '0.16.0') == '0.16.0'
@@ -128,6 +149,8 @@ jobs:
 
       - name: Verify package payload and architecture
         shell: bash
+        env:
+          OFFICIAL_BINARY_HASH: ${{ needs.preflight.outputs.binary_hash }}
         run: |
           mapfile -t packages < <(find bin/targets -type f -name 'warpscout_*.ipk' | sort)
           if [ "${#packages[@]}" -ne 1 ]; then
@@ -138,12 +161,25 @@ jobs:
 
           ipk="${packages[0]}"
           echo "Built: ${ipk}"
+          file "$ipk" || true
+
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
+          abs_ipk="$(realpath "$ipk")"
 
           (
             cd "$work"
-            ar x "$OLDPWD/$ipk"
+            if ar t "$abs_ipk" >/dev/null 2>&1; then
+              echo "IPK container: ar"
+              ar x "$abs_ipk"
+            elif tar -tf "$abs_ipk" >/dev/null 2>&1; then
+              echo "IPK container: tar"
+              tar -xf "$abs_ipk"
+            else
+              echo "::error::Unsupported IPK container format"
+              exit 1
+            fi
+
             data="$(find . -maxdepth 1 -type f -name 'data.tar.*' | head -n1)"
             [ -n "$data" ] || { echo "::error::IPK has no data archive"; exit 1; }
 
@@ -155,19 +191,28 @@ jobs:
               *) tar -xf "$data" -C payload ;;
             esac
 
-            test -x payload/opt/bin/warpscout || {
+            bin="payload/opt/bin/warpscout"
+            test -x "$bin" || {
               echo "::error::/opt/bin/warpscout is missing or not executable"
               exit 1
             }
 
-            file payload/opt/bin/warpscout
-            file payload/opt/bin/warpscout | grep -Eiq 'ARM aarch64|ARM64|aarch64' || {
+            file "$bin"
+            file "$bin" | grep -Eiq 'ARM aarch64|ARM64|aarch64' || {
               echo "::error::Packaged WARPSCOUT binary is not identified as ARM64/AArch64"
               exit 1
             }
 
-            readelf -h payload/opt/bin/warpscout | grep -E 'Class:|Machine:' || true
-            du -h payload/opt/bin/warpscout
+            packaged_hash="$(sha256sum "$bin" | awk '{print $1}')"
+            echo "Packaged binary sha256: ${packaged_hash}"
+            echo "Official binary sha256: ${OFFICIAL_BINARY_HASH}"
+            [ "$packaged_hash" = "$OFFICIAL_BINARY_HASH" ] || {
+              echo "::error::Packaged binary differs from the official upstream ARM64 binary"
+              exit 1
+            }
+
+            readelf -h "$bin" | grep -E 'Class:|Machine:' || true
+            du -h "$bin"
           )
 
       - name: Upload experimental IPK
