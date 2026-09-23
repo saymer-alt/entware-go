@@ -36,6 +36,9 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       hash: ${{ steps.release.outputs.hash }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Resolve official Linux ARM64 release asset
         id: release
         shell: bash
