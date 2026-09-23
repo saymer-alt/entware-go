@@ -55,8 +55,10 @@ The 512 MB target still needs its own runtime/concurrency test before raising th
 A result such as `no working endpoints found` is a network-path result, not by itself an installation failure.
 The first KN-1812 live test installed and ran WARPSCOUT v0.16.0 successfully; direct Cloudflare WARP API
 registration was unavailable on that home path, but WARPSCOUT's relay fallback registered the account and
-the scanner completed. WG returned no working endpoints on that path, consistent with the user's known
-home-provider WARP blocking.
+the scanner completed. Plain WG returned 0 working endpoints on that path, while AWG with generated QUIC I1
+returned 70/70 working endpoints in 11 seconds. The AWG scan observed DME and RIX nodes, `SEEN AS=RU`,
+with the best DME paths around 2 ms in-tunnel latency. This is strong evidence that the package/runtime is
+healthy and that transport/network filtering, not router resources, explains the WG failure.
 
 See [`warpscout/README.md`](warpscout/README.md) for packaging details and CI verification.
 
