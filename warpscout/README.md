@@ -53,6 +53,30 @@ The account file contains WARP credentials/private material. Keep
 Do not infer a router's best endpoint from a VPS scan: run WARPSCOUT on the router whose ISP/path
 you actually want to measure.
 
+## First CI proof (2026-09-23)
+
+The first successful aarch64 packaging run produced:
+
+```text
+warpscout_0.16.0-1_aarch64-3.10.ipk
+```
+
+Payload verification reported:
+
+```text
+ELF 64-bit LSB executable, ARM aarch64, statically linked
+```
+
+The packaged binary SHA-256 exactly matched the binary extracted from the official upstream
+v0.16.0 Linux/ARM64 release archive:
+
+```text
+eb7ae4b141b9a2d4677a67630f1f8e45105ff9396bb015442cf7d3071ef5c092
+```
+
+This proves packaging did not alter the upstream executable. It does **not** replace the
+required live Keenetic test.
+
 ## CI policy
 
 `.github/workflows/build-warpscout.yml` resolves the official Linux/ARM64 asset and its
