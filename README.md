@@ -16,6 +16,24 @@ Automated workflows build or package only their own assets and publish them into
 WARPSCOUT is packaged only for `aarch64-3.10`. It is a command-line diagnostic utility, not a daemon:
 there is no init script or autostart.
 
+### One-line install and registration
+
+For an ARM64 Keenetic with Entware already installed:
+
+```sh
+opkg update && opkg install curl ca-bundle && \
+curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/install.sh | sh
+```
+
+The installer is safe to run again. It:
+
+- verifies `aarch64` plus Entware `aarch64-3.10`/`aarch64-3.10_kn`;
+- first tries `opkg install warpscout`;
+- if the configured feed does not contain WARPSCOUT yet, downloads the current ARM64 IPK from this repository's `latest` release and installs it directly;
+- creates `/opt/etc/warpscout` with private permissions;
+- keeps an existing `warpscout-account.json`, or runs `warpscout register` when no account exists;
+- prints ready-to-copy WG/AWG/H3/H2 scan commands and then exits. WARPSCOUT itself remains an on-demand CLI utility.
+
 Install from a configured feed after the package has been indexed:
 
 ```sh

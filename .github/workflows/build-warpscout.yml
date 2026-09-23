@@ -111,6 +111,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Validate installer shell syntax
+        shell: sh
+        run: sh -n warpscout/install.sh
+
       - name: Resolve and verify official Linux ARM64 release asset
         id: release
         shell: bash
