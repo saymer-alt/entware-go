@@ -1,0 +1,213 @@
+# Experimental ARM64-only WARPSCOUT package build for Keenetic-class Entware targets.
+# This workflow intentionally publishes only an Actions artifact. It does NOT modify the
+# "latest" release/feed until a real Keenetic install/runtime test has passed.
+#
+# WARPSCOUT v0.16.0 requires Go 1.26.3. The Entware SDK is authoritative: if its
+# GOTOOLCHAIN=local Go is older, fail before building rather than replacing/upgrading Go.
+
+name: Build WARPSCOUT aarch64
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'WARPSCOUT version (tag v<version>, e.g. 0.16.0)'
+        required: false
+        default: '0.16.0'
+        type: string
+  pull_request:
+    branches:
+      - gh-action-build
+    paths:
+      - warpscout/**
+      - .github/workflows/build-warpscout.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-warpscout-aarch64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve requested version
+        id: resolve
+        shell: bash
+        env:
+          RAW_VERSION: ${{ inputs.version || '0.16.0' }}
+        run: |
+          version="${RAW_VERSION#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
+            echo "::error::Invalid WARPSCOUT version '${RAW_VERSION}'"
+            exit 1
+          fi
+          echo "WARPSCOUT version: ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check upstream tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          gh api "repos/vernette/warpscout/git/ref/tags/v${VERSION}" >/dev/null || {
+            echo "::error::Tag v${VERSION} not found in vernette/warpscout"
+            exit 1
+          }
+
+      - name: Read WARPSCOUT Go requirement
+        id: gomod
+        shell: bash
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          gomod="$(curl -fsSL "https://raw.githubusercontent.com/vernette/warpscout/v${VERSION}/go.mod")" || {
+            echo "::error::Could not fetch go.mod for WARPSCOUT v${VERSION}"
+            exit 1
+          }
+          required="$(printf '%s\n' "$gomod" | sed -n -E 's/^go ([0-9][0-9.]*)$/\1/p' | head -n1)"
+          if [ -z "$required" ]; then
+            echo "::error::Could not determine Go requirement for WARPSCOUT v${VERSION}"
+            exit 1
+          fi
+          echo "WARPSCOUT v${VERSION} requires Go: ${required}"
+          echo "required=${required}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Entware aarch64 SDK
+        id: sdk
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh api repos/ownik/entware-sdk/releases/latest --jq .tag_name)"
+          url="$(gh api repos/ownik/entware-sdk/releases/latest \
+            --jq '.assets[] | select((.name | contains("aarch64")) and (.name | endswith(".sha256") | not)) | .browser_download_url' \
+            | head -n1)"
+          if [ -z "$url" ]; then
+            echo "::error::No aarch64 SDK asset found in ownik/entware-sdk release ${tag}"
+            exit 1
+          fi
+          echo "Entware SDK release: ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Entware SDK tarball
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: sdk.tar.zst
+          key: entware-sdk-${{ steps.sdk.outputs.tag }}-aarch64
+
+      - name: Download Entware SDK tarball
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SDK_URL: ${{ steps.sdk.outputs.url }}
+        run: curl -fsSL "$SDK_URL" -o sdk.tar.zst
+
+      - name: Compare SDK Go with WARPSCOUT requirement
+        shell: bash
+        env:
+          REQUIRED: ${{ steps.gomod.outputs.required }}
+          SDK_TAG: ${{ steps.sdk.outputs.tag }}
+        run: |
+          mkdir -p sdk-root
+          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/VERSION' || true
+          version_file="$(find sdk-root -type f -path '*staging_dir/host/go/VERSION' | head -n1)"
+          if [ -z "$version_file" ]; then
+            echo "::error::Could not find staging_dir/host/go/VERSION in Entware SDK ${SDK_TAG}"
+            exit 1
+          fi
+          sdk_go="$(sed -n -E '1s/^go([0-9][0-9.]*).*/\1/p' "$version_file")"
+          if [ -z "$sdk_go" ]; then
+            echo "::error::Could not parse SDK Go version from ${version_file}"
+            exit 1
+          fi
+          echo "Entware SDK ${SDK_TAG} ships Go: ${sdk_go}"
+          lowest="$(printf '%s\n' "${REQUIRED}" "${sdk_go}" | sort -V | head -n1)"
+          if [ "${lowest}" = "${sdk_go}" ] && [ "${sdk_go}" != "${REQUIRED}" ]; then
+            echo "::error::WARPSCOUT requires Go >= ${REQUIRED}, but Entware SDK provides Go ${sdk_go} (GOTOOLCHAIN=local)."
+            echo "::error::Do not upgrade/bypass the SDK toolchain. Use a compatible WARPSCOUT tag or wait for an SDK update."
+            exit 1
+          fi
+          echo "Go requirement satisfied: ${sdk_go} >= ${REQUIRED}"
+
+  build:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Patch WARPSCOUT version/hash for experimental CI build
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" warpscout/Makefile
+          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" warpscout/Makefile
+          grep -E '^(PKG_VERSION|PKG_MIRROR_HASH):=' warpscout/Makefile
+
+      - name: Build WARPSCOUT aarch64 package
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: aarch64
+          PACKAGES: warpscout
+          V: s
+          FEEDNAME: local
+
+      - name: Report downloaded source mirror hash
+        if: always()
+        shell: bash
+        run: |
+          found=0
+          while IFS= read -r file; do
+            found=1
+            sha256sum "$file"
+          done < <(find dl -maxdepth 1 -type f -name 'warpscout-*' 2>/dev/null | sort)
+          if [ "$found" -eq 0 ]; then
+            echo "No WARPSCOUT source archive remained in ./dl; inspect the SDK build log if the package needs a mirror-hash refresh."
+          fi
+
+      - name: Verify package payload
+        shell: bash
+        run: |
+          mapfile -t packages < <(find bin/targets -type f -name 'warpscout_*.ipk' | sort)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one WARPSCOUT aarch64 IPK, found ${#packages[@]}"
+            printf '%s\n' "${packages[@]}"
+            exit 1
+          fi
+          ipk="${packages[0]}"
+          echo "Built: ${ipk}"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          (
+            cd "$work"
+            ar x "$OLDPWD/$ipk"
+            data="$(find . -maxdepth 1 -type f -name 'data.tar.*' | head -n1)"
+            [ -n "$data" ] || { echo "::error::IPK has no data archive"; exit 1; }
+            case "$data" in
+              *.gz) tar -tzf "$data" ;;
+              *.xz) tar -tJf "$data" ;;
+              *.zst) tar --zstd -tf "$data" ;;
+              *) tar -tf "$data" ;;
+            esac | tee payload.txt
+            grep -Eq '(^|\./)opt/bin/warpscout$' payload.txt || {
+              echo "::error::/opt/bin/warpscout is missing from package payload"
+              exit 1
+            }
+          )
+
+      - name: Upload experimental IPK
+        uses: actions/upload-artifact@v6
+        with:
+          name: warpscout-${{ needs.preflight.outputs.version }}-aarch64
+          path: bin/targets/**/packages/warpscout_*.ipk
+          if-no-files-found: error
+          compression-level: 0
