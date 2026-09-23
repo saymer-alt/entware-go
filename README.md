@@ -58,25 +58,108 @@ warpscout register
 
 The generated `warpscout-account.json` contains private WARP account material. Do not publish or commit it.
 
-For a 512 MB ARM64 router, start conservatively with four tunnel workers:
+### Recommended workflow for Russia / filtered networks
+
+Plain WireGuard is useful as a diagnostic baseline, but it is **not** the recommended first scan on a filtered Russian access network. WARPSCOUT upstream explicitly recommends AmneziaWG or MASQUE when plain WireGuard is filtered, and documents the Moscow `DME` edge as DPI-filtered since April 2026.
+
+WARPSCOUT v0.16.0 does **not** expose an `AWG2`/`AWG3` protocol selector. The supported AWG path is `-p awg` with the documented obfuscation controls (`I1`, junk packet count/sizes and the I1 generators). Do not add undocumented AWG-version flags.
+
+For a 512 MB ARM64 router start with four tunnel workers. The tested KN-1812 with 1 GB RAM handled `-jt 16` comfortably:
 
 ```sh
-warpscout scan -p wg -P -jt 4
-warpscout scan -p awg -P -jt 4 -gen-i1 quic
-warpscout scan -p masque -P -jt 4 -masque-sni 4pda.to
-warpscout scan -p masque-h2 -P -jt 4 -masque-sni 4pda.to
+cd /opt/etc/warpscout
+JT=4        # 512 MB starting point
+# JT=16     # tested on KN-1812 / 1 GB
 ```
 
-On a KN-1812 with 1 GB RAM, `-jt 10` and `-jt 16` completed normally in live testing.
-The 512 MB target still needs its own runtime/concurrency test before raising that recommendation.
+Start with AWG and a generated QUIC-looking I1 packet. This was the successful live profile on the KN-1812:
 
-A result such as `no working endpoints found` is a network-path result, not by itself an installation failure.
-The first KN-1812 live test installed and ran WARPSCOUT v0.16.0 successfully; direct Cloudflare WARP API
-registration was unavailable on that home path, but WARPSCOUT's relay fallback registered the account and
-the scanner completed. Plain WG returned 0 working endpoints on that path, while AWG with generated QUIC I1
-returned 70/70 working endpoints in 11 seconds. The AWG scan observed DME and RIX nodes, `SEEN AS=RU`,
-with the best DME paths around 2 ms in-tunnel latency. This is strong evidence that the package/runtime is
-healthy and that transport/network filtering, not router resources, explains the WG failure.
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic -o awg-all.txt
+```
+
+To keep only Cloudflare edge nodes physically **outside Russia**, use the node-country filter:
+
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -exclude-country RU -o awg-foreign.txt
+```
+
+If the goal is only to reject the Moscow edge while keeping other Russian nodes, use:
+
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -exclude-node DME -o awg-no-dme.txt
+```
+
+`-exclude-country RU` filters **NODE LOCATION**, not the `SEEN AS` region. A tunnel may therefore land on a foreign node such as RIX/ARN/HEL/FRA while websites still see `SEEN AS=RU`. That distinction matters: NODE is the useful field when avoiding filtering attached to a Russian Cloudflare edge; `SEEN AS` is the field to inspect when you also care about the apparent exit country.
+
+Useful selectors once a foreign node is found:
+
+```sh
+# Best foreign endpoint only
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -exclude-country RU -best
+
+# Best foreign endpoint as a ready Mihomo proxy block
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -exclude-country RU -conf warp-awg.yaml -conf-type mihomo
+
+# Rank the selected foreign candidates by measured download speed
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -exclude-country RU -best -best-by speed
+```
+
+For a deep search, `-f` tests all 256 addresses in every built-in AWG/WG subnet. It is much slower; use the normal sampled scan first, especially on a 512 MB router:
+
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic -f \
+  -exclude-country RU -o awg-foreign-full.txt
+```
+
+To see whether different reachable ports of the same sampled endpoint land differently, use the official port sweep:
+
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
+  -sweep-ports open -exclude-country RU -o awg-foreign-ports.txt
+```
+
+If QUIC I1 does not pass the filter, try the other documented I1 generators before touching junk sizes. Upstream says I1 is usually the important part:
+
+```sh
+warpscout scan -p awg -P -jt "$JT" -gen-i1 dns
+warpscout scan -p awg -P -jt "$JT" -gen-i1 sip
+warpscout scan -p awg -P -jt "$JT" -gen-i1 stun
+warpscout scan -p awg -P -jt "$JT" -gen-i1 random
+```
+
+If none of those profiles works, let WARPSCOUT search both fresh I1 and junk settings:
+
+```sh
+warpscout find-junk -jt "$JT" -gen-i1 random
+```
+
+`find-junk` prints a ready-to-run `warpscout scan ...` command when it finds a set that reaches the threshold. There is normally no reason to force `-gen-junk` on every regular scan.
+
+### MASQUE H2 / H3 on a filtered network
+
+MASQUE uses SNI instead of AWG junk/I1. Find the SNI independently for each transport:
+
+```sh
+# TCP / HTTP/2 fallback — the more important first test on a filtering network
+warpscout find-sni -p masque-h2 -jt "$JT"
+
+# QUIC / HTTP/3 transport
+warpscout find-sni -p masque -jt "$JT"
+```
+
+Each command prints the scan command containing the SNI it found; use that exact SNI for the corresponding transport. An SNI that works for H2 may fail for H3 and vice versa.
+
+For `masque` (QUIC/H3), WARPSCOUT automatically covers the fixed anycast addresses and their known ports. For `masque-h2`, the real endpoint pools are `162.159.198.0/24` and `162.159.199.0/24`; add `-f` to the printed H2 scan if you intentionally want to test every address in both pools.
+
+**Important MASQUE limitation:** all MASQUE endpoints in one run land on the same Cloudflare NODE, chosen by the network/path rather than by the endpoint IP. WARPSCOUT therefore rejects `-node`, `-country`, `-exclude-node` and `-exclude-country` for both MASQUE transports. If MASQUE from the current ISP lands on DME, changing only the MASQUE endpoint IP will not select FRA/HEL/ARN/RIX; a different network/path is required.
+
+The first live KN-1812 test is a good example of why the transport matters: plain WG returned **0/70**, while AWG with `-gen-i1 quic` returned **70/70 in about 11 seconds**. The AWG scan saw DME and RIX nodes with `SEEN AS=RU`, and the best DME paths were about 2 ms while RIX was about 37-38 ms.
 
 See [`warpscout/README.md`](warpscout/README.md) for packaging details and CI verification.
 
