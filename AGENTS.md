@@ -36,18 +36,19 @@ When something is unclear or dangerous: stop and report to the owner — do not 
   - `build-beszel.yml` — manual only; the version is explicit via the `version` input,
     default is pinned in the workflow. It never follows the upstream latest release
     automatically; the `preflight` job gates the build (see Go compatibility rule).
-  - `build-warpscout.yml` — experimental aarch64-only WARPSCOUT packaging workflow.
-    On PR/manual runs it resolves the official Linux/ARM64 release asset and GitHub SHA-256,
-    packages it with the Entware aarch64 SDK, verifies the IPK payload/architecture and
-    binary identity, and uploads only an Actions artifact. It MUST NOT publish to `latest`
-    until a real ARM64 Keenetic install/runtime test has passed.
+  - `build-warpscout.yml` — aarch64-only WARPSCOUT packaging workflow. It checks upstream
+    every six hours (offset from Mihomo), packages the official Linux/ARM64 release asset,
+    verifies GitHub's asset SHA-256 plus the packaged binary identity, and publishes only
+    `warpscout_*.ipk` into the shared `latest` release. PR runs build/verify only and never
+    publish. The first live KN-1812 install/register/scan test passed on 2026-09-23.
   - `sync-upstream.yml` — daily + manual; merges `upstream/master` into `gh-action-build`.
     Clean merge → merge commit + fast-forward push. Conflict → push a
     `sync-upstream/conflict-*` branch and open a PR; the job itself never resolves conflicts.
   - `telegram-push.yml` — arrived from upstream, triggers only on push to `master`, so it
     is inert here. Keep it as-is; do not wire it up.
 - The `latest` release of this repo is the package feed: each workflow replaces only the
-  assets matching its own package glob (`mihomo_*`, `beszel-agent_*`).
+  assets matching its own package glob (`mihomo_*`, `beszel-agent_*`, `warpscout_*`).
+  A WARPSCOUT publication must never delete or overwrite Mihomo/Beszel assets.
 
 ## Go compatibility rule (high-care)
 
