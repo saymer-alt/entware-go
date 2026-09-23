@@ -1,9 +1,9 @@
 # Experimental ARM64-only WARPSCOUT package build for Keenetic-class Entware targets.
-# This workflow intentionally publishes only an Actions artifact. It does NOT modify the
-# "latest" release/feed until a real Keenetic install/runtime test has passed.
+# It repacks the official upstream Linux/ARM64 release asset because WARPSCOUT v0.16.0
+# requires Go 1.26.3 while the current Entware SDK ships Go 1.26.1 with GOTOOLCHAIN=local.
 #
-# WARPSCOUT v0.16.0 requires Go 1.26.3. The Entware SDK is authoritative: if its
-# GOTOOLCHAIN=local Go is older, fail before building rather than replacing/upgrading Go.
+# This workflow intentionally publishes only an Actions artifact. It does NOT modify the
+# repository's "latest" release/feed until a real Keenetic install/runtime test has passed.
 
 name: Build WARPSCOUT aarch64
 
@@ -33,12 +33,14 @@ jobs:
   preflight:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.resolve.outputs.version }}
+      version: ${{ steps.release.outputs.version }}
+      hash: ${{ steps.release.outputs.hash }}
     steps:
-      - name: Resolve requested version
-        id: resolve
+      - name: Resolve official Linux ARM64 release asset
+        id: release
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RAW_VERSION: ${{ inputs.version || '0.16.0' }}
         run: |
           version="${RAW_VERSION#v}"
@@ -46,96 +48,55 @@ jobs:
             echo "::error::Invalid WARPSCOUT version '${RAW_VERSION}'"
             exit 1
           fi
-          echo "WARPSCOUT version: ${version}"
+
+          asset="warpscout_${version}_linux_arm64.tar.gz"
+          release="$(gh api "repos/vernette/warpscout/releases/tags/v${version}")" || {
+            echo "::error::WARPSCOUT release v${version} was not found"
+            exit 1
+          }
+          digest="$(printf '%s' "$release" | jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' | head -n1)"
+          url="$(printf '%s' "$release" | jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .browser_download_url' | head -n1)"
+
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "::error::Official asset ${asset} is missing from WARPSCOUT v${version}"
+            exit 1
+          fi
+          case "$digest" in
+            sha256:*) hash="${digest#sha256:}" ;;
+            *)
+              echo "::error::GitHub did not provide a sha256 digest for ${asset}: ${digest:-<empty>}"
+              exit 1
+              ;;
+          esac
+          if ! printf '%s' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::Invalid sha256 digest for ${asset}: ${hash}"
+            exit 1
+          fi
+
+          echo "WARPSCOUT release: v${version}"
+          echo "Official asset: ${asset}"
+          echo "Official sha256: ${hash}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
 
-      - name: Check upstream tag
+      - name: Check pinned package metadata for default build
+        if: (inputs.version || '0.16.0') == '0.16.0'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.resolve.outputs.version }}
+          EXPECTED_HASH: ${{ steps.release.outputs.hash }}
         run: |
-          gh api "repos/vernette/warpscout/git/ref/tags/v${VERSION}" >/dev/null || {
-            echo "::error::Tag v${VERSION} not found in vernette/warpscout"
+          pinned_version="$(sed -n 's/^PKG_VERSION:=//p' warpscout/Makefile)"
+          pinned_hash="$(sed -n 's/^PKG_HASH:=//p' warpscout/Makefile)"
+          [ "$pinned_version" = "0.16.0" ] || {
+            echo "::error::warpscout/Makefile default version drifted: ${pinned_version}"
             exit 1
           }
-
-      - name: Read WARPSCOUT Go requirement
-        id: gomod
-        shell: bash
-        env:
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: |
-          gomod="$(curl -fsSL "https://raw.githubusercontent.com/vernette/warpscout/v${VERSION}/go.mod")" || {
-            echo "::error::Could not fetch go.mod for WARPSCOUT v${VERSION}"
+          [ "$pinned_hash" = "$EXPECTED_HASH" ] || {
+            echo "::error::warpscout/Makefile PKG_HASH does not match the official v0.16.0 release digest"
+            echo "pinned=${pinned_hash}"
+            echo "official=${EXPECTED_HASH}"
             exit 1
           }
-          required="$(printf '%s\n' "$gomod" | sed -n -E 's/^go ([0-9][0-9.]*)$/\1/p' | head -n1)"
-          if [ -z "$required" ]; then
-            echo "::error::Could not determine Go requirement for WARPSCOUT v${VERSION}"
-            exit 1
-          fi
-          echo "WARPSCOUT v${VERSION} requires Go: ${required}"
-          echo "required=${required}" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve Entware aarch64 SDK
-        id: sdk
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="$(gh api repos/ownik/entware-sdk/releases/latest --jq .tag_name)"
-          url="$(gh api repos/ownik/entware-sdk/releases/latest \
-            --jq '.assets[] | select((.name | contains("aarch64")) and (.name | endswith(".sha256") | not)) | .browser_download_url' \
-            | head -n1)"
-          if [ -z "$url" ]; then
-            echo "::error::No aarch64 SDK asset found in ownik/entware-sdk release ${tag}"
-            exit 1
-          fi
-          echo "Entware SDK release: ${tag}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "url=${url}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Entware SDK tarball
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: sdk.tar.zst
-          key: entware-sdk-${{ steps.sdk.outputs.tag }}-aarch64
-
-      - name: Download Entware SDK tarball
-        if: steps.cache.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          SDK_URL: ${{ steps.sdk.outputs.url }}
-        run: curl -fsSL "$SDK_URL" -o sdk.tar.zst
-
-      - name: Compare SDK Go with WARPSCOUT requirement
-        shell: bash
-        env:
-          REQUIRED: ${{ steps.gomod.outputs.required }}
-          SDK_TAG: ${{ steps.sdk.outputs.tag }}
-        run: |
-          mkdir -p sdk-root
-          tar --zstd -xf sdk.tar.zst -C sdk-root --wildcards --wildcards-match-slash '*staging_dir/host/go/VERSION' || true
-          version_file="$(find sdk-root -type f -path '*staging_dir/host/go/VERSION' | head -n1)"
-          if [ -z "$version_file" ]; then
-            echo "::error::Could not find staging_dir/host/go/VERSION in Entware SDK ${SDK_TAG}"
-            exit 1
-          fi
-          sdk_go="$(sed -n -E '1s/^go([0-9][0-9.]*).*/\1/p' "$version_file")"
-          if [ -z "$sdk_go" ]; then
-            echo "::error::Could not parse SDK Go version from ${version_file}"
-            exit 1
-          fi
-          echo "Entware SDK ${SDK_TAG} ships Go: ${sdk_go}"
-          lowest="$(printf '%s\n' "${REQUIRED}" "${sdk_go}" | sort -V | head -n1)"
-          if [ "${lowest}" = "${sdk_go}" ] && [ "${sdk_go}" != "${REQUIRED}" ]; then
-            echo "::error::WARPSCOUT requires Go >= ${REQUIRED}, but Entware SDK provides Go ${sdk_go} (GOTOOLCHAIN=local)."
-            echo "::error::Do not upgrade/bypass the SDK toolchain. Use a compatible WARPSCOUT tag or wait for an SDK update."
-            exit 1
-          fi
-          echo "Go requirement satisfied: ${sdk_go} >= ${REQUIRED}"
 
   build:
     needs: preflight
@@ -144,14 +105,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Patch WARPSCOUT version/hash for experimental CI build
+      - name: Patch requested WARPSCOUT release metadata for CI
         shell: bash
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
+          HASH: ${{ needs.preflight.outputs.hash }}
         run: |
           sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" warpscout/Makefile
-          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" warpscout/Makefile
-          grep -E '^(PKG_VERSION|PKG_MIRROR_HASH):=' warpscout/Makefile
+          sed -i -E "s/^PKG_HASH:=.*/PKG_HASH:=${HASH}/" warpscout/Makefile
+          grep -E '^(PKG_VERSION|PKG_SOURCE|PKG_HASH):=' warpscout/Makefile
 
       - name: Build WARPSCOUT aarch64 package
         uses: ownik/gh-action-entware-sdk@v1
@@ -161,20 +123,7 @@ jobs:
           V: s
           FEEDNAME: local
 
-      - name: Report downloaded source mirror hash
-        if: always()
-        shell: bash
-        run: |
-          found=0
-          while IFS= read -r file; do
-            found=1
-            sha256sum "$file"
-          done < <(find dl -maxdepth 1 -type f -name 'warpscout-*' 2>/dev/null | sort)
-          if [ "$found" -eq 0 ]; then
-            echo "No WARPSCOUT source archive remained in ./dl; inspect the SDK build log if the package needs a mirror-hash refresh."
-          fi
-
-      - name: Verify package payload
+      - name: Verify package payload and architecture
         shell: bash
         run: |
           mapfile -t packages < <(find bin/targets -type f -name 'warpscout_*.ipk' | sort)
@@ -183,25 +132,39 @@ jobs:
             printf '%s\n' "${packages[@]}"
             exit 1
           fi
+
           ipk="${packages[0]}"
           echo "Built: ${ipk}"
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
+
           (
             cd "$work"
             ar x "$OLDPWD/$ipk"
             data="$(find . -maxdepth 1 -type f -name 'data.tar.*' | head -n1)"
             [ -n "$data" ] || { echo "::error::IPK has no data archive"; exit 1; }
+
+            mkdir payload
             case "$data" in
-              *.gz) tar -tzf "$data" ;;
-              *.xz) tar -tJf "$data" ;;
-              *.zst) tar --zstd -tf "$data" ;;
-              *) tar -tf "$data" ;;
-            esac | tee payload.txt
-            grep -Eq '(^|\./)opt/bin/warpscout$' payload.txt || {
-              echo "::error::/opt/bin/warpscout is missing from package payload"
+              *.gz) tar -xzf "$data" -C payload ;;
+              *.xz) tar -xJf "$data" -C payload ;;
+              *.zst) tar --zstd -xf "$data" -C payload ;;
+              *) tar -xf "$data" -C payload ;;
+            esac
+
+            test -x payload/opt/bin/warpscout || {
+              echo "::error::/opt/bin/warpscout is missing or not executable"
               exit 1
             }
+
+            file payload/opt/bin/warpscout
+            file payload/opt/bin/warpscout | grep -Eiq 'ARM aarch64|ARM64|aarch64' || {
+              echo "::error::Packaged WARPSCOUT binary is not identified as ARM64/AArch64"
+              exit 1
+            }
+
+            readelf -h payload/opt/bin/warpscout | grep -E 'Class:|Machine:' || true
+            du -h payload/opt/bin/warpscout
           )
 
       - name: Upload experimental IPK
