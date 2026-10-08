@@ -28,11 +28,12 @@ When something is unclear or dangerous: stop and report to the owner — do not 
   `GOTOOLCHAIN=local`. It installs only `/opt/bin/warpscout` and
   `/opt/etc/warpscout`; there is no init script or daemon.
 - `.github/workflows/`:
-  - `build-mihomo.yml` — every six hours + manual + changes to this workflow; checks
+  - `build-mihomo.yml` — every six hours + manual + changes to `mihomo/Makefile`; checks
     whether the `latest` package release already has the complete asset set for the
     latest MetaCubeX/mihomo release, then runs an SDK Go-version preflight before
-    building. Manual dispatch always builds. Publication validates and uploads the
-    complete new set before pruning older Mihomo assets.
+    building. Complete sets retry pruning without rebuilding, including manual dispatch.
+    Publication validates/uploads/verifies the complete new set before pruning older
+    Mihomo assets. Installer/Actions-only changes run safety tests without rebuilding IPKs.
   - `build-beszel.yml` — manual only; the version is explicit via the `version` input,
     default is pinned in the workflow. It never follows the upstream latest release
     automatically; the `preflight` job gates the build (see Go compatibility rule).
@@ -49,6 +50,12 @@ When something is unclear or dangerous: stop and report to the owner — do not 
 - The `latest` release of this repo is the package feed: each workflow replaces only the
   assets matching its own package glob (`mihomo_*`, `beszel-agent_*`, `warpscout_*`).
   A WARPSCOUT publication must never delete or overwrite Mihomo/Beszel assets.
+
+Publication jobs for all three packages share `entware-latest-publication`; each
+writer still owns only its own package glob. Beszel/Mihomo refuse to overwrite a
+healthy conflicting candidate and verify SHA-256/size metadata before pruning.
+Mihomo cleanup retries on the next scheduled/manual run without rebuilding IPKs.
+The consumer selection contract is implemented in keenetic-auto-setup PR #114.
 
 ## Go compatibility rule (high-care)
 

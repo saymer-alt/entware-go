@@ -59,10 +59,22 @@ class GitHub:
 
 
 def package_key(name, package):
+    variant = ''
+    if package == 'mihomo' and name.startswith('mihomo_nohf_'):
+        name = name.replace('mihomo_nohf_', 'mihomo_', 1)
+        variant = 'nohf/'
     match = re.fullmatch(re.escape(package) + r'_(\d+)\.(\d+)\.(\d+)-(\d+)_([a-z0-9]+-[0-9.]+)\.ipk', name)
     if not match:
         raise PublicationError(f'Invalid package filename: {name}')
-    return tuple(int(match[i]) for i in range(1, 5)), match[5]
+    return tuple(int(match[i]) for i in range(1, 5)), variant + match[5]
+
+
+def expected_variants(package):
+    if package == 'beszel-agent':
+        return {'aarch64-3.10', 'mips-3.4', 'mipsel-3.4'}
+    if package == 'mihomo':
+        return {'aarch64-3.10', 'armv7-3.2', 'mips-3.4', 'mipsel-3.4', 'x64-3.2', 'nohf/armv7-3.2'}
+    raise PublicationError('Unsupported package scope')
 
 
 def scoped(release, package):
@@ -85,9 +97,8 @@ def scoped(release, package):
     return result
 
 
-def publish(api, directory, version):
-    package = 'beszel-agent'
-    expected = {'aarch64-3.10', 'mips-3.4', 'mipsel-3.4'}
+def publish(api, directory, version, package='beszel-agent'):
+    expected = expected_variants(package)
     files = sorted(Path(directory).rglob(package + '_*.ipk'))
     desired, architectures, keys = {}, set(), set()
     for file in files:
@@ -126,26 +137,68 @@ def publish(api, directory, version):
             raise PublicationError('Uploaded set not verified; preserving old packages')
     if {n: a for n, a in actual.items() if n not in desired} != {n: a for n, a in old.items() if n not in desired}:
         raise PublicationError('Concurrent publication; refusing pruning')
+    prune_verified(api, baseline['id'], old, actual, desired, package)
+
+
+def prune_verified(api, release_id, old, actual, desired, package):
     for name, asset in old.items():
         if name not in desired:
             # Recheck the complete desired set and exact old identity before each deletion.
             live = api.release()
             live_assets = scoped(live, package)
-            if live['id'] != baseline['id'] or live_assets != actual:
+            if live['id'] != release_id or live_assets != actual:
                 raise PublicationError('Concurrent publication during pruning')
             api.delete(asset['id'])
             del actual[name]
     final = api.release()
-    if final['id'] != baseline['id'] or scoped(final, package) != actual:
+    if final['id'] != release_id or scoped(final, package) != actual:
         raise PublicationError('Final publication verification failed')
+
+
+def complete_candidate(release, version, package):
+    if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+        raise PublicationError('Invalid stable upstream version')
+    target = tuple(map(int, version.split('.')))
+    groups = {}
+    for name, asset in scoped(release, package).items():
+        key, variant = package_key(name, package)
+        if key[:3] > target:
+            raise PublicationError('Refusing to prune a newer upstream version')
+        if key[:3] == target:
+            groups.setdefault(key, {})[name] = asset
+    # Never prune a partially published newer package release in favour of an older one.
+    if not groups:
+        return {}
+    candidate = groups[max(groups)]
+    variants = {package_key(name, package)[1] for name in candidate}
+    return candidate if variants == expected_variants(package) else {}
+
+
+def prune_complete(api, version, package='mihomo'):
+    baseline = api.release()
+    desired = complete_candidate(baseline, version, package)
+    if not desired:
+        raise PublicationError('No complete verified candidate for cleanup-only retry')
+    old = scoped(baseline, package)
+    prune_verified(api, baseline['id'], old, old.copy(), desired, package)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory')
     parser.add_argument('version')
+    parser.add_argument('--package', choices=('beszel-agent', 'mihomo'), default='beszel-agent')
+    parser.add_argument('--prune-only', action='store_true')
+    parser.add_argument('--plan', action='store_true')
     args = parser.parse_args()
     try:
-        publish(GitHub(), args.directory, args.version)
+        if args.plan:
+            complete = bool(complete_candidate(GitHub().release(), args.version, args.package))
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                output.write('update=' + ('false' if complete else 'true') + '\n')
+        elif args.prune_only:
+            prune_complete(GitHub(), args.version, args.package)
+        else:
+            publish(GitHub(), args.directory, args.version, args.package)
     except (PublicationError, OSError, KeyError) as error:
         parser.exit(2, f'Publication stopped: {error}\n')
