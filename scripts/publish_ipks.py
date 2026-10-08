@@ -57,6 +57,9 @@ class GitHub:
     def delete(self, asset_id):
         self.api(f'releases/assets/{asset_id}', 'DELETE')
 
+    def asset(self, asset_id):
+        return self.api(f'releases/assets/{asset_id}')
+
 
 def package_key(name, package):
     variant = ''
@@ -77,7 +80,16 @@ def expected_variants(package):
     raise PublicationError('Unsupported package scope')
 
 
+def starter(asset):
+    return (asset.get('state') == 'starter' and type(asset.get('size')) is int
+            and asset['size'] == 0 and asset.get('digest') is None)
+
+
 def scoped(release, package):
+    if (not isinstance(release, dict) or release.get('tag_name') != 'latest'
+            or release.get('draft') is not False or release.get('prerelease') is not False
+            or type(release.get('id')) is not int or release['id'] <= 0):
+        raise PublicationError('Invalid latest release identity')
     result = {}
     assets = release.get('assets')
     if not isinstance(assets, list):
@@ -88,10 +100,13 @@ def scoped(release, package):
         name = asset['name']
         if not (name.startswith(package + '_') and name.endswith('.ipk')):
             continue
-        package_key(name, package)
-        if (name in result or type(asset.get('id')) is not int or type(asset.get('size')) is not int
-                or asset['size'] <= 0 or asset.get('state') != 'uploaded'
-                or not re.fullmatch(r'sha256:[0-9a-f]{64}', asset.get('digest', ''))):
+        _, variant = package_key(name, package)
+        healthy = (type(asset.get('size')) is int and asset['size'] > 0
+                   and asset.get('state') == 'uploaded' and isinstance(asset.get('digest'), str)
+                   and re.fullmatch(r'sha256:[0-9a-f]{64}', asset['digest']))
+        if (name in result or type(asset.get('id')) is not int or asset['id'] <= 0
+                or sum(a.get('id') == asset['id'] for a in assets if isinstance(a, dict)) != 1
+                or variant not in expected_variants(package) or not (healthy or starter(asset))):
             raise PublicationError(f'Invalid or duplicate asset: {name}')
         result[name] = asset
     return result
@@ -119,12 +134,24 @@ def publish(api, directory, version, package='beszel-agent', keep_old=False):
     if any(package_key(name, package)[0] > candidate for name in old):
         raise PublicationError('Refusing publication over a newer package set')
     for name in desired.keys() & old.keys():
-        if any(old[name][field] != desired[name][field] for field in ('size', 'digest')):
+        if not starter(old[name]) and any(old[name][field] != desired[name][field] for field in ('size', 'digest')):
             raise PublicationError('Existing candidate differs; refusing overwrite')
     # Optimistic admission supplements Actions' shared publication lock.
     check = api.release()
     if check['id'] != baseline['id'] or scoped(check, package) != old:
         raise PublicationError('Concurrent package publication before upload')
+    for name in desired.keys() & old.keys():
+        if starter(old[name]):
+            # Exact local candidate only. Re-read the release and the object before DELETE.
+            live = api.release()
+            if (live['id'] != baseline['id'] or scoped(live, package) != old
+                    or api.asset(old[name]['id']) != old[name]):
+                raise PublicationError('Concurrent starter recovery')
+            api.delete(old[name]['id'])
+            del old[name]
+    check = api.release()
+    if check['id'] != baseline['id'] or scoped(check, package) != old:
+        raise PublicationError('Concurrent package publication after recovery')
     for file in files:
         if file.name not in old:
             api.upload(file)
@@ -152,6 +179,8 @@ def prune_verified(api, release_id, old, actual, desired, package):
             live_assets = scoped(live, package)
             if live['id'] != release_id or live_assets != actual:
                 raise PublicationError('Concurrent publication during pruning')
+            if starter(asset) and api.asset(asset['id']) != asset:
+                raise PublicationError('Concurrent starter change during pruning')
             api.delete(asset['id'])
             del actual[name]
     final = api.release()
@@ -175,7 +204,7 @@ def complete_candidate(release, version, package):
         return {}
     candidate = groups[max(groups)]
     variants = {package_key(name, package)[1] for name in candidate}
-    return candidate if variants == expected_variants(package) else {}
+    return candidate if variants == expected_variants(package) and not any(starter(a) for a in candidate.values()) else {}
 
 
 def prune_complete(api, version, package='mihomo'):

@@ -28,7 +28,10 @@ class API:
         self.reads += 1
         if self.reads == self.mutate_at:
             self.assets.append(asset('beszel-agent_0.19.0-1_mips-3.4.ipk', identity=99))
-        return dict(id=42, assets=copy.deepcopy(self.assets))
+        return dict(id=42, tag_name='latest', draft=False, prerelease=False, assets=copy.deepcopy(self.assets))
+
+    def asset(self, identity):
+        return copy.deepcopy(next(a for a in self.assets if a['id'] == identity))
 
     def upload(self, file):
         if len(self.uploads) == self.fail_upload:
