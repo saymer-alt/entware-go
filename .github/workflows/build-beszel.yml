@@ -34,8 +34,8 @@ jobs:
           RAW_VERSION: ${{ inputs.version }}
         run: |
           version="${RAW_VERSION#v}"
-          if ! printf '%s' "$version" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
-            echo "::error::Invalid version '${RAW_VERSION}' (expected something like 0.18.7)"
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$'; then
+            echo "::error::Invalid version '${RAW_VERSION}' (expected stable X.Y.Z, e.g. 0.18.7)"
             exit 1
           fi
           echo "Requested beszel-agent version: ${version}"
@@ -191,14 +191,14 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Checkout publication helper
+        uses: actions/checkout@v6
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
           path: out
           merge-multiple: true
-
-      - name: Checkout publication helper
-        uses: actions/checkout@v6
 
       - name: Validate, publish and prune Beszel packages
         env:

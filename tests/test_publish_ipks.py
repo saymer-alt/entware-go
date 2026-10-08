@@ -44,6 +44,12 @@ class API:
 
 
 class PublicationTests(unittest.TestCase):
+    def test_workflow_checkout_precedes_artifact_download(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/build-beszel.yml').read_text()
+        publication = workflow.split('  publish-latest-release:')[1]
+        self.assertLess(publication.index('actions/checkout@'), publication.index('actions/download-artifact@'))
+        self.assertIn('expected stable X.Y.Z', workflow)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
