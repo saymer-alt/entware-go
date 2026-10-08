@@ -1,0 +1,22 @@
+name: Publication and installer safety
+on:
+  pull_request:
+    branches: [gh-action-build]
+  push:
+    branches: [gh-action-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y busybox shellcheck
+          sh -n warpscout/install.sh
+          busybox ash -n warpscout/install.sh
+          shellcheck -S error warpscout/install.sh
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          INSTALL_TEST_SHELL=busybox python3 -m unittest discover -s tests -p 'test_warpscout_installer.py'
