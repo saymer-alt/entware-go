@@ -179,10 +179,13 @@ jobs:
         with:
           name: beszel-agent-${{ needs.preflight.outputs.version }}-${{ matrix.arch }}
           path: bin/targets/**/packages/beszel-agent_*.ipk
-          if-no-files-found: warn
+          if-no-files-found: error
           compression-level: 0
 
   publish-latest-release:
+    concurrency:
+      group: entware-latest-publication
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     needs: [ preflight, build ]
     env:
@@ -194,49 +197,11 @@ jobs:
           path: out
           merge-multiple: true
 
-      - name: Resolve latest target release
-        id: target-release
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const releases = await github.paginate(github.rest.repos.listReleases, {
-              owner,
-              repo,
-              per_page: 100,
-            });
+      - name: Checkout publication helper
+        uses: actions/checkout@v6
 
-            const picked = releases.find((rel) => !rel.draft && !rel.prerelease);
-            if (!picked) {
-              core.setFailed('No release found to update');
-              return;
-            }
-
-            core.setOutput('id', String(picked.id));
-            core.setOutput('tag', picked.tag_name);
-
-      - name: Remove previous beszel-agent ipk assets
+      - name: Validate, publish and prune Beszel packages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ steps.target-release.outputs.id }}
-        run: |
-          gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
-            --jq '.[] | select(.name | test("^beszel-agent_.*\\.ipk$")) | .id' \
-            | while read -r asset_id; do
-                [ -n "$asset_id" ] || continue
-                gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
-              done
-
-      - name: Upload new beszel-agent ipk assets to latest release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.target-release.outputs.tag }}
-        run: |
-          mapfile -t files < <(find out -type f -name 'beszel-agent_*.ipk' | sort)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No beszel-agent ipk files found"
-            exit 1
-          fi
-
-          printf '%s\n' "${files[@]}"
-          gh release upload "$TAG" "${files[@]}" --clobber
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: python3 scripts/publish_ipks.py out "$VERSION"
