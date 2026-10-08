@@ -15,8 +15,6 @@ on:
       - gh-action-build
     paths:
       - warpscout/Makefile
-      - warpscout/install.sh
-      - .github/workflows/build-warpscout.yml
   pull_request:
     branches:
       - gh-action-build

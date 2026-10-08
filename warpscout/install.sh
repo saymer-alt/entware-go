@@ -16,13 +16,16 @@ die() {
     exit 1
 }
 
-cleanup_file=""
+cleanup_dir=""
 cleanup() {
-    if [ -n "${cleanup_file}" ] && [ -f "${cleanup_file}" ]; then
-        rm -f "${cleanup_file}"
+    if [ -n "${cleanup_dir}" ] && [ -d "${cleanup_dir}" ]; then
+        rm -rf -- "${cleanup_dir}"
     fi
 }
-trap cleanup EXIT INT TERM HUP
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 command -v opkg >/dev/null 2>&1 || die "opkg not found; Entware is required"
 command -v curl >/dev/null 2>&1 || die "curl not found; install it first: opkg update && opkg install curl ca-bundle"
@@ -54,7 +57,10 @@ else
 
     [ -n "${asset_url}" ] || die "could not resolve the latest WARPSCOUT aarch64 IPK from GitHub release ${RELEASE_TAG}"
 
-    cleanup_file="/tmp/$(basename "${asset_url}")"
+    cleanup_dir="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/warpscout-install.XXXXXX")" ||
+        die "could not create private download directory"
+    chmod 700 "${cleanup_dir}" || die "could not secure download directory"
+    cleanup_file="${cleanup_dir}/$(basename "${asset_url}")"
     say "==> Downloading $(basename "${cleanup_file}")"
     curl -fSL --retry 3 --connect-timeout 15 -o "${cleanup_file}" "${asset_url}"
 
