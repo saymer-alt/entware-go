@@ -63,7 +63,7 @@ def package_key(name, package):
     if package == 'mihomo' and name.startswith('mihomo_nohf_'):
         name = name.replace('mihomo_nohf_', 'mihomo_', 1)
         variant = 'nohf/'
-    match = re.fullmatch(re.escape(package) + r'_(\d+)\.(\d+)\.(\d+)-(\d+)_([a-z0-9]+-[0-9.]+)\.ipk', name)
+    match = re.fullmatch(re.escape(package) + r'_(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([1-9][0-9]*)_([a-z0-9]+-[0-9.]+)\.ipk', name)
     if not match:
         raise PublicationError(f'Invalid package filename: {name}')
     return tuple(int(match[i]) for i in range(1, 5)), variant + match[5]

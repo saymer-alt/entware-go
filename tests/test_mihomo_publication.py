@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from publish_ipks import PublicationError, complete_candidate, expected_variants, publish, prune_complete
+from publish_ipks import PublicationError, complete_candidate, expected_variants, package_key, publish, prune_complete
 from test_publish_ipks import API, asset
 
 
@@ -104,6 +104,11 @@ class MihomoTests(unittest.TestCase):
         self.api.assets.append(asset(filename('1.20.0-1', 'mipsel-3.4'), identity=200))
         with self.assertRaises(PublicationError):
             prune_complete(self.api, '1.19.32')
+
+    def test_noncanonical_versions_rejected_as_by_consumer(self):
+        for version in ('01.19.32-2', '1.19.32-0', '1.19.32-02', '1.bad-2'):
+            with self.assertRaises(PublicationError):
+                package_key(filename(version, 'mipsel-3.4'), 'mihomo')
 
     def test_workflow_contract(self):
         root = Path(__file__).resolve().parents[1]
