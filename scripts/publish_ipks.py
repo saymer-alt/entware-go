@@ -97,7 +97,7 @@ def scoped(release, package):
     return result
 
 
-def publish(api, directory, version, package='beszel-agent'):
+def publish(api, directory, version, package='beszel-agent', keep_old=False):
     expected = expected_variants(package)
     files = sorted(Path(directory).rglob(package + '_*.ipk'))
     desired, architectures, keys = {}, set(), set()
@@ -137,6 +137,10 @@ def publish(api, directory, version, package='beszel-agent'):
             raise PublicationError('Uploaded set not verified; preserving old packages')
     if {n: a for n, a in actual.items() if n not in desired} != {n: a for n, a in old.items() if n not in desired}:
         raise PublicationError('Concurrent publication; refusing pruning')
+    if keep_old:
+        # The workflow notifies its existing aggregator before cleanup. A failed
+        # notification leaves overlap as the durable signal for a cleanup retry.
+        return
     prune_verified(api, baseline['id'], old, actual, desired, package)
 
 
@@ -190,15 +194,24 @@ if __name__ == '__main__':
     parser.add_argument('--package', choices=('beszel-agent', 'mihomo'), default='beszel-agent')
     parser.add_argument('--prune-only', action='store_true')
     parser.add_argument('--plan', action='store_true')
+    parser.add_argument('--keep-old', action='store_true')
+    parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     try:
         if args.plan:
-            complete = bool(complete_candidate(GitHub().release(), args.version, args.package))
+            release = GitHub().release()
+            candidate = complete_candidate(release, args.version, args.package)
+            complete = bool(candidate)
+            cleanup = complete and bool(scoped(release, args.package).keys() - candidate.keys())
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                 output.write('update=' + ('false' if complete else 'true') + '\n')
+                output.write('prune=' + ('true' if cleanup else 'false') + '\n')
+        elif args.verify_only:
+            if not complete_candidate(GitHub().release(), args.version, args.package):
+                raise PublicationError('No complete verified candidate')
         elif args.prune_only:
             prune_complete(GitHub(), args.version, args.package)
         else:
-            publish(GitHub(), args.directory, args.version, args.package)
+            publish(GitHub(), args.directory, args.version, args.package, args.keep_old)
     except (PublicationError, OSError, KeyError) as error:
         parser.exit(2, f'Publication stopped: {error}\n')

@@ -64,6 +64,19 @@ class MihomoTests(unittest.TestCase):
         self.assertEqual(len(self.api.uploads), 6)
         self.assertTrue(all(a in self.api.assets for a in self.foreign))
 
+    def test_notification_failure_leaves_overlap_for_recovery_without_upload(self):
+        publish(self.api, self.root, '1.19.32', 'mihomo', keep_old=True)
+        self.assertEqual(self.api.deleted, [])
+        self.assertTrue(complete_candidate(self.api.release(), '1.19.32', 'mihomo'))
+        old_ids = {a['id'] for a in self.api.assets if 20 <= a['id'] < 100}
+        self.assertEqual(len(old_ids), 6)
+        # Failed notification ends the workflow before pruning; the next run
+        # verifies/notifies this complete set and retries cleanup only.
+        ids = {a['id'] for a in self.api.assets if a['id'] >= 100}
+        prune_complete(self.api, '1.19.32')
+        self.assertEqual(ids, {a['id'] for a in self.api.assets if a['id'] >= 100})
+        self.assertEqual(len(self.api.uploads), 6)
+
     def test_partial_upload_preserves_old_and_retry_reuses_uploaded_ids(self):
         self.api.fail_upload = 3
         with self.assertRaises(PublicationError):
@@ -104,6 +117,12 @@ class MihomoTests(unittest.TestCase):
         self.assertNotIn('--clobber', workflow)
         self.assertNotIn('steps.target-release', workflow)
         self.assertNotIn('- .github/workflows/build-mihomo.yml', workflow)
+        for name in ('prune-complete', 'publish-latest-release'):
+            job = workflow.split('  '+name+':')[1].split('\n  preflight:')[0]
+            self.assertLess(job.index('Dispatch to feedly'), job.index('--prune-only'))
+        self.assertIn('curl -fsS -X POST', workflow)
+        self.assertIn("needs.check-version.outputs.prune == 'true'", workflow)
+        self.assertIn('--keep-old', workflow)
 
 
 if __name__ == '__main__':
