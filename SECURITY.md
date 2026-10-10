@@ -23,7 +23,7 @@ There is no verified security contact email published by this project. Do not se
 - Relevant redacted evidence and uncertainty/limits of testing.
 - Suggested mitigation, where available.
 
-Do **not** attach genuine camera/VPS credentials, WARP accounts, private keys, token-bearing subscription URLs, Telegram tokens, personal information or confidential infrastructure inventory.
+Do **not** attach GitHub Actions secrets, release or registry tokens, signing keys, private package-feed credentials, unpublished source artifacts, personal information or confidential infrastructure details. Share only redacted build logs, public release links, checksums and synthetic reproductions.
 
 ## Disclosure process
 
