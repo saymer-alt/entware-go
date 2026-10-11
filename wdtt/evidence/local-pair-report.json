@@ -1,0 +1,27 @@
+{
+  "scope": "local loopback Pion TURN -> patched upstream WRAP/DTLS/GETCONF -> userspace WireGuard; real standalone client and Mihomo; NO VK/OS TUN/routes/firewall",
+  "vk_acceptance": false,
+  "hardware_acceptance": false,
+  "checks": {
+    "real_GETCONF_through_TURN_DTLS": true,
+    "TCP_and_tunnel_DNS": true,
+    "UDP_echo_payload_bytes": [
+      64,
+      512,
+      1000,
+      1200,
+      1400
+    ],
+    "WG_handshake_and_bytes": {
+      "last_handshake_time_nsec": "996363860",
+      "last_handshake_time_sec": "1791728020",
+      "rx_bytes": "5492",
+      "tx_bytes": "5372"
+    },
+    "proc_argv_secret_absent": true,
+    "client_stdout_stderr_empty": true,
+    "test_application_fails_when_transport_down": true,
+    "legacy_secret_argv_rejected_without_echo": true
+  },
+  "passed": true
+}
