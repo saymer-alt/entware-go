@@ -1,5 +1,11 @@
 # WDTT standalone laboratory build
 
+## ⚠️⚠️⚠️ ЛИЧНЫЙ НЕКОММЕРЧЕСКИЙ ПРОЕКТ / ПУБЛИЧНЫЙ ТЕСТ ⚠️⚠️⚠️
+
+**Проект владелец ведёт прежде всего для себя, на некоммерческой основе. Репозиторий открыт публично. Лабораторные сборки и IPK для РУЧНОГО тестирования можно скачать, но они НЕ ГОТОВЫ К РАБОТЕ В PRODUCTION.**
+
+Некоммерческое назначение проекта **не отменяет** лицензии upstream и зависимостей; неизвестный объём разрешений не считается автоматически разрешённым. Лицензионная атрибуция требует отдельной проверки. Все существующие сборки/релизы Mihomo, WARPSCOUT и Beszel Agent работают по своим независимым правилам и не должны останавливаются из-за WDTT. В WDTT нет разрешения на автопубликацию пакетов в общий `latest`.
+
 Development base: `gh-action-build`. This directory is the only WDTT build location; no new repository, no use of retired mihomo-auto-build.
 
 Source: [hoaxisr/proxy-turn-vk-android](https://github.com/hoaxisr/proxy-turn-vk-android/tree/1110a75f76e42c23149b8e24f9182c1ff179e515), exact SHA `1110a75f76e42c23149b8e24f9182c1ff179e515`, go_client plus maintained patches and lab overlay. Client go.mod/go.sum hashes are locked. The fixture server uses the **client module graph** to include Pion TURN and netstack; this is not a production server module lock.
@@ -23,13 +29,13 @@ Builds Linux AMD64 (local functional tests), AArch64, MIPSel and MIPS BE. ELF ma
 
 **СКАЧАТЬ МОЖНО. ЭТО НЕ ГОТОВЫЙ УСТАНОВЩИК И НЕ ПРОЙДЕННЫЙ ДОПУСК НА KEENETIC.**
 
-После успешного PR-run откройте [PR #10](https://github.com/saymer-alt/entware-go/pull/10) → **Checks / Actions → завершённый запуск → Artifacts** и скачайте `WDTT-EXPERIMENTAL-NOT-FOR-PRODUCTION`. Внутри находится `wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz`; прочитайте `README-FIRST-EXPERIMENTAL.md` до извлечения и запуска ELF. При необходимости скачивание Actions artifacts требует входа в GitHub. Каждый архив содержит `SHA256SUMS`, исходный build-report, имеющиеся upstream notices и инвентаризацию зависимостей.
+После успешного PR-run: экспериментальные бинарники в `WDTT-EXPERIMENTAL-NOT-FOR-PRODUCTION`; IPK ARM64/MIPSel в **`WDTT-OWNER-TEST-IPK-NOT-PRODUCTION`**. Оба скачиваются из Artifacts, не из Releases и не из Entware feed. Не запускать opkg install, пока preflight не подтвердил ABI и владелец не согласовал эксперимент. Дальше: после успешного PR-run откройте [PR #10](https://github.com/saymer-alt/entware-go/pull/10) → **Checks / Actions → завершённый запуск → Artifacts** и скачайте `WDTT-EXPERIMENTAL-NOT-FOR-PRODUCTION`. Внутри находится `wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz`; прочитайте `README-FIRST-EXPERIMENTAL.md` до извлечения и запуска ELF. При необходимости скачивание Actions artifacts требует входа в GitHub. Каждый архив содержит `SHA256SUMS`, исходный build-report, имеющиеся upstream notices и инвентаризацию зависимостей.
 
 Порядок проверки: сначала read-only preflight KAS #125, затем проверка совпадения SHA256 и ABI; запускать только на согласованном **изолированном** тестовом устройстве. Для KN-1010 нужен бинарник `wt-client-linux-mipsle`, но лишь если реальный preflight подтвердит Entware little-endian softfloat. Для KN-4210 не предполагать ARM64 без проверки. Не запускать из CI-архива неизвестные конфиги, не вводить реальные секреты и не менять работающие службы.
 
 **Юридический статус не подтверждён:** отсутствие корневого LICENSE у pinned `fhttp@v0.6.8` и неполнота notice/scope review не означают технической ошибки компиляции, но крупное предупреждение **не заменяет** реальные разрешения и обязательные copyright/license notices. Не представлять этот архив как одобренный для публичного распространения. См. [EXPERIMENTAL-DOWNLOAD-WARNING.md](EXPERIMENTAL-DOWNLOAD-WARNING.md). Выполнить review параллельно с тестированием.
 
-**Actual IPK emission остаётся заблокированным** `release-gates.json`; в рабочих пакетных лентах и общем `latest` изменений нет. Entware init, reboot/rollback и реальный VK TURN пока не приняты. Возможность скачать ELF для предварительного аппаратного CLI-теста не означает разрешения на установку/IPK или эксплуатацию VPN.
+**Production IPK emission остаётся заблокированным** `release-gates.json`; но отдельная упаковка **доступных для скачивания owner-test IPK ARM64/MIPSel** разрешена как лабораторная функция, без init.d/postinst/автозапуска, с предупреждениями и SHA256. В рабочих пакетных лентах и общем `latest` изменений нет. Entware init, reboot/rollback и реальный VK TURN пока не приняты. Возможность скачать ELF для предварительного аппаратного CLI-теста не означает разрешения на установку/IPK или эксплуатацию VPN.
 
 ## Security boundary
 
@@ -51,9 +57,9 @@ This passed locally with synthetic TURN credentials. **No VK, router, VPS, WAN p
 
 ## IPK / rollback / release gates
 
-`ipk_recipe.py` implements deterministic ar + control.tar.gz + data.tar.gz with versioned `/opt/libexec/wdtt-lab/<source-version>/` payload, notices and provenance. It has no init script/maintainer script/autostart. Synthetic archive/path tests pass. Actual package emission is refused by release-gates.json and build-report.install_ready=false; there is no CLI bypass. **No real WDTT IPK has been emitted or published.**
+`ipk_recipe.py` implements deterministic ar + control.tar.gz + data.tar.gz with versioned `/opt/libexec/wdtt-lab/<source-version>/` payload, notices and provenance. It has no init script/maintainer script/autostart. Synthetic archive/path tests pass. **Production admission remains closed**: its normal CLI refuses without approved `release-gates.json` and `build-report.install_ready=true`. A **separate** `owner_test_ipk.py` deliberately produces only experimental manually operated CLI IPKs for ARM64 and MIPSel and embeds big warning, currently known GPL/MIT notices, dependency inventory, SHA256 and provenance. It does **not** install services, bypass owner hardware preflight, edit Mihomo, publish a release, notify the feed or claim legal clearance. CI packages these as a distinct Actions artifact; no WDTT IPKs are placed in `latest`.
 
-Dependency gate: main GPL-3.0-or-later; awgmproto v0.1.1 MIT. The retained Phase1 inventory covers 31 actually imported modules, root license texts only, not a complete scope approval. `fhttp@v0.6.8` refers to a BSD-style Go license but lacks LICENSE/COPYING/NOTICE at pinned tree `ecfe905c2db9d1ec769a16a14191ec84553dd235`; exact Go-derived and fork-specific notices/scopes remain unresolved. No incompatible-license conclusion is invented, and no binary redistribution is enabled.
+Dependency gate: main GPL-3.0-or-later; awgmproto v0.1.1 MIT. The retained Phase1 inventory covers 31 actually imported modules, root license texts only, not a complete scope approval. `fhttp@v0.6.8` refers to a BSD-style Go license but lacks LICENSE/COPYING/NOTICE at pinned tree `ecfe905c2db9d1ec769a16a14191ec84553dd235`; exact Go-derived and fork-specific notices/scopes remain unresolved. No incompatible-license conclusion is invented. Experimental Actions artifacts are now downloadable; **warnings are not legal permissions**, and the legal implications of public redistribution remain under review.
 
 Future rollback keeps previous own version/provenance and atomically selects it after verified stop. KAS contains a separately tested local sandbox lifecycle; live Entware installation/uninstall/reboot admission remains closed pending hardware and safety gates. See [KAS experimental branch](https://github.com/saymer-alt/keenetic-auto-setup/tree/feature/wdtt-experimental-poc-20261011/experimental/wdtt).
 
