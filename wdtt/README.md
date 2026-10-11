@@ -27,6 +27,8 @@ Upstream stdout, stderr, STDIN and core dumps are disabled before execution. Thi
 
 UDP bind is exclusive (upstream SO_REUSEADDR removed). Port/config/auth failures terminate with78; temporary worker failures have exponential backoff and a five-attempt bound, exit75 when exhausted. No router TUN or AWG Manager daemon is required for vpn mode. The linked awgmproto library remains MIT, with notice retained; control sockets are never initialized in this profile.
 
+`CONFIG_READY` is only a file event. The local test also waits for `WORKER_REGISTERED`, emitted after UDP dispatcher registration, before starting the application. Neither event proves WG connectivity: the test separately requires handshake/counters and successful TCP/UDP. First CI run38146507134 built every architecture but failed the first TCP request with curl52 after GETCONF. Startup timing was a hypothesis; the explicit registration gate and separate literal-IP/DNS probes preserve that distinction rather than treating a config file as readiness.
+
 Server patch020 requires AUTH password + known/bound device, and rejects unapproved first packets/failed GETCONF before UDP forwarding. The unchanged upstream fails three local negative tests; patched handler passes those plus the positive test. WRAP key to credential binding, revocation of already-active connections, persistent server files, TCP API, Telegram and startup side effects still need production review. A local AUTH test is not a complete server security audit.
 
 ## Local functional PoC

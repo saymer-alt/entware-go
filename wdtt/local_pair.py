@@ -51,6 +51,8 @@ def main():
             except BrokenPipeError:pass
             wait_for(lambda:(d/'wg-turn.conf').exists(),children)
             result['checks']['real_GETCONF_through_TURN_DTLS']=True
+            wait_for(lambda:(d/'transport-ready').exists() and (d/'transport-ready').read_text().strip()=='WORKER_REGISTERED',children)
+            result['checks']['worker_registered_before_application_start']=True
             assert (d/'wg-turn.conf').stat().st_mode&0o777==0o600
             subprocess.run(['python3',converter,str(d/'wg-turn.conf'),str(d/'mihomo.json'),'--port','19000'],check=True,stdout=subprocess.DEVNULL)
             validation=subprocess.run([mihomo,'-t','-d',str(d/'mihomo-data'),'-f',str(d/'mihomo.json')],capture_output=True,text=True)
@@ -63,6 +65,9 @@ def main():
                     with socket.create_connection(('127.0.0.1',17890),timeout=.2):return True
                 except OSError:return False
             wait_for(listening,children)
+            literal=subprocess.check_output(['curl','-fsS','--max-time','20','--socks5-hostname','127.0.0.1:17890','http://10.66.66.1:18080/'],env={**os.environ,'NO_PROXY':'','no_proxy':''})
+            assert literal==b'WDTT-LOCAL-TCP-OK\n'
+            result['checks']['TCP_literal_IPv4']=True
             response=subprocess.check_output(['curl','-fsS','--max-time','20','--socks5-hostname','127.0.0.1:17890','http://fixture.invalid:18080/'],env={**os.environ,'NO_PROXY':'','no_proxy':''})
             assert response==b'WDTT-LOCAL-TCP-OK\n'
             result['checks']['TCP_and_tunnel_DNS']=True
@@ -93,6 +98,9 @@ def main():
             result.update(passed=False,error=type(e).__name__+': '+str(e))
             # Never include private config, keys, credentials, or raw logs.
             if (d/'status').exists():result['client_status']=(d/'status').read_text().strip()
+            if (d/'wg-metrics.json').exists():
+                try:result['failure_WG_metrics']=json.loads((d/'wg-metrics.json').read_text())
+                except ValueError:pass
         finally:
             (d/'STOP').touch(mode=0o600)
             for child in reversed(children):

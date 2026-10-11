@@ -161,3 +161,13 @@
  		return nil, err
  	}
  	log.Printf("[КАПЧА] captcha profile rotated (fp=%s...)", fp[:8])
+--- a/go_client/session.go
++++ b/go_client/session.go
+@@ -348,6 +348,7 @@
+ 		SendCh: make(chan []byte, workerSendBuf),
+ 	}
+ 	d.Register(slot)
++ labWorkerRegistered()
+ 	defer d.Unregister(slot)
+ 
+ 	// Proxy DTLS ↔ Dispatcher

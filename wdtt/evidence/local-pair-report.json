@@ -4,6 +4,8 @@
   "hardware_acceptance": false,
   "checks": {
     "real_GETCONF_through_TURN_DTLS": true,
+    "worker_registered_before_application_start": true,
+    "TCP_literal_IPv4": true,
     "TCP_and_tunnel_DNS": true,
     "UDP_echo_payload_bytes": [
       64,
@@ -13,10 +15,10 @@
       1400
     ],
     "WG_handshake_and_bytes": {
-      "last_handshake_time_nsec": "996363860",
-      "last_handshake_time_sec": "1791728020",
-      "rx_bytes": "5492",
-      "tx_bytes": "5372"
+      "last_handshake_time_nsec": "154746135",
+      "last_handshake_time_sec": "1791728591",
+      "rx_bytes": "6148",
+      "tx_bytes": "5980"
     },
     "proc_argv_secret_absent": true,
     "client_stdout_stderr_empty": true,

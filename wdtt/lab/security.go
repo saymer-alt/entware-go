@@ -175,9 +175,18 @@ func main() {
 	}
 	os.Args = os.Args[:1]
 	labStatus("STARTING")
+	if labWrite("transport-ready", []byte("STARTING\n")) != nil {
+		os.Exit(78)
+	}
 	go func() { time.Sleep(30 * time.Minute); labStatus("TIME_LIMIT"); os.Exit(75) }()
 	upstreamMain()
 	labStatus("STOPPED")
+}
+func labWorkerRegistered() {
+	if labWrite("transport-ready", []byte("WORKER_REGISTERED\n")) != nil {
+		labStatus("CONFIG_WRITE_FAILED")
+		os.Exit(78)
+	}
 }
 func labSilence() error {
 	// No substring redactor can safely recognize every server-controlled secret.
