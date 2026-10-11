@@ -15,6 +15,7 @@ match=re.search(r'^          path: \|\n((?:            [^\n]+\n)+)',uploads[0],r
 assert match
 paths={line.strip() for line in match[1].splitlines()}
 assert paths=={
+ 'wdtt-build/owner-opkg-report.json','wdtt-build/production-guard-report.json',
  'wdtt-build/build-report.json','wdtt-build/local-pair-report.json','wdtt-build/server-auth-baseline.txt',
  'wdtt-build/quarantine-ipk-report.json','wdtt-build/license-evidence/dependency-source-audit.json',
  'wdtt-build/license-evidence/NOTICE-COLLECTION.txt','wdtt-build/test-deps/mihomo-test-digest.json'}

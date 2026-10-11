@@ -3,9 +3,18 @@
 import argparse,gzip,hashlib,io,json,pathlib,struct,sys,tarfile
 HERE=pathlib.Path(__file__).parent
 ARCH={'arm64':'aarch64-3.10','mipsle':'mipsel-3.4','mips':'mips-3.4'}
-def tar_gz(files):
+def tar_gz(files,include_dirs=False,directory_floor=None):
     out=io.BytesIO()
     with tarfile.open(fileobj=out,mode='w',format=tarfile.USTAR_FORMAT) as tar:
+        if include_dirs:
+            directories=set()
+            for name in files:
+                parts=name.split('/')
+                directories.update('/'.join(parts[:n]) for n in range(2,len(parts)))
+            for name in sorted(directories):
+                if directory_floor and not (name==directory_floor or name.startswith(directory_floor+'/')):continue
+                info=tarfile.TarInfo(name+'/');info.type=tarfile.DIRTYPE;info.mode=0o755
+                info.mtime=0;info.uid=info.gid=0;info.uname=info.gname='root';tar.addfile(info)
         for name,(data,mode) in sorted(files.items()):
             info=tarfile.TarInfo(name);info.size=len(data);info.mode=mode;info.mtime=0;info.uid=info.gid=0;info.uname=info.gname='root'
             tar.addfile(info,io.BytesIO(data))
@@ -14,16 +23,39 @@ def tar_gz(files):
     # OS=255. Canonicalize every gzip layer, independent of host OS header.
     compressed[9]=255
     return bytes(compressed)
-def package(binary,arch,source,notices,provenance,quarantine=False):
+def package(binary,arch,source,notices,provenance,quarantine=False,owner_test=False,extra_files=None):
     version='0.0.0+git'+source[:12]+'.'+hashlib.sha256(binary).hexdigest()[:12]
-    name='wt-client-quarantine' if quarantine else 'wt-client-lab'
-    root=f'./opt/libexec/wdtt-lab/{version}'
+    assert not (quarantine and owner_test)
+    name='wt-client-quarantine' if quarantine else ('wt-client-owner-test' if owner_test else 'wt-client-lab')
+    if owner_test:version+='.'+provenance['kas_commit'][:12]
+    root=(f'./opt/lib/wdtt-owner-test/{version}' if owner_test else f'./opt/libexec/wdtt-lab/{version}')
     data={root+'/wt-client':(binary,0o755),root+'/NOTICES':(notices,0o644),root+'/provenance.json':(json.dumps(provenance,sort_keys=True).encode(),0o644)}
-    data_archive=tar_gz(data)
+    if extra_files:
+        assert owner_test and set(extra_files)=={'service.sh','init.d','install.sh'}
+        data.update({root+'/'+name:(value,0o755) for name,value in extra_files.items()})
+    data_archive=tar_gz(data,include_dirs=True,directory_floor='./opt/lib/wdtt-owner-test' if owner_test else None)
     # Pinned Entware SDK ipkg-build: bytes of the uncompressed data tar.
     installed_size=len(gzip.decompress(data_archive))
     control=f'Package: {name}\nVersion: {version}-1\nArchitecture: {ARCH[arch]}\nMaintainer: saymer-alt\nSection: net\nPriority: optional\nDepends: ca-bundle\nInstalled-Size: {installed_size}\nDescription: Experimental standalone WDTT; manual start only\n'
     ctl={'./control':(control.encode(),0o644)}
+    if owner_test:
+        preinst='#!/bin/sh\nset -f\nexport LC_ALL=C\nfail() { printf \'%s\\n\' WDTT_OWNER_PAYLOAD_CONFLICT >&2; exit 78; }\nprefix=${IPKG_INSTROOT-}; prefix=${prefix%/}\nif [ -n "$prefix" ]; then\n    [ -d "$prefix" ] && [ ! -L "$prefix" ] && [ "$(cd -P "$prefix" && pwd)" = "$prefix" ] || fail\nfi\ncommand -v sha256sum >/dev/null 2>&1 || fail\nuid=$(id -u)\n'
+        target=root.removeprefix('.')
+        preinst+='dest="$prefix'+target+'"\n'
+        preinst+='[ -d "$prefix/opt/lib" ] && [ ! -L "$prefix/opt/lib" ] || fail\n'
+        preinst+='for parent in "$prefix/opt" "$prefix/opt/lib" "$prefix/opt/lib/wdtt-owner-test" "$dest"; do\n'
+        preinst+='  if [ -e "$parent" ] || [ -L "$parent" ]; then\n'
+        preinst+='    [ -d "$parent" ] && [ ! -L "$parent" ] || fail\n'
+        preinst+="    ls -ldn \"$parent\" | awk -v uid=\"$uid\" '$3==uid && substr($1,6,1)!=\"w\" && substr($1,9,1)!=\"w\" {ok=1} END {exit !ok}' || fail\n"
+        preinst+='  fi\ndone\n'
+        for name,(value,mode) in sorted(data.items()):
+            relative=name.removeprefix(root+'/')
+            preinst+='file="$dest/'+relative+'"\n'
+            preinst+='if [ -e "$file" ] || [ -L "$file" ]; then\n'
+            preinst+='  [ -f "$file" ] && [ ! -L "$file" ] || fail\n'
+            preinst+="  ls -ln \"$file\" | awk -v uid=\"$uid\" '$2==1 && $3==uid {ok=1} END {exit !ok}' || fail\n"
+            preinst+='  [ "$(sha256sum "$file" | awk \'{print $1}\')" = "'+hashlib.sha256(value).hexdigest()+'" ] || fail\nfi\n'
+        ctl['./preinst']=(preinst.encode(),0o755)
     if quarantine:
         ctl['./preinst']=(b'#!/bin/sh\nprintf "%s\\n" "WDTT_QUARANTINE_INSTALL_BLOCKED" >&2\nexit 78\n',0o755)
     return tar_gz({'./debian-binary':(b'2.0\n',0o644),'./control.tar.gz':(tar_gz(ctl),0o644),'./data.tar.gz':(data_archive,0o644)})

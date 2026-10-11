@@ -16,7 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install emulation for CLI probes only
-        run: sudo apt-get update && sudo apt-get install -y qemu-user zstd
+        run: sudo apt-get update && sudo apt-get install -y qemu-user zstd busybox cmake make pkg-config libjson-c-dev
+      - name: Snapshot protected production source and shared latest (read only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p wdtt-build
+          python3 wdtt/test_production_boundary.py --capture wdtt-build/production-before.json
       - name: Fetch and verify existing pinned SDK (no toolchain upgrade)
         shell: bash
         run: |
@@ -37,16 +43,24 @@ jobs:
           python3 wdtt/test_quarantine_retention.py
           python3 wdtt/test_workflow_gate.py
           python3 wdtt/verify_quarantine.py --build wdtt-build --report wdtt-build/quarantine-ipk-report.json
-      - name: Checkout exact offline converter revision from KAS experiment
+      - name: Checkout pinned owner lifecycle and offline converter from KAS
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: saymer-alt/keenetic-auto-setup
-          ref: 79b9f7c500a81634a4ce7c62e4cff9a36e4fd5a8
+          ref: 7c01e29c0ef278532e083a0d6868cfef4d2ca003
           path: kas-poc
+      - name: Native Entware opkg offline-root owner-package acceptance
+        run: |
+          python3 wdtt/build_opkg_fixture.py wdtt-build/opkg-fixture
+          python3 wdtt/test_owner_opkg.py --opkg wdtt-build/opkg-fixture/opkg-build/src/opkg-cl --build wdtt-build --kas kas-poc --report wdtt-build/owner-opkg-report.json
       - name: Local-only TURN, DTLS, WireGuard and Mihomo functional acceptance
         run: |
           python3 wdtt/fetch_test_mihomo.py wdtt-build/test-deps
           python3 wdtt/local_pair.py --harness wdtt-build/server-pair.test --relay wdtt-build/wdtt-relay-linux-amd64 --client wdtt-build/wt-client-linux-amd64 --mihomo wdtt-build/test-deps/mihomo-compatible --converter kas-poc/experimental/wdtt/wg_to_mihomo.py --report wdtt-build/local-pair-report.json
+      - name: Verify production source and latest stayed unchanged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 wdtt/test_production_boundary.py --verify wdtt-build/production-before.json --report wdtt-build/production-guard-report.json
       - name: Retain evidence only (no binaries or IPKs until licensing gate closes)
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -54,6 +68,8 @@ jobs:
           name: wdtt-laboratory-evidence
           path: |
             wdtt-build/build-report.json
+            wdtt-build/owner-opkg-report.json
+            wdtt-build/production-guard-report.json
             wdtt-build/local-pair-report.json
             wdtt-build/server-auth-baseline.txt
             wdtt-build/quarantine-ipk-report.json

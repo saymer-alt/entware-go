@@ -11,11 +11,13 @@ def members(data):
     assert set(out)=={'debian-binary','control.tar.gz','data.tar.gz'}
     assert out['debian-binary']==b'2.0\n';return out
 
-def preserve_owner_local(private, requested, records):
+def preserve_owner_local(private, requested, records, kind="quarantine"):
     """Retain verified install-blocked IPKs *only* in an explicit private local directory.
 
     This is not a public artifact/release path and does not produce install-ready packages.
     """
+    if os.name!="posix":raise ValueError("Private retention requires POSIX permissions, e.g. owner WSL ext4")
+    assert kind in ("quarantine","owner-test")
     dest=pathlib.Path(requested).expanduser()
     if not dest.is_absolute() or dest.exists() or not dest.parent.is_dir():
         raise ValueError('Retention needs a new absolute local directory (parent must exist)')
@@ -27,23 +29,26 @@ def preserve_owner_local(private, requested, records):
         raise ValueError('Do not keep binary IPKs within the Git checkout')
     dest.mkdir(mode=0o700)
     dest.chmod(0o700)
+    if dest.stat().st_mode & 0o777 != 0o700 or dest.stat().st_uid!=os.geteuid():
+        raise ValueError("Private directory permissions not enforced; use WSL ext4, not /mnt/c")
     manifest=[]
     for r in records:
-        src=private/('wt-client-quarantine_'+r['entware_arch']+'.ipk')
+        src=private/('wt-client-'+kind+'_'+r['entware_arch']+'.ipk')
         target=dest/src.name
         if target.exists():
             raise FileExistsError(target)
         shutil.copyfile(src,target)
         target.chmod(0o600)
+        assert target.stat().st_mode & 0o777 == 0o600
         digest=hashlib.sha256(target.read_bytes()).hexdigest()
         assert digest==r['ipk_sha256'],'retained file checksum mismatch'
-        manifest.append({'file':target.name,'sha256':digest,'status':'QUARANTINED_PREINST_BLOCKS_INSTALL','install_ready':False})
-    manifest_file=dest/'PRIVATE-QUARANTINE-MANIFEST.json'
+        manifest.append({'file':target.name,'sha256':digest,'status':'QUARANTINED_PREINST_BLOCKS_INSTALL' if kind=='quarantine' else 'OWNER_LOCAL_INSTALL_CANDIDATE','install_ready':False,'owner_install_candidate':kind=='owner-test'})
+    manifest_file=dest/('PRIVATE-QUARANTINE-MANIFEST.json' if kind=='quarantine' else 'PRIVATE-OWNER-TEST-MANIFEST.json')
     with manifest_file.open('x') as h:
         json.dump(manifest,h,indent=2)
         h.write('\n')
     manifest_file.chmod(0o600)
-    print('PRESERVED PRIVATE QUARANTINE (INSTALL STILL BLOCKED):',dest)
+    print('PRESERVED PRIVATE '+kind+':',dest)
     return len(manifest)
 
 def verify(build,output,retain_private_dir=None):
@@ -69,7 +74,9 @@ def verify(build,output,retain_private_dir=None):
                     p=subprocess.run(shell,input=preinst,capture_output=True)
                     assert p.returncode==78 and b'INSTALL_BLOCKED' in p.stderr
             with tarfile.open(fileobj=io.BytesIO(gzip.decompress(ars['data.tar.gz']))) as tar:
-                files=tar.getmembers();assert len(files)==3
+                all_members=tar.getmembers();assert all(m.isdir() or m.isfile() for m in all_members)
+                assert all(m.uid==0 and m.gid==0 and (not m.isdir() or m.mode==0o755) for m in all_members)
+                files=[m for m in all_members if m.isfile()];assert len(files)==3
                 assert all(m.isfile() and m.uid==0 and m.gid==0 and '..' not in pathlib.PurePosixPath(m.name).parts and m.name.startswith('./opt/libexec/wdtt-lab/') for m in files)
                 binary=next(m for m in files if m.name.endswith('/wt-client'));assert binary.mode==0o755
                 assert tar.extractfile(binary).read()==elf
