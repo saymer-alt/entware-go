@@ -78,7 +78,25 @@ jobs:
           path: wdtt-build/wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz
           if-no-files-found: error
           retention-days: 14
-      - name: Retain evidence (no IPK, release or package feed publication)
+      - name: Make explicit owner-test IPKs (manual CLI only; no service or feed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p wdtt-build/owner-test-ipks
+          python3 wdtt/owner_test_ipk.py \
+            --report wdtt-build/build-report.json \
+            --binary-dir wdtt-build \
+            --output-dir wdtt-build/owner-test-ipks
+          python3 wdtt/test_owner_test_ipk.py
+          (cd wdtt-build/owner-test-ipks && sha256sum -c SHA256SUMS)
+      - name: Downloadable owner-test ARM64 and MIPSel IPKs (NOT latest)
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: WDTT-OWNER-TEST-IPK-NOT-PRODUCTION
+          path: wdtt-build/owner-test-ipks/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain evidence (no release or package feed publication)
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
