@@ -8,7 +8,7 @@ Compiler: unmodified Go1.26.1 from existing [Entware SDK v2026.07.04](https://gi
 
 ## Build-only CI
 
-[build-wdtt-lab.yml](../.github/workflows/build-wdtt-lab.yml) supports workflow_dispatch and PRs to gh-action-build. Contents permission is read-only. It uploads **JSON evidence only**, never binaries/IPKs/releases. A new workflow may not be manually dispatchable until present on the default branch; use the PR run while merge is forbidden. Do not change the default branch or merge to work around this restriction.
+[build-wdtt-lab.yml](../.github/workflows/build-wdtt-lab.yml) supports workflow_dispatch and PRs to gh-action-build. Contents permission is read-only. It uploads reproducibility evidence and an **explicitly experimental, downloadable tar.gz containing the four lab ELF binaries**, SHA256SUMS, warning README, preliminary upstream notices and dependency inventory. It **does not** create IPKs, GitHub Releases, publish to `latest` or submit to the Entware feed. A new workflow may not be manually dispatchable until present on the default branch; use the PR run while merge is forbidden. Do not change the default branch or merge to work around this restriction.
 
 ```sh
 # Download and SHA256-verify the SDK as shown in the workflow, extract host/go.
@@ -18,6 +18,18 @@ python3 wdtt/test_packaging.py
 ```
 
 Builds Linux AMD64 (local functional tests), AArch64, MIPSel and MIPS BE. ELF machine/endian and absence of PT_INTERP are checked. MIPS Go build metadata must say softfloat. Native/QEMU -h checks verify startup and the narrow standalone CLI, **not target hardware, kernel support, RAM or full ABI acceptance**. All build and overlay/source/lock digests are recorded in build-report.json. Reproducibility across independent hosts is still an acceptance item.
+
+## ⚠️⚠️⚠️ СКАЧИВАЕМЫЕ ЛАБОРАТОРНЫЕ СБОРКИ — НЕ ДЛЯ PRODUCTION ⚠️⚠️⚠️
+
+**СКАЧАТЬ МОЖНО. ЭТО НЕ ГОТОВЫЙ УСТАНОВЩИК И НЕ ПРОЙДЕННЫЙ ДОПУСК НА KEENETIC.**
+
+После успешного PR-run откройте [PR #10](https://github.com/saymer-alt/entware-go/pull/10) → **Checks / Actions → завершённый запуск → Artifacts** и скачайте `WDTT-EXPERIMENTAL-NOT-FOR-PRODUCTION`. Внутри находится `wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz`; прочитайте `README-FIRST-EXPERIMENTAL.md` до извлечения и запуска ELF. При необходимости скачивание Actions artifacts требует входа в GitHub. Каждый архив содержит `SHA256SUMS`, исходный build-report, имеющиеся upstream notices и инвентаризацию зависимостей.
+
+Порядок проверки: сначала read-only preflight KAS #125, затем проверка совпадения SHA256 и ABI; запускать только на согласованном **изолированном** тестовом устройстве. Для KN-1010 нужен бинарник `wt-client-linux-mipsle`, но лишь если реальный preflight подтвердит Entware little-endian softfloat. Для KN-4210 не предполагать ARM64 без проверки. Не запускать из CI-архива неизвестные конфиги, не вводить реальные секреты и не менять работающие службы.
+
+**Юридический статус не подтверждён:** отсутствие корневого LICENSE у pinned `fhttp@v0.6.8` и неполнота notice/scope review не означают технической ошибки компиляции, но крупное предупреждение **не заменяет** реальные разрешения и обязательные copyright/license notices. Не представлять этот архив как одобренный для публичного распространения. См. [EXPERIMENTAL-DOWNLOAD-WARNING.md](EXPERIMENTAL-DOWNLOAD-WARNING.md). Выполнить review параллельно с тестированием.
+
+**Actual IPK emission остаётся заблокированным** `release-gates.json`; в рабочих пакетных лентах и общем `latest` изменений нет. Entware init, reboot/rollback и реальный VK TURN пока не приняты. Возможность скачать ELF для предварительного аппаратного CLI-теста не означает разрешения на установку/IPK или эксплуатацию VPN.
 
 ## Security boundary
 
