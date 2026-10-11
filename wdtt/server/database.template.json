@@ -1,0 +1,22 @@
+{
+  "main_password": "",
+  "admin_id": "",
+  "bot_token": "",
+  "passwords": {
+    "REPLACE_WITH_RANDOM_PASSWORD_LOCALLY": {
+      "device_id": "keenetic-test",
+      "device_ids": ["keenetic-test"],
+      "max_devices": 1,
+      "expires_at": 0,
+      "is_deactivated": false
+    }
+  },
+  "devices": {
+    "keenetic-test": {
+      "device_id": "keenetic-test",
+      "ip": "10.66.66.2",
+      "priv_key": "GENERATE_CLIENT_KEY_LOCALLY_NEVER_PASTE_IN_COMMAND",
+      "pub_key": "DERIVE_FROM_THE_SAME_CLIENT_PRIVATE_KEY"
+    }
+  }
+}

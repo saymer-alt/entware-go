@@ -18,6 +18,9 @@ def main():
     if a.cache:env['GOCACHE']=str(pathlib.Path(a.cache).resolve())
     if a.modules:env['GOPATH']=str(pathlib.Path(a.modules).resolve())
     version=run([go,'version'],env=env);assert version=='go version go1.26.1 linux/amd64',version
+    for shell in [['sh'],['busybox','ash']]:
+        run([*shell,'-n',HERE/'server/run-relay.sh'])
+        assert 'WDTT_RELAY_PLAN_V1' in run([*shell,HERE/'server/run-relay.sh','--plan'])
     src=work/'source'
     assert not src.exists(),'Use a fresh work directory; never overwrite an existing checkout'
     if a.source:
@@ -51,9 +54,17 @@ def main():
     server_patch=HERE/'patches/020-server-auth-lab.patch'
     run(['git','apply',server_patch],cwd=server)
     auth_tests=run([go,'test','-mod=readonly','-count=1','-run','^Test(RejectWrongAUTH|AcceptKnownAUTH|RejectUnknownDevice|RejectNoAUTH)$','.'],cwd=server,env=env)
+    policy_patch=HERE/'patches/030-server-policy.patch'
+    run(['git','apply',policy_patch],cwd=server)
+    for name in ['server_policy.go','server_entry.go','server_policy_test.go']:shutil.copy(HERE/'lab'/name,server/name)
+    policy_tests=run([go,'test','-mod=readonly','-count=1','-run','^Test(RejectWrongAUTH|AcceptKnownAUTH|RejectUnknownDevice|RejectNoAUTH|ServerCredentialPolicy|ActiveRevocation|RelayPrivateFiles)$','.'],cwd=server,env=env)
+    run([go,'build','-mod=readonly','-trimpath','-buildvcs=false','-ldflags=-s -w -buildid=','-o',work/'wdtt-relay-linux-amd64','.'],cwd=server,env=env)
+    assert 'no TUN/NAT/API/Telegram' in run([work/'wdtt-relay-linux-amd64','-h'],env=env)
     shutil.copy(HERE/'lab/server_pair_fixture_test.go',server/'server_pair_fixture_test.go')
     run([go,'test','-mod=readonly','-c','-o',work/'server-pair.test','.'],cwd=server,env=env)
     records=[]
+    from license_audit import audit
+    license_report=audit(go,module,work/'license-evidence',env)
     for arch,machine,endian,runner in [('amd64',62,1,[]),('arm64',183,1,['qemu-aarch64']),('mipsle',8,1,['qemu-mipsel']),('mips',8,2,['qemu-mips'])]:
         env.update(GOARCH=arch,GOMIPS='softfloat')
         out=work/('wt-client-linux-'+arch)
@@ -71,6 +82,12 @@ def main():
         helpout=run([*runner,out,'-h'],env=env);assert 'no AWG daemon' in helpout
         records.append(dict(arch=arch,bytes=len(b),sha256=sha(out),machine=machine,endian=endian,pt_interp=False,go_metadata=metadata,cli_startup='native' if not runner else 'QEMU ONLY'))
     report=dict(source=SOURCE,toolchain=version,sdk_sha256=SDK_SHA,patch_sha256=sha(patch),server_auth_patch_sha256=sha(server_patch),server_auth_tests=auth_tests,overlay={n:sha(HERE/'lab'/n) for n in ['security.go','security_test.go','server_auth_test.go','server_pair_fixture_test.go']},go_sum_sha256=sha(module/'go.sum'),tests=tests,builds=records,server_pair='same upstream SHA; GETCONF/AUTH fixture; local TURN/DTLS/WG harness compiled separately, consult local-pair report; full VK acceptance NOT RUN',license_gate='BLOCKED: fhttp notice/scope audit incomplete',install_ready=False,ipk_created=False,production_mutation=False)
+    report['server_policy_tests']=policy_tests
+    report['server_policy_patch_sha256']=sha(policy_patch)
+    report['server_overlay']={n:sha(HERE/'lab'/n) for n in ['server_policy.go','server_entry.go','server_policy_test.go']}
+    report['relay_sha256']=sha(work/'wdtt-relay-linux-amd64')
+    report['notice_collection_sha256']=sha(work/'license-evidence/NOTICE-COLLECTION.txt')
+    report['dependency_source_audit_sha256']=sha(work/'license-evidence/dependency-source-audit.json')
     (work/'build-report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

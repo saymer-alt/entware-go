@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,10 +43,10 @@ func TestLocalPairHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	password := "SYNTHETIC-LOCAL-WDTT-PASSWORD-ONLY"
-	db = &Database{MainPassword: password, Devices: map[string]*ClientDevice{"fixture": {DeviceID: "fixture", IP: "10.66.66.2", PrivKey: clientPriv, PubKey: clientPub}}, Passwords: map[string]*PasswordEntry{}}
+	db = &Database{Devices: map[string]*ClientDevice{"fixture": {DeviceID: "fixture", IP: "10.66.66.2", PrivKey: clientPriv, PubKey: clientPub}}, Passwords: map[string]*PasswordEntry{password: {DeviceID:"fixture",DeviceIDs:[]string{"fixture"},MaxDevices:1,ExpiresAt:time.Now().Add(5*time.Minute).Unix()}}}
 	dbFile = filepath.Join(dir, "server-db.json")
 	dns = "10.66.66.1"
-	if err = serverWrapKeys.SetPasswords(password, nil); err != nil {
+	if err = serverWrapKeys.SetPasswords("", []string{password}); err != nil {
 		t.Fatal(err)
 	}
 	tun, tnet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.66.66.1")}, nil, 1280)
@@ -130,6 +131,16 @@ func TestLocalPairHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer turnServer.Close()
+	if relay := os.Getenv("WDTT_HARDENED_RELAY_BIN"); relay != "" {
+		data,_ := json.Marshal(db)
+		if os.WriteFile(dbFile,data,0600)!=nil { t.Fatal("db write") }
+		cfg,_ := json.Marshal(map[string]string{"listen":"127.0.0.1:19003","wg_endpoint":"127.0.0.1:19001","server_public_key":serverPub,"dns":dns,"database_file":dbFile})
+		path := filepath.Join(dir,"server-config.json")
+		if os.WriteFile(path,cfg,0600)!=nil { t.Fatal("server config write") }
+		cmd := exec.Command(relay,"-config-file",path)
+		if cmd.Start()!=nil { t.Fatal("relay start") }
+		defer func(){ cmd.Process.Signal(os.Interrupt); done:=make(chan struct{});go func(){cmd.Wait();close(done)}();select{case <-done:case <-time.After(5*time.Second):cmd.Process.Kill();<-done} }()
+	} else {
 	cert, err := selfsign.GenerateSelfSigned()
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +164,7 @@ func TestLocalPairHarness(t *testing.T) {
 			go func() { defer c.Close(); handleConn(ctx, c, "127.0.0.1:19001", dev, keys) }()
 		}
 	}()
+	}
 	creds := map[string]any{"hashes": map[string]any{"fixture": map[string]any{"u": "fixture", "p": "SYNTHETIC-TURN-PASSWORD", "urls": []string{"turn:127.0.0.1:19002?transport=udp"}}}}
 	cbytes, _ := json.Marshal(creds)
 	if os.WriteFile(filepath.Join(dir, "turn-creds.json"), cbytes, 0600) != nil {

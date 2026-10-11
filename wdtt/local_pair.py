@@ -34,7 +34,7 @@ def socks_udp(payload,port=18081):
             udp.sendto(b'\x00\x00\x00\x01'+socket.inet_aton('10.66.66.1')+struct.pack('!H',port)+payload,(host,relay_port))
             data,_=udp.recvfrom(4096);assert data[:4]==b'\x00\x00\x00\x01' and data[10:]==payload
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--harness',required=True);p.add_argument('--client',required=True);p.add_argument('--mihomo',required=True);p.add_argument('--converter',required=True);p.add_argument('--report',required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--harness',required=True);p.add_argument('--client',required=True);p.add_argument('--mihomo',required=True);p.add_argument('--converter',required=True);p.add_argument('--report',required=True);p.add_argument('--relay');a=p.parse_args()
     harness,client,mihomo,converter=[str(pathlib.Path(x).resolve()) for x in [a.harness,a.client,a.mihomo,a.converter]]
     assert hashlib.sha256(pathlib.Path(mihomo).read_bytes()).hexdigest()==json.loads((pathlib.Path(mihomo).parent/'mihomo-test-digest.json').read_text())['uncompressed_sha256'],'test Mihomo digest'
     result={'scope':'local loopback Pion TURN -> patched upstream WRAP/DTLS/GETCONF -> userspace WireGuard; real standalone client and Mihomo; NO VK/OS TUN/routes/firewall','vk_acceptance':False,'hardware_acceptance':False,'checks':{}}
@@ -42,6 +42,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='wdtt-local-pair-') as tmp:
         d=pathlib.Path(tmp);d.chmod(0o700)
         env=os.environ.copy();env['WDTT_LOCAL_PAIR_DIR']=str(d)
+        if a.relay:env['WDTT_HARDENED_RELAY_BIN']=str(pathlib.Path(a.relay).resolve())
         try:
             server=subprocess.Popen([harness,'-test.run=^TestLocalPairHarness$','-test.timeout=190s'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);children.append(server)
             wait_for(lambda:(d/'READY').exists(),children)
@@ -81,6 +82,14 @@ def main():
             wait_for(wg_ready,children,5)
             metrics=json.loads((d/'wg-metrics.json').read_text())
             result['checks']['WG_handshake_and_bytes']=metrics
+            if a.relay:
+                data=json.loads((d/'server-db.json').read_text())
+                for entry in data['passwords'].values():entry['is_deactivated']=True
+                stage=d/'db-stage.json';stage.write_text(json.dumps(data));stage.chmod(0o600);stage.replace(d/'server-db.json')
+                time.sleep(1)
+                revoked=subprocess.run(['curl','-fsS','--max-time','5','--socks5-hostname','127.0.0.1:17890','http://10.66.66.1:18080/'],env={**os.environ,'NO_PROXY':'','no_proxy':''},capture_output=True)
+                assert revoked.returncode!=0,'revoked server credential still forwards'
+                result['checks']['hardened_server_DB_reload_revokes_active_data_session']=True
             cmdline=pathlib.Path(f'/proc/{proc.pid}/cmdline').read_bytes()
             assert b'SYNTHETIC' not in cmdline
             result['checks']['proc_argv_secret_absent']=True

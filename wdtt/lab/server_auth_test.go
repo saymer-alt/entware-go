@@ -20,7 +20,11 @@ func TestRejectUnknownDevice(t *testing.T) {
 }
 func TestRejectNoAUTH(t *testing.T) { testAUTH(t, "WIREGUARD-SHAPED-FIXTURE", false) }
 func testAUTH(t *testing.T, first string, wantForward bool) {
+	testAUTHDB(t, first, wantForward, nil)
+}
+func testAUTHDB(t *testing.T, first string, wantForward bool, setup func()) {
 	db = &Database{MainPassword: "synthetic-owner-password", Devices: map[string]*ClientDevice{"fixture": {DeviceID: "fixture"}}, Passwords: map[string]*PasswordEntry{}}
+	if setup != nil { setup() }
 	udp, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -33,6 +33,9 @@ jobs:
           test -n "$go_bin"
           python3 wdtt/build_lab.py --go "$go_bin" --sdk-archive sdk.tar.zst --work wdtt-build
           python3 wdtt/test_packaging.py
+          python3 wdtt/test_owner_test_ipk.py
+          python3 wdtt/test_workflow_gate.py
+          python3 wdtt/verify_quarantine.py --build wdtt-build --report wdtt-build/quarantine-ipk-report.json
       - name: Checkout exact offline converter revision from KAS experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,61 +45,8 @@ jobs:
       - name: Local-only TURN, DTLS, WireGuard and Mihomo functional acceptance
         run: |
           python3 wdtt/fetch_test_mihomo.py wdtt-build/test-deps
-          python3 wdtt/local_pair.py --harness wdtt-build/server-pair.test --client wdtt-build/wt-client-linux-amd64 --mihomo wdtt-build/test-deps/mihomo-compatible --converter kas-poc/experimental/wdtt/wg_to_mihomo.py --report wdtt-build/local-pair-report.json
-      - name: Prepare clearly marked owner test binaries (not an IPK or release)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p wdtt-build/owner-download/licenses
-          for arch in amd64 arm64 mipsle mips; do
-            cp "wdtt-build/wt-client-linux-$arch" wdtt-build/owner-download/
-          done
-          cp wdtt/EXPERIMENTAL-DOWNLOAD-WARNING.md wdtt-build/owner-download/README-FIRST-EXPERIMENTAL.md
-          cp wdtt/licenses/UPSTREAM-GPL-3.0.txt wdtt-build/owner-download/licenses/
-          cp wdtt/licenses/awgmproto-MIT.txt wdtt-build/owner-download/licenses/
-          cp wdtt/licenses/PHASE1-dependency-inventory.json wdtt-build/owner-download/licenses/
-          cp wdtt-build/build-report.json wdtt-build/owner-download/
-          python3 - <<'PY'
-          import hashlib,json,pathlib
-          root=pathlib.Path('wdtt-build/owner-download')
-          report=json.loads((root/'build-report.json').read_text())
-          lines=[]
-          for record in report['builds']:
-              target=root/('wt-client-linux-'+record['arch'])
-              checksum=hashlib.sha256(target.read_bytes()).hexdigest()
-              assert checksum==record['sha256'],record['arch']
-              lines.append(f"{checksum}  {target.name}")
-          (root/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
-          assert (root/'README-FIRST-EXPERIMENTAL.md').read_text().startswith('# ⚠️⚠️⚠️')
-          PY
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -C wdtt-build/owner-download -czf wdtt-build/wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz .
-      - name: Downloadable experimental binaries (NOT production; NOT license clearance)
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: WDTT-EXPERIMENTAL-NOT-FOR-PRODUCTION
-          path: wdtt-build/wdtt-EXPERIMENTAL-OWNER-TEST-BINARIES.tar.gz
-          if-no-files-found: error
-          retention-days: 14
-      - name: Make explicit owner-test IPKs (manual CLI only; no service or feed)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p wdtt-build/owner-test-ipks
-          python3 wdtt/owner_test_ipk.py \
-            --report wdtt-build/build-report.json \
-            --binary-dir wdtt-build \
-            --output-dir wdtt-build/owner-test-ipks
-          python3 wdtt/test_owner_test_ipk.py
-          (cd wdtt-build/owner-test-ipks && sha256sum -c SHA256SUMS)
-      - name: Downloadable owner-test ARM64 and MIPSel IPKs (NOT latest)
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: WDTT-OWNER-TEST-IPK-NOT-PRODUCTION
-          path: wdtt-build/owner-test-ipks/
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain evidence (no release or package feed publication)
+          python3 wdtt/local_pair.py --harness wdtt-build/server-pair.test --relay wdtt-build/wdtt-relay-linux-amd64 --client wdtt-build/wt-client-linux-amd64 --mihomo wdtt-build/test-deps/mihomo-compatible --converter kas-poc/experimental/wdtt/wg_to_mihomo.py --report wdtt-build/local-pair-report.json
+      - name: Retain evidence only (no binaries or IPKs until licensing gate closes)
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -105,6 +55,9 @@ jobs:
             wdtt-build/build-report.json
             wdtt-build/local-pair-report.json
             wdtt-build/server-auth-baseline.txt
+            wdtt-build/quarantine-ipk-report.json
+            wdtt-build/license-evidence/dependency-source-audit.json
+            wdtt-build/license-evidence/NOTICE-COLLECTION.txt
             wdtt-build/test-deps/mihomo-test-digest.json
           if-no-files-found: error
           retention-days: 14
