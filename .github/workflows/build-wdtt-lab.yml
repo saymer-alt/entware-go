@@ -34,6 +34,7 @@ jobs:
           python3 wdtt/build_lab.py --go "$go_bin" --sdk-archive sdk.tar.zst --work wdtt-build
           python3 wdtt/test_packaging.py
           python3 wdtt/test_owner_test_ipk.py
+          python3 wdtt/test_quarantine_retention.py
           python3 wdtt/test_workflow_gate.py
           python3 wdtt/verify_quarantine.py --build wdtt-build --report wdtt-build/quarantine-ipk-report.json
       - name: Checkout exact offline converter revision from KAS experiment
