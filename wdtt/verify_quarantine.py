@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real ELF/IPK format probes, private local storage; never opkg install/upload."""
-import argparse, gzip, hashlib, io, json, pathlib, subprocess, sys, tarfile, tempfile
+import argparse, gzip, hashlib, io, json, pathlib, subprocess, sys, tarfile, tempfile, zlib
 from ipk_recipe import ARCH, package, validate_elf
 
 def members(data):
@@ -43,7 +43,7 @@ def verify(build,output):
                 assert data==package(elf,arch,report['source'],notices.read_bytes(),prov,True)
             records.append({'arch':arch,'entware_arch':ARCH[arch],'binary_sha256':hashlib.sha256(elf).hexdigest(),'ipk_sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'format':'Entware outer tar.gz','installed_size_bytes_verified':True,'reproducible_same_host':True,'preinst_blocks_dash_and_busybox':True,'opkg_install_tested':False,'hardware_tested':False})
         # Private IPKs are destroyed after verification. Only metadata escapes.
-    result={'quarantine_ipks_built':True,'ipks_retained':False,'install_ready':False,'redistribution_approved':False,'public_binary_upload':False,'packages':records}
+    result={'quarantine_ipks_built':True,'ipks_retained':False,'install_ready':False,'redistribution_approved':False,'public_binary_upload':False,'compression_runtime':{'python':sys.version.split()[0],'zlib':zlib.ZLIB_RUNTIME_VERSION,'level':9,'mtime':0,'gzip_os':255},'packages':records}
     pathlib.Path(output).write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
 
 if __name__=='__main__':

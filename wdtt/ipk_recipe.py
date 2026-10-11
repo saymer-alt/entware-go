@@ -9,7 +9,11 @@ def tar_gz(files):
         for name,(data,mode) in sorted(files.items()):
             info=tarfile.TarInfo(name);info.size=len(data);info.mode=mode;info.mtime=0;info.uid=info.gid=0;info.uname=info.gname='root'
             tar.addfile(info,io.BytesIO(data))
-    return gzip.compress(out.getvalue(),mtime=0)
+    compressed=bytearray(gzip.compress(out.getvalue(),compresslevel=9,mtime=0))
+    # Python 3.11/3.12 delegate mtime=0 to zlib (OS=3); newer Python uses
+    # OS=255. Canonicalize every gzip layer, independent of host OS header.
+    compressed[9]=255
+    return bytes(compressed)
 def package(binary,arch,source,notices,provenance,quarantine=False):
     version='0.0.0+git'+source[:12]+'.'+hashlib.sha256(binary).hexdigest()[:12]
     name='wt-client-quarantine' if quarantine else 'wt-client-lab'

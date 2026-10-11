@@ -5,6 +5,7 @@ assert data==package(b'SYNTHETIC-NOT-AN-ELF','arm64','1'*40,b'SYNTHETIC NOTICE',
 with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as outer:
     assert len(outer.getmembers())==3
     members={m.name.removeprefix('./'):outer.extractfile(m).read() for m in outer}
+assert data[9]==255 and all(members[n][9]==255 for n in ['control.tar.gz','data.tar.gz'])
 assert set(members)=={'debian-binary','control.tar.gz','data.tar.gz'}
 with tarfile.open(fileobj=io.BytesIO(gzip.decompress(members['data.tar.gz']))) as t:
     assert len(t.getmembers())==3 and all(x.name.startswith('./opt/libexec/wdtt-lab/') for x in t)
