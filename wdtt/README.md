@@ -43,7 +43,7 @@ This passed locally with synthetic TURN credentials. **No VK, router, VPS, WAN p
 
 ## IPK / rollback / release gates
 
-`ipk_recipe.py` builds deterministic Entware outer tar.gz with control/data archives with a version that includes source and binary SHA, versioned `/opt/libexec/wdtt-lab/` payload, notices and normalized provenance. Host paths and test timings are excluded from package inputs. ARM64 and MIPSel real ELF packages are built **only in private quarantine**, inspected, then destroyed; `verify_quarantine.py` retains JSON checksums/format evidence. Their Package is `wt-client-quarantine`; preinst always exits78 under dash and BusyBox. These are not installable candidates or a license bypass. No real IPK/binary is uploaded. Normal `wt-client-lab` emission still refuses all open release-gates.json and install_ready=false, without an install/publication override.
+`ipk_recipe.py` builds deterministic Entware outer tar.gz with control/data archives with a version that includes source and binary SHA, versioned `/opt/libexec/wdtt-lab/` payload, notices and normalized provenance. Host paths and test timings are excluded from package inputs. ARM64 and MIPSel real ELF packages are built **only in private quarantine** and inspected. By default only JSON checksums/format evidence is retained; the owner can now request **explicit private local retention** with `verify_quarantine.py --retain-private-dir /absolute/path/wdtt-private-...` (outside the checkout and public outputs). This preserves installation-blocked quarantine IPKs and private SHA manifests for later technical inspection; neither CI nor the production feed uploads those packages. The `wt-client-quarantine` preinst intentionally returns exit 78, so these archives **cannot be installed by opkg** and must never be described as ready-to-use IPKs. Their Package is `wt-client-quarantine`; preinst always exits78 under dash and BusyBox. These are not installable candidates or a license bypass. No real IPK/binary is uploaded. Normal `wt-client-lab` emission still refuses all open release-gates.json and install_ready=false, without an install/publication override.
 
 `license_audit.py` collects selected Go/S/embedded files for both target builds, module versions/sums, per-file SHA and copyright headers, ancestor license/NOTICE/PATENTS texts including the compiler runtime. NOTICE-COLLECTION is a **collection**, not a licensing approval. fhttp@v0.6.8 commit `ecfe905c2db9d1ec769a16a14191ec84553dd235` has tree `0269bf1f6abe7a103b173d07394b9894b356995f` (Phase2 called the commit a tree). No applicable LICENSE/COPYING/NOTICE was found; Go-derived BSD headers do not prove fork-specific licensing. No binary redistribution is enabled. Other module scope/exceptions and GPL corresponding-source delivery must also be approved before distribution. No silent dependency replacement or downgrade is used to claim closure. awgmproto MIT and root GPL notices are retained.
 
@@ -51,6 +51,11 @@ Build privately with the same SDK command above, then:
 
 ```sh
 python3 wdtt/verify_quarantine.py --build /absolute/fresh-build-directory --report /absolute/fresh-build-directory/quarantine-ipk-report.json
+# Локальный компьютер владельца, только в PRIVATE каталоге (не в git checkout):
+# parent directory заранее существует; новый каталог wdtt-private-... не существует.
+python3 wdtt/verify_quarantine.py --build /absolute/fresh-build-directory \
+  --report /absolute/fresh-build-directory/quarantine-ipk-report.json \
+  --retain-private-dir /home/USER/work/wdtt-private-phase3
 ```
 
 KAS has a manual-only Entware lifecycle prototype with separate persistent/volatile paths, checksum/ABI/resource admission and verified own-PID stop/rollback/uninstall. Installation remains source-gated and hardware/reboot acceptance is NOT RUN. See [KAS Phase3](https://github.com/saymer-alt/keenetic-auto-setup/blob/feature/wdtt-experimental-poc-20261011/experimental/wdtt/PHASE3-HARDWARE.md). Do not edit gates to force a test tomorrow.
