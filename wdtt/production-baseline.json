@@ -1,0 +1,18 @@
+{
+  "baseline": "f1c9d31c931df2cdef9ed295170df5dcd08e8ce4",
+  "sha256": {
+    "beszel-agent/Makefile": "27984e7142b6952fa9262955a9ea5754524c7d646e25b5210b4f63a95b8f44ce",
+    "beszel-agent/files/S99beszel-agent": "f2fd929ba00ade7ccc652a85e9047a87da1f4e3b2478854e2fd35f115b0663e1",
+    "beszel-agent/files/beszel-agent.conf": "4679f0105db97ffe9e49c881198f151f0744247d23f2fc7a2703cbdeb156df6c",
+    "mihomo/Makefile": "16a6a672607194eb2bb2077f3298dc17610c12d32422a8155d738252a829c5df",
+    "mihomo/files/S99mihomo": "06ba8f6abe78a3b109d2037c902d826085d5a4814cf4b4aca0d135b22a7b86d9",
+    "mihomo/files/config.yaml": "7bed4b15f9758a0ae632af3a74fa61d5fba67926bb3ce598ed1ccf4a78e7298a",
+    "scripts/publish_ipks.py": "150661892afd2c4625b11bd52856d42b2ba5e36895591f4a53873b6998ccd5dc",
+    "warpscout/Makefile": "7dd91ea8cb345ef2bd81f0f4e3ce6b5770fa822114384f06570aeb3e99ba6ddd",
+    "warpscout/README.md": "990db3e18ce3dad6e124e5cbd9271bc5fe8c205b85a982c31364469bff48bf2a",
+    "warpscout/install.sh": "3132a0dd95896db82d524e9d702e0e1081bb2d34ba4b977744dc7599bc006773",
+    ".github/workflows/build-mihomo.yml": "7e6204d64d312fc11f93c932680be985f502870e19594ded3c702ec5fdf8cb04",
+    ".github/workflows/build-beszel.yml": "bfb359d6f82b42b78253c7e8aff73fa8c29ebacbb72f189aac1a522fbbb68ee2",
+    ".github/workflows/build-warpscout.yml": "368ea2c131d0b6a2a9431e33d46780e1b92611d3e40430a681dbcbdb143183f1"
+  }
+}
