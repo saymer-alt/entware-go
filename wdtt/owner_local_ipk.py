@@ -3,12 +3,14 @@
 import argparse,hashlib,json,pathlib,subprocess,tempfile
 from ipk_recipe import ARCH,package,package_provenance,validate_elf
 from verify_quarantine import preserve_owner_local
-from build_lab import SOURCE,SDK_SHA,HERE
+from build_lab import SOURCE,SDK_SHA,HERE,FORK,SOURCE_REVISION
 
 def sha(data):return hashlib.sha256(data).hexdigest()
 def make_owner_packages(report,binary_dir,kas,output_dir,acceptance_report=None):
  report=pathlib.Path(report);binary_dir=pathlib.Path(binary_dir);kas=pathlib.Path(kas)
  r=json.loads(report.read_text());assert r['source']==SOURCE and r['sdk_sha256']==SDK_SHA
+ assert r['fork_source']==SOURCE_REVISION and r['source_repository']==FORK['repository'] and r['fork_tree_verified'] is True
+ assert r['fork_source_lock_sha256']==sha((HERE/'fork-source-lock.json').read_bytes().replace(b'\r\n',b'\n'))
  assert r['go_sum_sha256']==json.loads((HERE/'source-lock.json').read_text())['go.sum']
  assert r['toolchain']=='go version go1.26.1 linux/amd64'
  assert r['patch_sha256']==sha((HERE/'patches/010-laboratory-security.patch').read_bytes())
@@ -27,12 +29,12 @@ def make_owner_packages(report,binary_dir,kas,output_dir,acceptance_report=None)
    if arch=='mipsle':assert 'GOMIPS=softfloat' in rec['go_metadata']
    p=package_provenance(r,rec,False)
    # Neither legal approval nor public install/release readiness is asserted.
-   p.update(install_ready=False,quarantine=False,owner_local=True,owner_install_candidate=True,public_distribution_approved=False,kas_commit=commit,lifecycle_sha256={n:sha(v) for n,v in scripts.items()},recipe_sha256={n:sha((HERE/n).read_bytes().replace(b"\r\n",b"\n")) for n in ["owner_local_ipk.py","ipk_recipe.py","verify_quarantine.py","source-lock.json"]})
+   p.update(install_ready=False,quarantine=False,owner_local=True,owner_install_candidate=True,public_distribution_approved=False,kas_commit=commit,lifecycle_sha256={n:sha(v) for n,v in scripts.items()},recipe_sha256={n:sha((HERE/n).read_bytes().replace(b"\r\n",b"\n")) for n in ["owner_local_ipk.py","ipk_recipe.py","verify_quarantine.py","source-lock.json","fork-source-lock.json"]})
    data=package(binary,arch,r['source'],notices,p,owner_test=True,extra_files=scripts)
    file=private/('wt-client-owner-test_'+ARCH[arch]+'.ipk');file.write_bytes(data);file.chmod(0o600)
    retained['wt-client-linux-'+arch]=(binary,0o700)
    retained['provenance-'+arch+'.json']=((json.dumps(p,indent=2,sort_keys=True)+'\n').encode(),0o600)
-   records.append({'payload':'/opt/lib/wdtt-owner-test/0.0.0+git'+r['source'][:12]+'.'+rec['sha256'][:12]+'.'+commit[:12],'arch':arch,'entware_arch':ARCH[arch],'ipk_sha256':sha(data),'binary_sha256':sha(binary),'bytes':len(data),'kas_commit':commit})
+   records.append({'payload':'/opt/lib/wdtt-owner-test/0.0.0+git'+r['source'][:12]+'.'+rec['sha256'][:12]+'.'+r['fork_source'][:12]+'.'+commit[:12],'arch':arch,'entware_arch':ARCH[arch],'ipk_sha256':sha(data),'binary_sha256':sha(binary),'bytes':len(data),'kas_commit':commit})
   preserve_owner_local(private,str(output_dir),records,kind='owner-test')
  dest=pathlib.Path(output_dir)
  for name,data in [('build-report.json',report.read_bytes()),('NOTICE-COLLECTION.txt',notices),('dependency-source-audit.json',(binary_dir/'license-evidence/dependency-source-audit.json').read_bytes()),('OWNER-TEST-BUILD.json',(json.dumps({'public_distribution_approved':False,'install_ready':False,'owner_install_candidate':True,'packages':records},indent=2)+'\n').encode())]:

@@ -1,3 +1,7 @@
+# Phase 5 source update
+
+Effective client/relay now come from the pinned saymer-alt fork: [source/backup/verification](PHASE5-FORK.md), [qWDTT design](QWDTT-COMPATIBILITY.md). Entware recipes and KAS lifecycle stay in their owning repositories.
+
 Phase4: [устанавливаемые owner-local IPK, private retention и настоящий opkg fixture](PHASE4-OWNER-LOCAL.md). Ниже сохранены Phase2/3 public-channel ограничения; owner-local технический admission описан отдельно.
 
 # WDTT standalone laboratory build

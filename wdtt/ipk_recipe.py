@@ -25,6 +25,7 @@ def tar_gz(files,include_dirs=False,directory_floor=None):
     return bytes(compressed)
 def package(binary,arch,source,notices,provenance,quarantine=False,owner_test=False,extra_files=None):
     version='0.0.0+git'+source[:12]+'.'+hashlib.sha256(binary).hexdigest()[:12]
+    if provenance.get('fork_source'):version+='.'+provenance['fork_source'][:12]
     assert not (quarantine and owner_test)
     name='wt-client-quarantine' if quarantine else ('wt-client-owner-test' if owner_test else 'wt-client-lab')
     if owner_test:version+='.'+provenance['kas_commit'][:12]
@@ -76,7 +77,11 @@ def package_provenance(report,record,quarantine):
     p={key:report[key] for key in keys}
     r=dict(record);r['go_metadata']='\n'.join(record['go_metadata'].splitlines()[1:])
     p.update(builds=[r],quarantine=quarantine,install_ready=not quarantine and report['install_ready'])
-    p['source_url']='https://github.com/hoaxisr/proxy-turn-vk-android/tree/'+report['source']
+    if 'fork_source' in report:
+        p.update({key:report[key] for key in ['fork_source','source_repository','fork_tree_verified','fork_source_lock_sha256']})
+        p['source_url']=report['source_repository'].removesuffix('.git')+'/tree/'+report['fork_source']
+        p['upstream_base']=report['source']
+    else:p['source_url']='https://github.com/hoaxisr/proxy-turn-vk-android/tree/'+report['source']
     return p
 def main():
     p=argparse.ArgumentParser();p.add_argument('report');p.add_argument('binary');p.add_argument('notices');p.add_argument('output');p.add_argument('--arch',choices=ARCH,required=True);p.add_argument('--private-quarantine',action='store_true');a=p.parse_args()

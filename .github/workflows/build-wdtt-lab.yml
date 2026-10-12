@@ -51,6 +51,7 @@ jobs:
           path: kas-poc
       - name: Native Entware opkg offline-root owner-package acceptance
         run: |
+          python3 kas-poc/tests/wdtt-entware-lifecycle.py
           python3 wdtt/build_opkg_fixture.py wdtt-build/opkg-fixture
           python3 wdtt/test_owner_opkg.py --opkg wdtt-build/opkg-fixture/opkg-build/src/opkg-cl --build wdtt-build --kas kas-poc --report wdtt-build/owner-opkg-report.json
       - name: Local-only TURN, DTLS, WireGuard and Mihomo functional acceptance
