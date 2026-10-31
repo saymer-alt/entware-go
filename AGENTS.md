@@ -4,6 +4,10 @@
 
 # AGENTS.md — entware-go (saymer-alt fork)
 
+## Owner-wide design gate — SIMPLICITY-FIRST (2026-10-24)
+
+Before a new service, subsystem, manager, web panel, installer/uninstaller, or heavy CI path, apply the [common engineering contract](https://github.com/saymer-alt/saymer-alt/pull/7). First compare: (A) existing/manual route, (B) smallest safe change, (C) ambitious design. Choose A/B unless C has evidence, cost/complexity budget, and explicit owner approval. If a helper grows into another platform or expensive E2E cycles repeat without new evidence, STOP adding layers and seek an architectural decision. Preserve all verified safety boundaries and working user behavior. [KAS uninstall retrospective #225](https://github.com/saymer-alt/keenetic-auto-setup/issues/225) is an **anti-pattern**, not a best-practice pattern. This documentation change does not authorize production or release modifications.
+
 ## ⚑ Решение владельца от 2026-10-11: WORKING-FIRST / LICENSE AUDIT DEFERRED
 
 **ПРОЕКТЫ ВЕДУТСЯ В ПЕРВУЮ ОЧЕРЕДЬ ДЛЯ ЛИЧНОГО НЕКОММЕРЧЕСКОГО ИСПОЛЬЗОВАНИЯ. РЕПОЗИТОРИИ ПУБЛИЧНЫЕ.**
