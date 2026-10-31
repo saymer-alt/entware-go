@@ -74,13 +74,18 @@ jobs:
 
       - name: Dispatch to feedly
         if: success()
+        # Upstream aggregator notification is best-effort: in this fork the
+        # AGGREGATOR_PAT secret is absent, and a 401 here must never block
+        # the prune step (issue #19).
+        continue-on-error: true
+        env:
+          AGGREGATOR_PAT: ${{ secrets.AGGREGATOR_PAT }}
         run: |
-          curl -fsS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: token ${{ secrets.AGGREGATOR_PAT }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/spatiumstas/feedly/dispatches \
-            -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"latest"'"}}'
+          if [ -z "$AGGREGATOR_PAT" ]; then
+            echo 'No AGGREGATOR_PAT (fork): skipping upstream aggregator dispatch'
+            exit 0
+          fi
+          curl -fsS -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: token $AGGREGATOR_PAT"             -H "X-GitHub-Api-Version: 2022-11-28"             https://api.github.com/repos/spatiumstas/feedly/dispatches             -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"latest"'"}}'
 
       - name: Prune old packages after successful notification
         env:
@@ -259,13 +264,18 @@ jobs:
 
       - name: Dispatch to feedly
         if: success()
+        # Upstream aggregator notification is best-effort: in this fork the
+        # AGGREGATOR_PAT secret is absent, and a 401 here must never block
+        # the prune step (issue #19).
+        continue-on-error: true
+        env:
+          AGGREGATOR_PAT: ${{ secrets.AGGREGATOR_PAT }}
         run: |
-          curl -fsS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: token ${{ secrets.AGGREGATOR_PAT }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/spatiumstas/feedly/dispatches \
-            -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"latest"'"}}'
+          if [ -z "$AGGREGATOR_PAT" ]; then
+            echo 'No AGGREGATOR_PAT (fork): skipping upstream aggregator dispatch'
+            exit 0
+          fi
+          curl -fsS -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: token $AGGREGATOR_PAT"             -H "X-GitHub-Api-Version: 2022-11-28"             https://api.github.com/repos/spatiumstas/feedly/dispatches             -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"latest"'"}}'
 
       - name: Prune old packages after successful notification
         env:
