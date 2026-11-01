@@ -58,17 +58,13 @@ For already-installed ARM64 Entware WARPSCOUT, the separate `warpscout/update.sh
 - verifies the resulting installed package version, reports failures and cleans its private temporary files;
 - does not change or register the account under `/opt/etc/warpscout`, nor touch other packages or configure autorun.
 
-Run (after this updater is merged to `gh-action-build`):
+Run the already published updater in one command:
 
 ```sh
-tmp="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
-(
-  trap 'rm -f "$tmp"' EXIT
-  curl -fSsL --retry 3 -o "$tmp" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
-  sh "$tmp"
-) &&
-warpscout version
+curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh | sh
 ```
+
+When using the short `curl | sh` form interactively, read its output: if the download fails, `sh` can exit successfully on empty input even when `curl` reports an error. For unattended automation, use a checked temporary-file download so the HTTP failure is propagated.
 
 Compatibility: release assets with stable numeric `MAJOR.MINOR.PATCH-RELEASE` names, Entware `aarch64-3.10`, GitHub asset SHA-256 metadata, POSIX `sh` and BusyBox `ash`. An unsupported release naming format or unavailable API is an explicit error, not a blind installation. CI covers this updater with mocked read-only state and negative tests.
 
