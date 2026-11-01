@@ -95,7 +95,7 @@ cp "$file" "$dest"
         self.metadata.write_text(json.dumps({'name': 'latest', 'assets': [
             {'name': name, 'uploader': {'login': 'system'}, 'digest': 'sha256:' + digest,
              'browser_download_url': 'https://github.com/saymer-alt/entware-go/releases/download/latest/' + name}
-            for _ in range(count)]}, indent=2))
+            for _ in range(count)]}, separators=(',', ':')))
 
     def run_update(self, **extra):
         result = subprocess.run(self.shell + [str(self.script)], capture_output=True,
@@ -110,6 +110,33 @@ cp "$file" "$dest"
         self.assertEqual(r.returncode, 0, r.stderr.decode())
         self.assertEqual(self.version.read_text(), '0.16.1-1')
         self.assertEqual(self.calls.read_text().splitlines(), ['download', 'install'])
+
+    def test_real_world_compact_json_and_nested_metadata(self):
+        # REST API returns compact JSON, not one property per line.
+        self.make_release()
+        self.assertNotIn('\\n', self.metadata.read_text())
+        data = json.loads(self.metadata.read_text())
+        data['assets'][0]['uploader']['name'] = 'Unrelated metadata'
+        data['assets'].insert(0, {'name': 'mihomo_1.0.0-1_aarch64-3.10.ipk',
+                                   'digest': 'sha256:' + '0' * 64,
+                                   'browser_download_url': 'https://example.com/not-warpscout'})
+        self.metadata.write_text(json.dumps(data, separators=(',', ':')))
+        result = self.run_update()
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(self.calls.read_text().splitlines(), ['download', 'install'])
+
+    def test_invalid_json_and_wrong_url_fail_closed(self):
+        self.metadata.write_text('{"assets":')
+        result = self.run_update()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists())
+        self.make_release()
+        data = json.loads(self.metadata.read_text())
+        data['assets'][0]['browser_download_url'] = 'https://untrusted.example/package.ipk'
+        self.metadata.write_text(json.dumps(data, separators=(',', ':')))
+        result = self.run_update()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists())
 
     def test_same_version_is_noop(self):
         self.version.write_text('0.16.1-1')
