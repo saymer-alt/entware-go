@@ -48,6 +48,29 @@ opkg install /tmp/warpscout_<version>-<release>_aarch64-3.10.ipk
 warpscout version
 ```
 
+### Update WARPSCOUT without losing the WARP account
+
+For a new version already indexed by your Entware feed:
+
+```sh
+opkg update && opkg upgrade warpscout
+warpscout version
+```
+
+If the feed is behind the [latest verified package on GitHub](https://github.com/saymer-alt/entware-go/releases/tag/latest), use the **on-demand updater**, which compares package versions, verifies the GitHub release asset SHA-256 and refuses an unexpected download or downgrade:
+
+```sh
+update_file="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
+curl -fSsL --retry 3 -o "$update_file" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
+sh "$update_file"
+rm -f "$update_file"
+warpscout version
+```
+
+The updater requires an already installed WARPSCOUT, ARM64 Entware, `curl` and `sha256sum`. It does **not** register a new WARP account, modify `/opt/etc/warpscout`, reinstall equal versions, enable autorun or upgrade unrelated packages. If the GitHub API is inaccessible, the asset has no digest, the checksum differs, or the release has an unexpected format, it fails closed. On package-manager failure, check the installed version and investigate before retrying. Keep a private backup of `/opt/etc/warpscout/warpscout-account.json` when servicing Entware storage.
+
+**Known installer limitation:** `warpscout/install.sh` uses the feed first and falls back to GitHub only when `opkg install` fails; it may therefore report an older feed version as 'up to date' even when a newer GitHub IPK exists. Use `update.sh` for version discovery until that installer limitation is fixed ([#21](https://github.com/saymer-alt/entware-go/issues/21)). Manual IPK installation remains an option, but verify its SHA-256 before `opkg install`.
+
 Keep WARPSCOUT state on persistent Entware storage:
 
 ```sh
@@ -62,7 +85,7 @@ The generated `warpscout-account.json` contains private WARP account material. D
 
 Plain WireGuard is useful as a diagnostic baseline, but it is **not** the recommended first scan on a filtered Russian access network. WARPSCOUT upstream explicitly recommends AmneziaWG or MASQUE when plain WireGuard is filtered, and documents the Moscow `DME` edge as DPI-filtered since April 2026.
 
-WARPSCOUT v0.16.0 does **not** expose an `AWG2`/`AWG3` protocol selector. The supported AWG path is `-p awg` with the documented obfuscation controls (`I1`, junk packet count/sizes and the I1 generators). Do not add undocumented AWG-version flags.
+The tested WARPSCOUT v0.16.x CLI does **not** expose an `AWG2`/`AWG3` protocol selector. The supported AWG path is `-p awg` with the documented obfuscation controls (`I1`, junk packet count/sizes and the I1 generators). Do not add undocumented AWG-version flags.
 
 For a 512 MB ARM64 router start with four tunnel workers. The tested KN-1812 with 1 GB RAM handled `-jt 16` comfortably:
 
