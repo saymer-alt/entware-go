@@ -60,9 +60,11 @@ Run (after this updater is merged to `gh-action-build`):
 
 ```sh
 tmp="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
-curl -fSsL --retry 3 -o "$tmp" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
-sh "$tmp"
-rm -f "$tmp"
+(
+  trap 'rm -f "$tmp"' EXIT
+  curl -fSsL --retry 3 -o "$tmp" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
+  sh "$tmp"
+) &&
 warpscout version
 ```
 
