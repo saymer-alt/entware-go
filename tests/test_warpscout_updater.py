@@ -114,7 +114,7 @@ cp "$file" "$dest"
     def test_real_world_compact_json_and_nested_metadata(self):
         # REST API returns compact JSON, not one property per line.
         self.make_release()
-        self.assertNotIn('\\n', self.metadata.read_text())
+        self.assertEqual(self.metadata.read_text().count(chr(10)), 0)
         data = json.loads(self.metadata.read_text())
         data['assets'][0]['uploader']['name'] = 'Unrelated metadata'
         data['assets'].insert(0, {'name': 'mihomo_1.0.0-1_aarch64-3.10.ipk',
