@@ -10,7 +10,7 @@ PREFIX="https://github.com/${REPO}/releases/download/latest/"
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-for tool in curl opkg awk sed grep sha256sum mktemp; do
+for tool in curl opkg awk sed grep sha256sum mktemp jq; do
     command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -39,34 +39,21 @@ curl -fSsL --retry 3 --connect-timeout 15 -o "$stage/release.json" "$API" || die
 
 # GitHub release API uses quoted JSON fields; collect values from the *same*
 # WARPSCOUT asset. Reject zero/multiple assets or incomplete metadata.
-asset="$(awk -F '"' '
-function finish() {
-    if (selected) {
-        if (file == "" || hash == "" || link == "") invalid = 1
-        else { count++; chosen_file = file; chosen_hash = hash; chosen_link = link }
-    }
-    selected = 0
-}
-$2 == "name" {
-    finish()
-    if ($4 ~ /^warpscout_[0-9][0-9.]*-[0-9][0-9]*_aarch64-3[.]10[.]ipk$/) {
-        selected = 1; file = $4; hash = ""; link = ""
-    }
-    next
-}
-selected && $2 == "digest" { hash = $4 }
-selected && $2 == "browser_download_url" { link = $4 }
-END {
-    finish()
-    if (invalid || count != 1) exit 1
-    print chosen_file
-    print chosen_hash
-    print chosen_link
-}' "$stage/release.json")" || die 'missing, ambiguous, or malformed WARPSCOUT GitHub release asset'
+# Parse JSON structurally. GitHub REST normally returns compact one-line JSON;
+# parsing it with awk/grep silently fails despite pretty-printed test fixtures.
+jq -er '
+    [ .assets[] | select(.name | type == "string" and test("^warpscout_[0-9]+[.][0-9]+[.][0-9]+-[0-9]+_aarch64-3[.]10[.]ipk$")) ] as $items
+    | if ($items | length) != 1 then
+          error("expected exactly one ARM64 WARPSCOUT IPK")
+      else
+          $items[0]
+      end
+    | .name, .digest, .browser_download_url
+' "$stage/release.json" > "$stage/asset.fields" || die 'missing, ambiguous, or malformed WARPSCOUT GitHub release asset'
 
-name="$(printf '%s\n' "$asset" | sed -n '1p')"
-digest="$(printf '%s\n' "$asset" | sed -n '2p')"
-url="$(printf '%s\n' "$asset" | sed -n '3p')"
+name="$(sed -n '1p' "$stage/asset.fields")"
+digest="$(sed -n '2p' "$stage/asset.fields")"
+url="$(sed -n '3p' "$stage/asset.fields")"
 
 printf '%s\n' "$name" | grep -Eq '^warpscout_[0-9]+\.[0-9]+\.[0-9]+-[0-9]+_aarch64-3\.10\.ipk$' || die 'unexpected WARPSCOUT asset name'
 printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || die 'missing or invalid GitHub SHA-256 digest'
