@@ -60,14 +60,10 @@ warpscout version
 First ensure JSON parser `jq` is installed: `opkg update && opkg install jq`. If the feed is behind the [latest verified package on GitHub](https://github.com/saymer-alt/entware-go/releases/tag/latest), use the **on-demand updater**, which compares package versions, verifies the GitHub release asset SHA-256 and refuses an unexpected download or downgrade:
 
 ```sh
-update_file="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
-(
-  trap 'rm -f "$update_file"' EXIT
-  curl -fSsL --retry 3 -o "$update_file" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
-  sh "$update_file"
-) &&
-warpscout version
+curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh | sh
 ```
+
+When using the short `curl | sh` form interactively, read its output: if the download fails, `sh` can exit successfully on empty input even when `curl` reports an error. For unattended automation, use a checked temporary-file download so the HTTP failure is propagated.
 
 The updater requires an already installed WARPSCOUT, ARM64 Entware, `curl`, `jq` and `sha256sum`. It does **not** register a new WARP account, modify `/opt/etc/warpscout`, reinstall equal versions, enable autorun or upgrade unrelated packages. If the GitHub API is inaccessible, the asset has no digest, the checksum differs, or the release has an unexpected format, it fails closed. On package-manager failure, check the installed version and investigate before retrying. Keep a private backup of `/opt/etc/warpscout/warpscout-account.json` when servicing Entware storage.
 
