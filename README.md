@@ -57,7 +57,7 @@ opkg update && opkg upgrade warpscout
 warpscout version
 ```
 
-If the feed is behind the [latest verified package on GitHub](https://github.com/saymer-alt/entware-go/releases/tag/latest), use the **on-demand updater**, which compares package versions, verifies the GitHub release asset SHA-256 and refuses an unexpected download or downgrade:
+First ensure JSON parser `jq` is installed: `opkg update && opkg install jq`. If the feed is behind the [latest verified package on GitHub](https://github.com/saymer-alt/entware-go/releases/tag/latest), use the **on-demand updater**, which compares package versions, verifies the GitHub release asset SHA-256 and refuses an unexpected download or downgrade:
 
 ```sh
 update_file="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
@@ -69,7 +69,7 @@ update_file="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
 warpscout version
 ```
 
-The updater requires an already installed WARPSCOUT, ARM64 Entware, `curl` and `sha256sum`. It does **not** register a new WARP account, modify `/opt/etc/warpscout`, reinstall equal versions, enable autorun or upgrade unrelated packages. If the GitHub API is inaccessible, the asset has no digest, the checksum differs, or the release has an unexpected format, it fails closed. On package-manager failure, check the installed version and investigate before retrying. Keep a private backup of `/opt/etc/warpscout/warpscout-account.json` when servicing Entware storage.
+The updater requires an already installed WARPSCOUT, ARM64 Entware, `curl`, `jq` and `sha256sum`. It does **not** register a new WARP account, modify `/opt/etc/warpscout`, reinstall equal versions, enable autorun or upgrade unrelated packages. If the GitHub API is inaccessible, the asset has no digest, the checksum differs, or the release has an unexpected format, it fails closed. On package-manager failure, check the installed version and investigate before retrying. Keep a private backup of `/opt/etc/warpscout/warpscout-account.json` when servicing Entware storage.
 
 **Known installer limitation:** `warpscout/install.sh` uses the feed first and falls back to GitHub only when `opkg install` fails; it may therefore report an older feed version as 'up to date' even when a newer GitHub IPK exists. Use `update.sh` for version discovery until that installer limitation is fixed ([#21](https://github.com/saymer-alt/entware-go/issues/21)). Manual IPK installation remains an option, but verify its SHA-256 before `opkg install`.
 
