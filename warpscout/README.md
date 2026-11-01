@@ -48,6 +48,8 @@ not a background service.
 
 Use `opkg update && opkg upgrade warpscout` if your configured feed already includes the newer version. The one-line **installer is not an updater** if the feed returns an older, successful install (tracked by [#21](https://github.com/saymer-alt/entware-go/issues/21)).
 
+Install the required JSON parser once: `opkg update && opkg install jq`.
+
 For already-installed ARM64 Entware WARPSCOUT, the separate `warpscout/update.sh`:
 
 - reads the current installed `opkg` version and the unique latest-release ARM64 IPK;
