@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: |
           sudo apt-get update -qq
-          sudo apt-get install -y busybox shellcheck
+          sudo apt-get install -y busybox shellcheck jq
           sh -n warpscout/install.sh
           sh -n warpscout/update.sh
           busybox ash -n warpscout/install.sh
