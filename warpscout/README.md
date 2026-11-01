@@ -5,7 +5,7 @@ Entware package for WARPSCOUT, targeted at the owner's ARM64 Keenetic routers
 
 ## Packaging choice
 
-The current tested target is WARPSCOUT **v0.16.0**. Its `go.mod` requires Go 1.26.3,
+The original package baseline was **v0.16.0** (not a constraint on the currently published rolling release). Its `go.mod` requires Go 1.26.3,
 while the current Entware SDK release `v2026.07.04` ships Go 1.26.1 and this fork deliberately
 uses `GOTOOLCHAIN=local`.
 
@@ -44,6 +44,34 @@ mode 600 when possible. It never prints the account contents.
 The script exits after setup and prints example scan commands; WARPSCOUT remains an on-demand CLI,
 not a background service.
 
+## Updating from the latest GitHub IPK
+
+Use `opkg update && opkg upgrade warpscout` if your configured feed already includes the newer version. The one-line **installer is not an updater** if the feed returns an older, successful install (tracked by [#21](https://github.com/saymer-alt/entware-go/issues/21)).
+
+Install the required JSON parser once: `opkg update && opkg install jq`.
+
+For already-installed ARM64 Entware WARPSCOUT, the separate `warpscout/update.sh`:
+
+- reads the current installed `opkg` version and the unique latest-release ARM64 IPK;
+- uses `opkg compare-versions` to skip identical/newer installed versions and avoid downgrade;
+- fetches the GitHub asset, verifies its published SHA-256 digest, and only then runs `opkg install`;
+- verifies the resulting installed package version, reports failures and cleans its private temporary files;
+- does not change or register the account under `/opt/etc/warpscout`, nor touch other packages or configure autorun.
+
+Run (after this updater is merged to `gh-action-build`):
+
+```sh
+tmp="$(mktemp /tmp/warpscout-update.XXXXXX)" &&
+(
+  trap 'rm -f "$tmp"' EXIT
+  curl -fSsL --retry 3 -o "$tmp" https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh &&
+  sh "$tmp"
+) &&
+warpscout version
+```
+
+Compatibility: release assets with stable numeric `MAJOR.MINOR.PATCH-RELEASE` names, Entware `aarch64-3.10`, GitHub asset SHA-256 metadata, POSIX `sh` and BusyBox `ash`. An unsupported release naming format or unavailable API is an explicit error, not a blind installation. CI covers this updater with mocked read-only state and negative tests.
+
 ## Target and layout
 
 - architecture: **aarch64 only** in this fork's workflow;
@@ -78,7 +106,7 @@ specifically notes DPI filtering on the Moscow Cloudflare edge (`DME`) since Apr
 
 ### AWG version terminology
 
-WARPSCOUT v0.16.0 has no CLI switch for an `AWG2` or `AWG3` protocol version. Its documented
+In the tested v0.16.x family, WARPSCOUT has no CLI switch for an `AWG2` or `AWG3` protocol version. Its documented
 AmneziaWG interface is `-p awg` plus the obfuscation controls:
 
 - `-gen-i1 quic|dns|sip|stun|random` and `-i1-sni HOST`;
