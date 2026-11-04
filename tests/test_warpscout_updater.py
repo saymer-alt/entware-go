@@ -64,6 +64,7 @@ esac''')
 case "$*" in
     *api.github.com*)
         [ "${API_FAIL:-0}" != 1 ] || exit 22
+        [ "${API_TIMEOUT:-0}" != 1 ] || exit 28
         file="$API_FIXTURE" ;;
     *)
         printf 'download\\n' >> "$CALLS"
@@ -176,7 +177,7 @@ cp "$file" "$dest"
         self.assertFalse(self.calls.exists())
 
     def test_network_error_and_wrong_arch_rejected(self):
-        for args in [dict(API_FAIL=1), dict(MOCK_ARCH='mips')]:
+        for args in [dict(API_FAIL=1), dict(API_TIMEOUT=1), dict(MOCK_ARCH='mips')]:
             with self.subTest(args=args):
                 r = self.run_update(**args)
                 self.assertNotEqual(r.returncode, 0)

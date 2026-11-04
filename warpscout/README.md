@@ -58,6 +58,8 @@ For already-installed ARM64 Entware WARPSCOUT, the separate `warpscout/update.sh
 - verifies the resulting installed package version, reports failures and cleans its private temporary files;
 - does not change or register the account under `/opt/etc/warpscout`, nor touch other packages or configure autorun.
 
+The installer (`warpscout/install.sh`) GitHub fallback applies the same metadata validation and SHA-256 verification when `jq` is available, refuses a checksum mismatch or unexpected URL, and warns explicitly when it must install without verification (no `jq`, or no digest in the release). Its feed-first behavior is unchanged (tracked by [#21](https://github.com/saymer-alt/entware-go/issues/21)).
+
 Run the already published updater in one command:
 
 ```sh

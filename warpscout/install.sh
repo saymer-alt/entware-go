@@ -45,24 +45,71 @@ say "==> Installing WARPSCOUT for ARM64 Entware"
 
 if opkg update && opkg install warpscout; then
     say "==> Installed/updated WARPSCOUT from Entware feed"
+    say "==> Note: a successful feed install does not prove it is the newest build; the feed can lag the GitHub latest release. Run the warpscout/update.sh updater to check and update with SHA-256 verification."
 else
     say "==> WARPSCOUT is not available from the configured feed yet; falling back to GitHub latest release"
 
     api="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
-    asset_url="$(
-        curl -fSsL "${api}" |
-        grep -o 'https://[^"]*warpscout_[^"]*_aarch64-3\.10\.ipk' |
-        head -n 1 || true
-    )"
-
-    [ -n "${asset_url}" ] || die "could not resolve the latest WARPSCOUT aarch64 IPK from GitHub release ${RELEASE_TAG}"
+    prefix="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/"
 
     cleanup_dir="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/warpscout-install.XXXXXX")" ||
         die "could not create private download directory"
     chmod 700 "${cleanup_dir}" || die "could not secure download directory"
+
+    release_json="${cleanup_dir}/release.json"
+    curl -fSsL --retry 3 --connect-timeout 15 -o "${release_json}" "${api}" ||
+        die "could not read GitHub release metadata from ${RELEASE_TAG} (HTTP error or timeout)"
+
+    asset_name=""
+    asset_digest=""
+    asset_url=""
+    if command -v jq >/dev/null 2>&1; then
+        # Parse the release structurally and take the single ARM64 WARPSCOUT
+        # asset; same validation rules as warpscout/update.sh.
+        jq -er '
+            [ .assets[] | select(.name | type == "string" and test("^warpscout_[0-9]+[.][0-9]+[.][0-9]+-[0-9]+_aarch64-3[.]10[.]ipk$")) ] as $items
+            | if ($items | length) != 1 then
+                  error("expected exactly one ARM64 WARPSCOUT IPK")
+              else
+                  $items[0]
+              end
+            | .name, .digest, .browser_download_url
+        ' "${release_json}" > "${cleanup_dir}/asset.fields" 2>/dev/null ||
+            die "missing, ambiguous, or malformed WARPSCOUT GitHub release asset"
+        asset_name="$(sed -n '1p' "${cleanup_dir}/asset.fields")"
+        asset_digest="$(sed -n '2p' "${cleanup_dir}/asset.fields")"
+        asset_url="$(sed -n '3p' "${cleanup_dir}/asset.fields")"
+        if [ "${asset_digest}" = "null" ]; then
+            asset_digest=""
+        fi
+        printf '%s\n' "${asset_name}" | grep -Eq '^warpscout_[0-9]+\.[0-9]+\.[0-9]+-[0-9]+_aarch64-3\.10\.ipk$' ||
+            die "unexpected WARPSCOUT asset name"
+        if [ -n "${asset_digest}" ]; then
+            printf '%s\n' "${asset_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+                die "missing or invalid GitHub SHA-256 digest"
+        fi
+        [ "${asset_url}" = "${prefix}${asset_name}" ] || die "unexpected WARPSCOUT asset download URL"
+    else
+        asset_url="$(grep -o 'https://[^"]*warpscout_[^"]*_aarch64-3\.10\.ipk' "${release_json}" | head -n 1 || true)"
+        say "==> WARNING: jq is not available; the GitHub asset SHA-256 cannot be verified on this download"
+    fi
+
+    [ -n "${asset_url}" ] || die "could not resolve the latest WARPSCOUT aarch64 IPK from GitHub release ${RELEASE_TAG}"
+
     cleanup_file="${cleanup_dir}/$(basename "${asset_url}")"
     say "==> Downloading $(basename "${cleanup_file}")"
     curl -fSL --retry 3 --connect-timeout 15 -o "${cleanup_file}" "${asset_url}"
+
+    if [ -n "${asset_digest}" ]; then
+        command -v sha256sum >/dev/null 2>&1 ||
+            die "sha256sum is required to verify the GitHub asset digest; nothing was installed"
+        actual_digest="$(sha256sum "${cleanup_file}" | awk '{ print $1 }')"
+        [ "${actual_digest}" = "${asset_digest#sha256:}" ] ||
+            die "WARPSCOUT IPK SHA-256 mismatch; nothing was installed"
+        say "==> SHA-256 verified: ${actual_digest}"
+    elif command -v jq >/dev/null 2>&1; then
+        say "==> WARNING: GitHub release asset has no SHA-256 digest metadata; installing without checksum verification"
+    fi
 
     say "==> Installing ${cleanup_file}"
     opkg install "${cleanup_file}"
