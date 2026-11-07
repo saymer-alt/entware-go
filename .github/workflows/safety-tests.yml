@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Check scoped agent guidance (no network)
+        run: python3 tests/check_agent_guidance.py
       - run: |
           sudo apt-get update -qq
           sudo apt-get install -y busybox shellcheck jq
