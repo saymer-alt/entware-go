@@ -1,138 +1,36 @@
-> **Обязательный контракт для всех агентов и авторов ТЗ (30.10.2026):** [подробная постановка задач без «эффекта обезьяньей лапки»](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-TASK-CONTRACT.md). Перед работой проверить исходные refs/SHA, готовые результаты, точную цель, scope/non-goals, сохранность данных и сервисов, зависимости, границы разрешений/owner GO, негативную приёмку и доказательства. Не сокращать существенные требования ради токенов. Буквальное выполнение в ущерб цели считается **FAIL**. Местные правила безопасности и архитектуры обязательны.
+# AGENTS.md — entware-go fork, lean agent startup contract
 
-> **Владелец, 26.10.2026 — общее правило для всех проектов:** перед внедрением новой функции / серьёзной переделки требуется короткая «защита идеи» — доказать проблему, сравнить альтернативы (включая ничего не менять / штатную ОС / ждать upstream), оценить пользу, **ТЭО**, стоимость сопровождения, риски, измеримый тест и критерии STOP. Нет доказательства пользы — DEFER/SKIP. Мелкие исправления не требуют отдельной бюрократии. **Источник:** [Proof Before Build](https://github.com/saymer-alt/saymer-alt/blob/main/PROOF-BEFORE-BUILD.md) ([центральный PR #9](https://github.com/saymer-alt/saymer-alt/pull/9)). Существующие safety/CI/permissions сохраняются.
+**Read this short file at startup; do not preload all historical guidance, package recipes or workflow code.** This is the `saymer-alt/entware-go` fork of `spatiumstas/entware-go`, itself derived from `Entware/entware-go`. The only normal integration/default branch here is **`gh-action-build`**, **not `main` or `master`**. Upstream `master` is an input to a controlled sync, never the target branch for changes in this fork.
 
-# AGENTS.md — entware-go (saymer-alt fork)
+## Purpose, scope and owner authorization
 
-## Owner-wide design gate — SIMPLICITY-FIRST (2026-10-24)
+This repo builds/packages Entware IPK artifacts for Keenetic and other `/opt`-based Entware targets (including Mihomo, Beszel Agent and ARM64 WARPSCOUT). This is **not a root Go module**; don't run generic root `go build` or assume local builds match the SDK. `Makefile` and GitHub Actions are the actual packaging sources. The public shared `latest` release is a package feed, not a scratch area.
 
-Before a new service, subsystem, manager, web panel, installer/uninstaller, or heavy CI path, apply the [common engineering contract](https://github.com/saymer-alt/saymer-alt/pull/7). First compare: (A) existing/manual route, (B) smallest safe change, (C) ambitious design. Choose A/B unless C has evidence, cost/complexity budget, and explicit owner approval. If a helper grows into another platform or expensive E2E cycles repeat without new evidence, STOP adding layers and seek an architectural decision. Preserve all verified safety boundaries and working user behavior. [KAS uninstall retrospective #225](https://github.com/saymer-alt/keenetic-auto-setup/issues/225) is an **anti-pattern**, not a best-practice pattern. This documentation change does not authorize production or release modifications.
+- **Default mode:** inspect source, edit on a task branch, run read-only/static tests, open a **Draft PR targeting `gh-action-build`**. No direct commit/merge to default branch, no `main`/`master` creation, no force-push, no upstream push, no release/tag/feed publish, no repository-setting change, and no live router/Entware installation or restart without a separate explicit **owner GO**.
+- For nontrivial tasks identify the exact base SHA, expected user outcome, existing work, owner permissions, scope/non-goals, negative acceptance and rollback before editing; use the [shared agent task contract](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-TASK-CONTRACT.md). For a major new subsystem compare existing/manual, smallest safe, and expanded options under [Proof Before Build](https://github.com/saymer-alt/saymer-alt/blob/main/PROOF-BEFORE-BUILD.md). Do not enlarge scope or over-engineer a simple fix.
+- **WORKING-FIRST / LICENSE AUDIT DEFERRED:** prioritize safe working builds, tests, IPKs and existing releases; do not reopen an abstract project-wide license audit on every request, disable healthy CI or stall unrelated packages over a speculative WDTT inventory question. **But public/noncommercial use does not grant copyright permission**: preserve upstream LICENSE/NOTICE/provenance; when a concrete component's distribution rights are demonstrably blocked, do not publish *that component* without resolution. Any exception, release or publication still requires owner GO.
 
-## ⚑ Решение владельца от 2026-10-11: WORKING-FIRST / LICENSE AUDIT DEFERRED
+## Mandatory package, CI and release invariants
 
-**ПРОЕКТЫ ВЕДУТСЯ В ПЕРВУЮ ОЧЕРЕДЬ ДЛЯ ЛИЧНОГО НЕКОММЕРЧЕСКОГО ИСПОЛЬЗОВАНИЯ. РЕПОЗИТОРИИ ПУБЛИЧНЫЕ.**
+- **Go compatibility is fail-closed.** The Entware SDK supplies a particular Go toolchain under `GOTOOLCHAIN=local`. Before bumping source tags, read the tagged upstream `go.mod` and compare its `go` directive with the **actual SDK Go version**. Do not silently upgrade the SDK/Go, switch to `GOTOOLCHAIN=auto`, lower upstream requirements, or waive toolchain preflight. If incompatible: use an approved older version or report BLOCKED/wait for SDK.
+- **WARPSCOUT ARM64 exception is intentional:** it repacks a versioned official `linux_arm64` asset verified by SHA-256/digest and binary identity, rather than injecting a newer Go compiler. Package is for `aarch64-3.10`; it is a CLI, **not an autostart daemon**. Preserve the exact verification, architecture gate, installer/update fallback, WARP account data, and non-destructive reinstall behavior. The historical Go SDK/WARPSCOUT versions are not automatically current.
+- **Shared `latest` release: ownership by package glob.** `mihomo_*`, `beszel-agent_*` and `warpscout_*` workflows must upload/verify only their own assets and must never erase/overwrite another package family's IPKs. Preserve complete-set checks, SHA-256 and size verification before pruning and collision refusal; `entware-latest-publication` protects concurrent writes. An incomplete build cannot be reported as an accepted package set.
+- **Preserve forks during upstream synchronization.** `sync-upstream.yml` merges `Entware/entware-go` `master` into `gh-action-build`. Keep fork-specific workflows and modifications; conflicting added paths/recipes require human review. Never silently choose `ours`/`theirs`, rewrite history or resolve conflicts automatically. `telegram-push.yml` targets upstream `master` and is intentionally inert here: do not activate it.
+- **Only intended workflows may publish.** PR checks and docs changes must not mutate `latest`, notify a feed, push a package, or bypass release permission gates. Do not change the current Actions triggers, GitHub token permissions, SDK identity or shared release machinery without explicit scope. Healthy Mihomo/Beszel/WARPSCOUT/KAS builds must not be disabled to "simplify" a workflow.
+- **Don't weaken package verification.** Never commit `PKG_MIRROR_HASH:=skip`; handle any CI build-time convention only in the approved workflow. Preserve architecture/ABI targets and exact package version, asset naming, signatures/digests, package scripts and `/opt` paths; do not assume a successful Actions build proves on-device Keenetic compatibility, ping-check behavior, or rollback.
+- No credentials, tokens, account files, private keys or subscriber secrets in logs/repo/artifacts. Experimental WDTT must remain isolated from production release/package feeds unless explicitly authorized; do not infer permission from a separate prototype PR.
 
-**ПРИОРИТЕТ: РАБОТАЮЩИЕ СБОРКИ, IPK, ТЕСТЫ И БЕЗОПАСНОСТЬ. ПЛАНОВЫЙ ЛИЦЕНЗИОННЫЙ АУДИТ ОТЛОЖЕН. НЕ ЛОМАТЬ И НЕ ОСТАНАВЛИВАТЬ СУЩЕСТВУЮЩИЕ РЕЛИЗЫ ИЗ-ЗА НЕЗАВЕРШЁННОЙ ИНВЕНТАРИЗАЦИИ НОВОГО ЭКСПЕРИМЕНТАЛЬНОГО КОМПОНЕНТА.**
+## Minimal working loop
 
-Для всех Codex / ZCode / других агентов:
-- Не задавать владельцу повторно общий вопрос «что делать с лицензией?» и не превращать каждый статус-отчёт в новый аудит. Устаревшие или неполные notices фиксировать однократно в [отложенной задаче KAS #126](https://github.com/saymer-alt/keenetic-auto-setup/issues/126), не останавливая независимую инженерную работу.
-- Продолжать безопасные сборки, тесты, IPK-рецепты, CI, аппаратные проверки, watchdog/rollback и работу действующих релизных конвейеров. Никогда не отключать Mihomo, WARPSCOUT, Beszel Agent, KAS, Builder Studio, `latest` или их CI только ради косметического license-review нового WDTT.
-- **При этом предупреждение, публичный GitHub и некоммерческий характер сами по себе НЕ предоставляют разрешение на распространение чужого кода.** Сохранять существующие LICENSE, copyright/NOTICE, происхождение исходников и условия. При доказанном ограничении прав на конкретный компонент не выпускать **этот** компонент вопреки условиям; сообщить владельцу только о конкретном неизбежном решении. Не распространять юридическую неопределённость одного компонента на исправные независимые проекты.
-- Экспериментальные WDTT/IPK могут иметь отдельный, явно обозначенный канал и ручной режим без вмешательства в production. Отсутствие завершённой инвентаризации не должно маскировать технические риски: AUTH, секреты, портовые конфликты, restart storms, rollback, архитектура/ABI и аппаратный допуск остаются обязательными проверками.
-- Это правило не является разрешением менять `stable`, сливать PR, автоматически публиковать `latest`, менять работающую инфраструктуру или отменять CI. Любые такие действия — только по обычному процессу и owner GO.
+1. Check default branch `gh-action-build`, immutable HEAD, intended package/workflow and existing open PRs. Read **only the related detailed guide** below and actual affected `Makefile`, installer, workflow and tests.
+2. Make a minimal, non-destructive diff. Respect package isolation and upstream sync boundaries. Keep unrelated license reports, dependency bumps and cleanup out of the task.
+3. Run proportional, **read-only** checks. Existing `safety-tests.yml` runs installer syntax/ShellCheck and Python regression fixtures; use them for relevant changes. Package/SDK workflows may need a separately authorized build dispatch; never initiate a release/publish just to "test" a docs edit.
+4. Inspect final SHA, diff, expected CI. Report PASS / FAIL / BLOCKED / NOT TESTED accurately. A PR build does **not** imply hardware field acceptance. Open Draft PR; merge/promote, release, deploy, conflict resolution or feed modifications require owner GO.
 
-**К лицензированию вернуться по отдельному запросу владельца или при конкретном установленном препятствии распространению. Не инициировать бесконечные повторные обсуждения.**
+## Detailed guidance — load on demand
 
+- [01 — owner policy, WORKING-FIRST, scope and approval](docs/agent-guidance/01-owner-policy-and-authority.md) — for owner exceptions, design or license questions.
+- [02 — repository layout, fork lineage, Actions and package feed](docs/agent-guidance/02-repository-fork-and-package-publishing.md) — for packaging, releases, upstream sync and asset ownership.
+- [03 — Go compatibility and release-change checklist](docs/agent-guidance/03-go-compatibility-and-change-checklist.md) — for toolchain/version bumps and CI changes.
 
-Instructions for coding agents working in this repository.
-When something is unclear or dangerous: stop and report to the owner — do not improvise.
-
-## What this repo is
-
-- Entware package feed for Go-language packages (OpenWrt-style buildroot; everything
-  installs under `/opt` on the target device).
-- Fork of a fork: `Entware/entware-go` (upstream, branch `master`) → `spatiumstas/entware-go`
-  → `saymer-alt/entware-go` (this repo).
-- The only working branch of this fork is `gh-action-build` (also the default branch).
-  Upstream `master` is a merge source only. Never create, push to, or build from a
-  `master` branch in this fork.
-- This is not a Go module repo: no root `go.mod`, nothing is built locally. Packages are
-  built only in GitHub Actions via the Entware SDK (`ownik/gh-action-entware-sdk@v1`,
-  OpenWrt buildbot container, `GOTOOLCHAIN=local`).
-
-## Layout
-
-- `mihomo/`, `beszel-agent/` — source-built Go package dirs: `Makefile`
-  (PKG_NAME/PKG_VERSION/PKG_RELEASE/PKG_SOURCE_*/PKG_MIRROR_HASH), `files/`
-  (procd init `S99<pkg>` + config), `patches/` if needed.
-- `warpscout/` — fork-specific ARM64 diagnostic package for Keenetic-class Entware targets.
-  WARPSCOUT v0.16.0 requires Go 1.26.3 while the current Entware SDK v2026.07.04 ships
-  Go 1.26.1, so this package intentionally repacks the official upstream
-  `linux_arm64` release asset with a pinned SHA-256 instead of weakening
-  `GOTOOLCHAIN=local`. It installs only `/opt/bin/warpscout` and
-  `/opt/etc/warpscout`; there is no init script or daemon.
-- `.github/workflows/`:
-  - `build-mihomo.yml` — every six hours + manual + changes to `mihomo/Makefile`; checks
-    whether the `latest` package release already has the complete asset set for the
-    latest MetaCubeX/mihomo release, then runs an SDK Go-version preflight before
-    building. Complete sets retry pruning without rebuilding, including manual dispatch.
-    Publication validates/uploads/verifies the complete new set before pruning older
-    Mihomo assets. Installer/Actions-only changes run safety tests without rebuilding IPKs.
-  - `build-beszel.yml` — manual only; the version is explicit via the `version` input,
-    default is pinned in the workflow. It never follows the upstream latest release
-    automatically; the `preflight` job gates the build (see Go compatibility rule).
-  - `build-warpscout.yml` — aarch64-only WARPSCOUT packaging workflow. It checks upstream
-    every six hours (offset from Mihomo), packages the official Linux/ARM64 release asset,
-    verifies GitHub's asset SHA-256 plus the packaged binary identity, and publishes only
-    `warpscout_*.ipk` into the shared `latest` release. PR runs build/verify only and never
-    publish. The first live KN-1812 install/register/scan test passed on 2026-09-23.
-  - `sync-upstream.yml` — daily + manual; merges `upstream/master` into `gh-action-build`.
-    Clean merge → merge commit + fast-forward push. Conflict → push a
-    `sync-upstream/conflict-*` branch and open a PR; the job itself never resolves conflicts.
-  - `telegram-push.yml` — arrived from upstream, triggers only on push to `master`, so it
-    is inert here. Keep it as-is; do not wire it up.
-- The `latest` release of this repo is the package feed: each workflow replaces only the
-  assets matching its own package glob (`mihomo_*`, `beszel-agent_*`, `warpscout_*`).
-  A WARPSCOUT publication must never delete or overwrite Mihomo/Beszel assets.
-
-Publication jobs for all three packages share `entware-latest-publication`; each
-writer still owns only its own package glob. Beszel/Mihomo refuse to overwrite a
-healthy conflicting candidate and verify SHA-256/size metadata before pruning.
-Mihomo cleanup retries on the next scheduled/manual run without rebuilding IPKs.
-The consumer selection contract is implemented in keenetic-auto-setup PR #114.
-
-## Go compatibility rule (high-care)
-
-The Entware SDK ships one Go toolchain with `GOTOOLCHAIN=local`; a package build fails if
-that tag's `go.mod` requires a newer Go. Therefore:
-- Before building or bumping any Go package, check the `go` directive in that tag's
-  `go.mod` against the Go version actually shipped by the Entware SDK.
-- Never "fix" a toolchain mismatch by upgrading Go, changing the SDK, or setting
-  `GOTOOLCHAIN=auto` in a workflow. Build an older package version, or wait for an SDK
-  update, and report the situation to the owner.
-- `build-beszel.yml` implements this check (preflight reads the SDK's Go version from
-  `staging_dir/host/go/VERSION`). Keep the preflight when copying this pattern.
-
-WARPSCOUT exception is explicit and narrow: when the selected current WARPSCOUT release
-requires a newer Go patch level than the SDK, do not lower its `go` directive and do not
-inject another Go toolchain. The current experimental ARM64 package instead repacks the
-official upstream Linux/ARM64 release binary and verifies its release digest plus binary
-identity. Reconsider source-building only after the Entware SDK satisfies upstream's Go
-requirement.
-
-## Fork-specific vs upstream
-
-- Fork-specific workflows (do not exist upstream; they must survive every upstream sync):
-  `build-mihomo.yml`, `build-beszel.yml`, `build-warpscout.yml`, `sync-upstream.yml`.
-- Package dirs may carry fork-specific changes, but they are not automatically "ours".
-  On every upstream merge, review the actual diff of each package dir and analyze any
-  conflict or divergence separately.
-- A normal upstream sync never modifies files that don't exist upstream. If a sync ever
-  reports a conflict in fork-specific files (same path added upstream), treat it as a
-  conflict: stop and analyze. Never resolve conflicts with automatic "ours"/"theirs".
-
-## Before every commit / push
-
-- `git status` + `git diff` — the diff must be exactly the intended change.
-- Never commit `PKG_MIRROR_HASH:=skip` (CI-only sed at build time is the convention).
-- Push only fast-forward to `gh-action-build`. Forbidden: force push, history rewrite,
-  branch deletion, disabling workflows to hide failures, `--force`/bypass flags.
-- After changing a workflow: dispatch it manually and watch the run to the expected
-  result. A red run with clear diagnostics is better than a green run that silently
-  lost changes.
-
-## Requires explicit owner approval
-
-- Changing the Entware SDK or Go toolchain in any workflow.
-- Creating releases/branches beyond the documented scheme, publishing to the feed
-  manually, changing repo settings, wiring up `telegram-push.yml`.
-- Any conflict resolution in fork-specific files during upstream sync.
-
-
-## Technical debt
-
-- Treat technical debt as an explicit engineering risk, but do not confuse it with cosmetics, personal style preferences, or merely "ugly" working code.
-- For each debt item, provide evidence first and classify its impact: **High** (breakage/security/data-loss risk or blocks operation), **Medium** (impedes development, duplicates/diverges logic, or materially increases maintenance cost), **Low** (local complexity with little current risk).
-- Do not refactor for cleanliness alone. Pay down debt when the benefit and risk reduction justify the change; do not rewrite stable, verified code without a concrete reason.
-- Debt fixes must keep minimal scope, preserve existing safety boundaries, and pass the project's normal regression/safety checks. If the fix creates greater risk or new debt, stop and propose a safer alternative.
-- If debt is discovered outside the current task, do not silently expand scope: record the finding and recommendation, and implement it only when it is in scope or explicitly approved by the operator.
+Detailed old release history and measured behavior stay in the guides for provenance; they are not mandatory startup context or authorization to touch routers.
