@@ -1,0 +1,13 @@
+{
+  "source": "1110a75f76e42c23149b8e24f9182c1ff179e515",
+  "relay_sha256": "44ae382a05587e18bddc2b83618cf726e1e1ae1fc5b9ad9eec156e65b7941254",
+  "notice_collection_sha256": "07768e7c1f5516aaa9c3d83a61df9af1e5e614bbbbf88c9ea4baed9b16adab1e",
+  "dependency_source_audit_sha256": "7f4b0db179a30bf97e2765ac61a0b2c9e02dac3a616554ace791d5473d52c7c9",
+  "client_sha256": {
+    "amd64": "c46cb4c8230d2bc60a85d8bfc76e4e352e7876418f68fa80bf043fecc2305edf",
+    "arm64": "1f48277aceb6de9c26b9f591a2f6833ed981647826a96c31a9cb7b0cfcd19622",
+    "mipsle": "5f98d9540b3bbd972bbf6a553b3af3438b2bad9a50c146280fc2f1885f8c552a",
+    "mips": "134f5e618f21c5875cf5a2779026aafcaf90f56e1642c933ef40a5130f123ecd"
+  },
+  "phase4_entware_commit": "c8e362d32069b1edc11f6762872e4e423a4b8813"
+}
