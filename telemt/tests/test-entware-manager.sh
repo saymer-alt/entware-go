@@ -96,6 +96,9 @@ sh "$base/telemt/entware-manager.sh" cache core | grep -q 'Rollback IPK cached'
 test -f "$root/cache/$name"
 test -f "$root/cache/$name.sha256"
 # A newer release without prior cache must fail closed.
+# Mock an existing program owned by the older installed package.
+cp "$root/data/opt/bin/telemt" /opt/bin/telemt
+chmod 0755 /opt/bin/telemt
 printf '3.5.16-1\n' > "$root/installed"
 if sh "$base/telemt/upgrade.sh" core > "$root/no-rollback.out" 2>&1; then
   echo 'FAIL: accepted upgrade without previous IPK' >&2
