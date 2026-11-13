@@ -59,7 +59,7 @@ secure_dir() {
 }
 setup() {
   platform
-  for cmd in curl jq sha256sum mktemp tar gzip sed; do need "$cmd"; done
+  for dependency in curl jq sha256sum mktemp tar gzip sed; do need "$dependency"; done
   secure_dir "$OUT_DIR"
 }
 installed_version() {
