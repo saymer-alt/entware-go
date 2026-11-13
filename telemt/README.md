@@ -43,12 +43,12 @@ until hardware acceptance is approved.
 
 ## GitHub Actions
 
-[`build-telemt.yml`](../.github/workflows/build-telemt.yml) is staged
-in Draft PR #26. PR checks verify the pinned official upstream binary, checksum,
-license and ARM64 ELF properties. The expensive PR SDK build stays **opt-in**
-via the `run-telemt-sdk` label. PR jobs never publish packages.
+[`build-telemt.yml`](../.github/workflows/build-telemt.yml) is active in
+`gh-action-build` (merged PR #26). PR checks verify the pinned official upstream
+binary, checksum, license and ARM64 ELF properties. The expensive PR SDK build
+stays **opt-in** via the `run-telemt-sdk` label. PR jobs never publish packages.
 
-**Once merged into `gh-action-build`**, the same workflow checks the latest
+On `gh-action-build`, the workflow checks the latest
 stable official TeleMT release every six hours, including its release-asset
 SHA-256 digest. If `latest` already contains
 `telemt_<version>-1_aarch64-3.10.ipk`, SDK packaging is skipped.
@@ -76,3 +76,9 @@ intended Telegram TCP listener. Test from a separate mobile network. In
 particular, a working Direct mode does not prove Middle-End mode is working.
 
 Never commit Telegram proxy secrets, external home IPs or panel passwords.
+
+## Updating on Entware
+
+See the [Russian update guide](../docs/telemt-updates.ru.md) for read-only checks,
+verified release downloads, private backups, manual upgrades and why GitHub
+Release publication does not automatically update an installed router.
