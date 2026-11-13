@@ -5,10 +5,11 @@ base="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 root="/opt/tmp/telemt-ipk-test-$$"
 [ "$(id -u)" = 0 ] || { echo 'Run on a disposable CI runner with sudo' >&2; exit 2; }
 [ ! -e "$root" ] || exit 2
+[ ! -e /opt/bin/telemt ] || { echo 'CI test requires a disposable host without installed TeleMT' >&2; exit 2; }
 mkdir -p "$root/bin" "$root/control" "$root/data/opt/bin"
 cleanup() {
   rm -rf "$root"
-  rm -f /opt/bin/telemt-ipk-ci-test
+  rm -f /opt/bin/telemt-ipk-ci-test /opt/bin/telemt
 }
 trap cleanup EXIT
 printf '#!/bin/sh\nexit 0\n' > "$root/data/opt/bin/telemt"
@@ -107,4 +108,9 @@ if sh "$base/telemt/install.sh" core --apply > "$root/unowned.out" 2>&1; then
   exit 1
 fi
 test ! -e "$root/opkg-install-called"
-echo 'PASS: offline manifest, digest, IPK metadata, cache, downgrade and unowned-binary gates'
+# Positive clean install must use ONLY the mocked opkg and preserve metadata.
+rm -f /opt/bin/telemt
+sh "$base/telemt/install.sh" core --apply | grep -q 'PASS: package installed'
+test -s "$root/opkg-install-called"
+test "$(cat "$root/installed")" = '3.5.17-1'
+echo 'PASS: offline manifest, digest, metadata, cache, downgrade, clean install gates'
