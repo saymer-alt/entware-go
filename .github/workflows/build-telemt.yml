@@ -1,0 +1,307 @@
+# ARM64 TeleMT: verify official release assets, build safely, publish only own IPK.
+# PR SDK is opt-in; scheduled runs are cheap when no new version exists.
+name: Build TeleMT aarch64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gh-action-build]
+    paths:
+      - telemt/Makefile
+      - .github/workflows/build-telemt.yml
+  schedule:
+    # Offset from Mihomo and WARPSCOUT (UTC times; Moscow = UTC+3).
+    - cron: '17 3,9,15,21 * * *'
+  pull_request:
+    branches:
+      - gh-action-build
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - telemt/**
+      - .github/workflows/build-telemt.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-telemt-aarch64
+  cancel-in-progress: false
+
+jobs:
+
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      hash: ${{ steps.check.outputs.hash }}
+      update: ${{ steps.check.outputs.update }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check official stable TeleMT release against package feed
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const makefile = fs.readFileSync('telemt/Makefile', 'utf8');
+            const pinnedVersion = makefile.match(/^PKG_VERSION:=(.*)$/m)?.[1]?.trim();
+            const pinnedHash = makefile.match(/^PKG_HASH:=(.*)$/m)?.[1]?.trim();
+            const semver = (v) => /^\d+\.\d+\.\d+$/.test(v || '');
+            if (!semver(pinnedVersion) || !/^[a-f0-9]{64}$/.test(pinnedHash || '')) {
+              core.setFailed('Invalid TeleMT recipe version or SHA256'); return;
+            }
+            const isPR = context.eventName === 'pull_request';
+            const response = isPR
+              ? await github.rest.repos.getReleaseByTag({owner:'telemt',repo:'telemt',tag:pinnedVersion})
+              : await github.rest.repos.getLatestRelease({owner:'telemt',repo:'telemt'});
+            const upstream = response.data;
+            const version = upstream.tag_name.replace(/^v/, '');
+            if (!semver(version) || upstream.draft || upstream.prerelease) {
+              core.setFailed('Unexpected/non-stable upstream TeleMT tag: ' + upstream.tag_name); return;
+            }
+            const compare = (a,b) => {
+              const x=a.split('.').map(Number), y=b.split('.').map(Number);
+              for(let i=0;i<3;i++) if(x[i]!==y[i]) return x[i]-y[i];
+              return 0;
+            };
+            if (compare(version,pinnedVersion)<0) {
+              core.setFailed('Upstream version is older than recipe; downgrade forbidden'); return;
+            }
+            const asset = upstream.assets.find(a => a.name==='telemt-aarch64-linux-musl.tar.gz');
+            if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '')) {
+              core.setFailed('Official ARM64 MUSL asset or SHA256 unavailable'); return;
+            }
+            const hash=asset.digest.slice(7);
+            if (isPR && (version!==pinnedVersion || hash!==pinnedHash)) {
+              core.setFailed('PR must retain pinned, verified source version/digest'); return;
+            }
+            const {owner,repo}=context.repo;
+            const target=await github.rest.repos.getReleaseByTag({owner,repo,tag:'latest'});
+            const assets=await github.paginate(github.rest.repos.listReleaseAssets,
+              {owner,repo,release_id:target.data.id,per_page:100});
+            const assetName='telemt_'+version+'-1_aarch64-3.10.ipk';
+            const published=assets.some(a=>a.name===assetName);
+            core.setOutput('version',version);
+            core.setOutput('hash',hash);
+            core.setOutput('update',published?'false':'true');
+            core.info('TeleMT '+version+'; published='+published+'; PR='+isPR);
+
+  preflight:
+    needs: check-version
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-version.outputs.update == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      binary_hash: ${{ steps.verify.outputs.binary_hash }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify official upstream asset and license
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          EXPECTED: ${{ needs.check-version.outputs.hash }}
+        run: |
+          set -euo pipefail
+          version="$VERSION"
+          expected="$EXPECTED"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Invalid version"; exit 1; }
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid pinned hash"; exit 1; }
+          test -s telemt/files/LICENSE
+          grep -q 'TELEMT LICENSE 3.3' telemt/files/LICENSE
+
+          asset="telemt-aarch64-linux-musl.tar.gz"
+          release="$(gh api "repos/telemt/telemt/releases/tags/$version")"
+          url="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .browser_download_url' <<<"$release")"
+          digest="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' <<<"$release")"
+          [[ "$digest" == "sha256:$expected" ]] || { echo "::error::Upstream digest mismatch"; exit 1; }
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          # Fail closed if the official license changes after the tested baseline.
+          curl -fsSL --retry 2 \
+            "https://raw.githubusercontent.com/telemt/telemt/3.5.17/docs/LICENSE/TELEMT-LICENSE.en.md" \
+            -o "$tmp/license-baseline"
+          curl -fsSL --retry 2 \
+            "https://raw.githubusercontent.com/telemt/telemt/$VERSION/docs/LICENSE/TELEMT-LICENSE.en.md" \
+            -o "$tmp/license-release"
+          cmp "$tmp/license-baseline" "$tmp/license-release" || {
+            echo "::error::Upstream TeleMT license changed: review needed before publishing"; exit 1;
+          }
+          curl --fail --silent --show-error --location --retry 2 "$url" -o "$tmp/asset.tar.gz"
+          echo "$expected  $tmp/asset.tar.gz" | sha256sum -c -
+          # TeleMT's official 3.5.17 release workflow packages exactly one file.
+          test "$(tar -tzf "$tmp/asset.tar.gz")" = telemt
+          tar -xzf "$tmp/asset.tar.gz" -C "$tmp"
+          test -x "$tmp/telemt"
+          file "$tmp/telemt" | grep -Eiq 'ARM aarch64|ARM64|aarch64'
+          readelf -h "$tmp/telemt" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$tmp/telemt" | grep -q 'INTERP'
+          ! readelf -d "$tmp/telemt" | grep -q '(NEEDED)'
+          binary_hash="$(sha256sum "$tmp/telemt" | awk '{print $1}')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "binary_hash=$binary_hash" >> "$GITHUB_OUTPUT"
+          echo "Checked $asset; unmodified ARM64 binary $binary_hash"
+
+  build:
+    needs: [check-version, preflight]
+    if: >-
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-telemt-sdk')) ||
+      (github.event_name != 'pull_request' &&
+        (github.event_name == 'workflow_dispatch' || needs.check-version.outputs.update == 'true'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Pin verified upstream version and digest for the SDK build
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          HASH: ${{ needs.check-version.outputs.hash }}
+        run: |
+          set -euo pipefail
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=$VERSION/" telemt/Makefile
+          sed -i -E "s/^PKG_HASH:=.*/PKG_HASH:=$HASH/" telemt/Makefile
+          grep -E '^(PKG_VERSION|PKG_HASH):=' telemt/Makefile
+
+      - name: Package upstream ARM64 binary as an Entware IPK
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: aarch64
+          PACKAGES: telemt
+          V: s
+          FEEDNAME: local
+
+      - name: Verify IPK contents match pinned release
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          UPSTREAM_BINARY_HASH: ${{ needs.preflight.outputs.binary_hash }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find bin/targets -type f -name 'telemt_*.ipk' | sort)
+          [[ "${#files[@]}" -eq 1 ]] || { echo "::error::Expected one TeleMT IPK"; exit 1; }
+          ipk="$(realpath "${files[0]}")"
+          name="$(basename "$ipk")"
+          [[ "$name" == "telemt_${VERSION}-1_aarch64-3.10.ipk" ]] || {
+            echo "::error::Unexpected IPK name: $name"; exit 1;
+          }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            if ar t "$ipk" >/dev/null 2>&1; then
+              ar x "$ipk"
+            elif tar -tf "$ipk" >/dev/null 2>&1; then
+              tar -xf "$ipk"
+            else
+              echo "::error::Unknown IPK container"; exit 1
+            fi
+          )
+          mapfile -t data < <(find "$tmp" -maxdepth 1 -name 'data.tar.*' -type f)
+          [[ "${#data[@]}" -eq 1 ]] || { echo "::error::Invalid IPK data archive"; exit 1; }
+          mkdir "$tmp/payload"
+          case "${data[0]}" in
+            *.gz) tar -xzf "${data[0]}" -C "$tmp/payload" ;;
+            *.xz) tar -xJf "${data[0]}" -C "$tmp/payload" ;;
+            *.zst) tar --zstd -xf "${data[0]}" -C "$tmp/payload" ;;
+            *) echo "::error::Unexpected archive compression"; exit 1 ;;
+          esac
+          bin="$tmp/payload/opt/bin/telemt"
+          test -x "$bin"
+          readelf -h "$bin" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$bin" | grep -q INTERP
+          ! readelf -d "$bin" | grep -q '(NEEDED)'
+          hash="$(sha256sum "$bin" | awk '{print $1}')"
+          [[ "$hash" == "$UPSTREAM_BINARY_HASH" ]] || {
+            echo "::error::Packaged TeleMT differs from official upstream"; exit 1;
+          }
+          test -s "$tmp/payload/opt/share/licenses/telemt/LICENSE"
+          cmp telemt/files/LICENSE "$tmp/payload/opt/share/licenses/telemt/LICENSE"
+          test ! -e "$tmp/payload/opt/etc/init.d/S99telemt"
+          test ! -e "$tmp/payload/opt/etc/telemt/config.toml"
+          echo "PASS: $name; binary sha256 $hash"
+
+      - name: Preserve verified IPK as Actions artifact only
+        uses: actions/upload-artifact@v6
+        with:
+          name: telemt-${{ needs.check-version.outputs.version }}-aarch64-ipk
+          path: bin/targets/**/packages/telemt_*.ipk
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish-latest-release:
+    needs: [check-version, preflight, build]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.check-version.outputs.update == 'true'
+    concurrency:
+      group: entware-latest-publication
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download verified TeleMT build artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Validate exact package set and hash before upload
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t ipks < <(find out -type f -name 'telemt_*.ipk' | sort)
+          [[ ${#ipks[@]} -eq 1 ]] || { echo "::error::Expected exactly one TeleMT IPK"; exit 1; }
+          name="$(basename "${ipks[0]}")"
+          [[ "$name" == "telemt_$VERSION-1_aarch64-3.10.ipk" ]] || {
+            echo "::error::Unexpected package filename: $name"; exit 1;
+          }
+          echo "TELEMT_IPK=${ipks[0]}" >> "$GITHUB_ENV"
+          echo "TELEMT_IPK_NAME=$name" >> "$GITHUB_ENV"
+          sha256sum "${ipks[0]}"
+
+      - name: Upload only TeleMT package to shared latest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload latest "$TELEMT_IPK"
+
+      - name: Download, checksum verify, then prune only older TeleMT IPKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          gh release download latest --pattern "$TELEMT_IPK_NAME" --dir "$work"
+          cmp "$TELEMT_IPK" "$work/$TELEMT_IPK_NAME" || {
+            echo "::error::Published TeleMT IPK differs from verified artifact"; exit 1;
+          }
+          release_id="$(gh api "repos/$GH_REPO/releases/tags/latest" --jq .id)"
+          remote="$(mktemp)"
+          trap 'rm -rf "$work" "$remote"' EXIT
+          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | [.id, .name] | @tsv' > "$remote"
+          if ! awk -F '\t' -v keep="$TELEMT_IPK_NAME" '$2 == keep { found=1 } END { exit !found }' "$remote"; then
+            echo "::error::Verified TeleMT IPK not listed among release assets"; exit 1;
+          fi
+          while IFS=$'\t' read -r asset_id name; do
+            case "$name" in
+              telemt_*.ipk)
+                if [[ "$name" != "$TELEMT_IPK_NAME" ]]; then
+                  gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+                fi ;;
+            esac
+          done < "$remote"
