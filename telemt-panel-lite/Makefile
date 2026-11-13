@@ -18,6 +18,11 @@ PKG_LICENSE:=MIT
 PKG_MAINTAINER:=Unofficial Entware package (saymer-alt)
 PKG_BUILD_PARALLEL:=0
 
+# Preserve the byte-identical official Go release binary. Entware's default
+# rstrip.sh rewrites Go ELF files and breaks the upstream SHA256 identity check.
+# This disables stripping for this recipe only; no global SDK settings change.
+RSTRIP:=:
+
 include $(INCLUDE_DIR)/package.mk
 
 define Package/telemt-panel-lite
