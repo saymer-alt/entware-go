@@ -43,19 +43,28 @@ until hardware acceptance is approved.
 
 ## GitHub Actions
 
-[`build-telemt.yml`](../.github/workflows/build-telemt.yml) performs a
-lightweight upstream digest/license preflight on PRs. To prevent expensive SDK
-runs on every PR revision, the Entware SDK build is opt-in: an owner can add the
-`run-telemt-sdk` label to the PR and re-trigger a `labeled` event. Once the
-workflow is present on the default branch, its manual `workflow_dispatch`
-can also run a build. The build verifies the produced IPK's filename, ELF
-architecture, absence of a dynamic loader/dependencies, matching upstream
-binary SHA256 and bundled license. The tested IPK is uploaded as a **temporary
-Actions artifact only**.
+[`build-telemt.yml`](../.github/workflows/build-telemt.yml) is staged
+in Draft PR #26. PR checks verify the pinned official upstream binary, checksum,
+license and ARM64 ELF properties. The expensive PR SDK build stays **opt-in**
+via the `run-telemt-sdk` label. PR jobs never publish packages.
 
-The workflow does not edit the shared `latest` GitHub Release, publish a feed,
-notify an aggregator, or alter Mihomo/WARPSCOUT workflows. Hardware validation
-on a Keenetic router remains a separate acceptance gate.
+**Once merged into `gh-action-build`**, the same workflow checks the latest
+stable official TeleMT release every six hours, including its release-asset
+SHA-256 digest. If `latest` already contains
+`telemt_<version>-1_aarch64-3.10.ipk`, SDK packaging is skipped.
+Otherwise the SDK repacks the verified official ARM64 MUSL executable, validates
+binary identity, licenses and package safety boundaries, uploads an Actions
+artifact, and publishes **only `telemt_*.ipk`** to the shared GitHub
+`latest` release. It downloads the published file to verify byte identity
+**before** pruning only older TeleMT assets; Mihomo, WARPSCOUT and Beszel
+assets remain untouched. Concurrent release writers share
+`entware-latest-publication`.
+
+The live router configuration, API tokens, S99 service and DDNS are never
+bundled or modified by these workflows. GitHub Release publication does not
+automatically update an installed router: `opkg` uses its configured package
+indexes, or an explicitly installed verified GitHub IPK. New major/runtime
+behavior should be field-tested before installing on a production router.
 
 ## Before enabling service
 
