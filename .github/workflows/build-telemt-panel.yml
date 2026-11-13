@@ -1,0 +1,319 @@
+# TeleMT Panel Lite 1.x: verified upstream ARM64 release, isolated package publication.
+# PR SDK opt-in; scheduled checks skip builds when the official version is published.
+name: Build TeleMT Panel Lite aarch64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gh-action-build]
+    paths:
+      - telemt-panel-lite/Makefile
+      - .github/workflows/build-telemt-panel.yml
+  schedule:
+    # Offset from TeleMT and other SDK workflows (UTC, Moscow = UTC+3).
+    - cron: '47 3,9,15,21 * * *'
+  pull_request:
+    branches:
+      - gh-action-build
+    types: [opened, reopened, synchronize, labeled]
+    paths:
+      - telemt-panel-lite/**
+      - .github/workflows/build-telemt-panel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-telemt-panel-aarch64
+  cancel-in-progress: false
+
+jobs:
+
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      package_version: ${{ steps.check.outputs.package_version }}
+      hash: ${{ steps.check.outputs.hash }}
+      update: ${{ steps.check.outputs.update }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check official Panel 1.x release, including RCs, against package feed
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const makefile = fs.readFileSync('telemt-panel-lite/Makefile', 'utf8');
+            const pinnedPkg = makefile.match(/^PKG_VERSION:=(.*)$/m)?.[1]?.trim();
+            const pinnedHash = makefile.match(/^PKG_HASH:=(.*)$/m)?.[1]?.trim();
+            const parse = s => {
+              const m = /^1\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/.exec(s || '');
+              return m ? [1, Number(m[1]), Number(m[2]), m[3]===undefined ? 1 : 0,
+                Number(m[3] || 0)] : null;
+            };
+            const compare = (a,b) => {
+              const x=parse(a),y=parse(b);
+              if(!x||!y) throw Error('Unsupported Panel 1.x release');
+              for(let i=0;i<x.length;i++) if(x[i]!==y[i]) return x[i]-y[i];
+              return 0;
+            };
+            const pinned = pinnedPkg?.replace('~rc.','-rc.');
+            if (!parse(pinned) || !/^[0-9a-f]{64}$/.test(pinnedHash || '')) {
+              core.setFailed('Invalid Panel 1.x pinned version/hash'); return;
+            }
+            const isPR = context.eventName === 'pull_request';
+            let upstream;
+            if (isPR) {
+              upstream = (await github.rest.repos.getReleaseByTag({
+                owner:'amirotin',repo:'telemt_panel',tag:'v'+pinned})).data;
+            } else {
+              const releases = await github.paginate(github.rest.repos.listReleases,
+                {owner:'amirotin',repo:'telemt_panel',per_page:100});
+              const matching = releases.filter(r=>!r.draft&&parse(r.tag_name.replace(/^v/,'')));
+              matching.sort((a,b)=>compare(b.tag_name.replace(/^v/,''),
+                a.tag_name.replace(/^v/,'')));
+              upstream = matching[0];
+            }
+            if (!upstream) { core.setFailed('No official Panel 1.x release found'); return; }
+            const version = upstream.tag_name.replace(/^v/,'');
+            if (!parse(version) || compare(version,pinned)<0) {
+              core.setFailed('Unsupported version or downgrade: '+version); return;
+            }
+            const asset = upstream.assets.find(a=>
+              a.name==='telemt-panel-lite-aarch64-linux-musl.tar.gz');
+            if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest||'')) {
+              core.setFailed('Official Panel Lite ARM64 asset or SHA256 missing: '+upstream.tag_name);
+              return;
+            }
+            const hash=asset.digest.slice(7);
+            if (isPR && (version!==pinned || hash!==pinnedHash)) {
+              core.setFailed('PR must retain pinned Panel release/digest'); return;
+            }
+            const packageVersion=version.replace('-rc.','~rc.');
+            const {owner,repo}=context.repo;
+            const target=await github.rest.repos.getReleaseByTag({owner,repo,tag:'latest'});
+            const assets=await github.paginate(github.rest.repos.listReleaseAssets,
+              {owner,repo,release_id:target.data.id,per_page:100});
+            const name='telemt-panel-lite_'+packageVersion+'-1_aarch64-3.10.ipk';
+            const published=assets.some(a=>a.name===name);
+            core.setOutput('version',version);
+            core.setOutput('package_version',packageVersion);
+            core.setOutput('hash',hash);
+            core.setOutput('update',published?'false':'true');
+            core.info('Panel '+upstream.tag_name+'; published='+published+'; PR='+isPR);
+
+  preflight:
+    needs: check-version
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-version.outputs.update == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      binary_hash: ${{ steps.asset.outputs.binary_hash }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify official Panel Lite ARM64 asset, archive and licenses
+        id: asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          EXPECTED: ${{ needs.check-version.outputs.hash }}
+        run: |
+          set -euo pipefail
+          asset=telemt-panel-lite-aarch64-linux-musl.tar.gz
+          pinned="$EXPECTED"
+          version="$VERSION"
+          [[ "$pinned" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid SHA256"; exit 1; }
+          test -s telemt-panel-lite/files/LICENSE
+          test -s telemt-panel-lite/files/THIRD_PARTY_NOTICES.md
+          grep -q '^MIT License' telemt-panel-lite/files/LICENSE
+          release="$(gh api repos/amirotin/telemt_panel/releases/tags/v$VERSION)"
+          url="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release")"
+          digest="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$release")"
+          [[ "$digest" == "sha256:$pinned" ]] || { echo "::error::Upstream SHA256 differs"; exit 1; }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl -fsSL --retry 2 "$url" -o "$tmp/archive.tar.gz"
+          echo "$pinned  $tmp/archive.tar.gz" | sha256sum -c -
+          [[ "$(tar -tzf "$tmp/archive.tar.gz")" == "telemt-panel" ]] || {
+            echo "::error::Unexpected archive contents"; exit 1;
+          }
+          tar -xzf "$tmp/archive.tar.gz" -C "$tmp"
+          bin="$tmp/telemt-panel"
+          test -x "$bin"
+          readelf -h "$bin" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$bin" | grep -q INTERP
+          ! readelf -d "$bin" | grep -q '(NEEDED)'
+          hash="$(sha256sum "$bin" | awk '{print $1}')"
+          echo "binary_hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "PASS: upstream ARM64 Lite binary $hash"
+
+  build:
+    needs: [check-version, preflight]
+    if: >-
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-telemt-panel-sdk')) ||
+      (github.event_name != 'pull_request' &&
+        (github.event_name == 'workflow_dispatch' || needs.check-version.outputs.update == 'true'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pin selected official version, SHA256 and attribution for SDK
+        shell: bash
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          PKG_VERSION: ${{ needs.check-version.outputs.package_version }}
+          HASH: ${{ needs.check-version.outputs.hash }}
+        run: |
+          set -euo pipefail
+          sed -i -E "s|^PKG_VERSION:=.*|PKG_VERSION:=$PKG_VERSION|" telemt-panel-lite/Makefile
+          sed -i -E "s|^PKG_HASH:=.*|PKG_HASH:=$HASH|" telemt-panel-lite/Makefile
+          sed -i -E "s|^PKG_SOURCE_URL:=.*|PKG_SOURCE_URL:=https://github.com/amirotin/telemt_panel/releases/download/v$VERSION|" telemt-panel-lite/Makefile
+          sed -i -E "s|^  TITLE:=.*|  TITLE:=TeleMT Panel $VERSION Lite (ARM64, unofficial)|" telemt-panel-lite/Makefile
+          sed -i -E "s|Unmodified upstream ARM64 static TeleMT Panel .* Lite build\.|Unmodified upstream ARM64 static TeleMT Panel $VERSION Lite build.|" telemt-panel-lite/Makefile
+          curl --fail --silent --show-error --location --retry 2 \
+            "https://raw.githubusercontent.com/amirotin/telemt_panel/v$VERSION/LICENSE" \
+            -o telemt-panel-lite/files/LICENSE
+          curl --fail --silent --show-error --location --retry 2 \
+            "https://raw.githubusercontent.com/amirotin/telemt_panel/v$VERSION/THIRD_PARTY_NOTICES.md" \
+            -o telemt-panel-lite/files/THIRD_PARTY_NOTICES.md
+          grep -q '^MIT License' telemt-panel-lite/files/LICENSE
+          test -s telemt-panel-lite/files/THIRD_PARTY_NOTICES.md
+          grep -E '^(PKG_VERSION|PKG_HASH|PKG_SOURCE_URL):=' telemt-panel-lite/Makefile
+      - name: Build Entware ARM64 Lite IPK
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: aarch64
+          PACKAGES: telemt-panel-lite
+          V: s
+          FEEDNAME: local
+
+      - name: Verify packaged payload, SHA256, license and safe defaults
+        shell: bash
+        env:
+          UPSTREAM_HASH: ${{ needs.preflight.outputs.binary_hash }}
+          PKG_VERSION: ${{ needs.check-version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find bin/targets -type f -name 'telemt-panel-lite_*.ipk' | sort)
+          [[ "${#files[@]}" -eq 1 ]] || { echo "::error::Expected one Panel Lite IPK"; exit 1; }
+          ipk="$(realpath "${files[0]}")"
+          name="$(basename "$ipk")"
+          [[ "$name" == "telemt-panel-lite_$PKG_VERSION-1_aarch64-3.10.ipk" ]] || {
+            echo "::error::Unexpected package filename: $name"; exit 1;
+          }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            if ar t "$ipk" >/dev/null 2>&1; then
+              ar x "$ipk"
+            elif tar -tf "$ipk" >/dev/null 2>&1; then
+              tar -xf "$ipk"
+            else
+              echo "::error::Unsupported IPK container"; exit 1
+            fi
+          )
+          mapfile -t archives < <(find "$tmp" -maxdepth 1 -type f -name 'data.tar.*')
+          [[ "${#archives[@]}" -eq 1 ]] || { echo "::error::Expected one data.tar"; exit 1; }
+          mkdir "$tmp/payload"
+          case "${archives[0]}" in
+            *.gz) tar -xzf "${archives[0]}" -C "$tmp/payload" ;;
+            *.xz) tar -xJf "${archives[0]}" -C "$tmp/payload" ;;
+            *.zst) tar --zstd -xf "${archives[0]}" -C "$tmp/payload" ;;
+            *) echo "::error::Unexpected data archive format"; exit 1 ;;
+          esac
+          bin="$tmp/payload/opt/bin/telemt-panel"
+          test -x "$bin"
+          readelf -h "$bin" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$bin" | grep -q INTERP
+          ! readelf -d "$bin" | grep -q '(NEEDED)'
+          [[ "$(sha256sum "$bin" | awk '{print $1}')" == "$UPSTREAM_HASH" ]] || {
+            echo "::error::Panel binary differs from upstream"; exit 1;
+          }
+          cmp telemt-panel-lite/files/LICENSE "$tmp/payload/opt/share/licenses/telemt-panel/LICENSE"
+          cmp telemt-panel-lite/files/THIRD_PARTY_NOTICES.md "$tmp/payload/opt/share/licenses/telemt-panel/THIRD_PARTY_NOTICES.md"
+          test ! -e "$tmp/payload/opt/etc/telemt-panel/config.toml"
+          test ! -e "$tmp/payload/opt/etc/init.d/S99telemt-panel"
+          echo "PASS: $name, byte-identical to upstream"
+
+      - name: Keep verified IPK as temporary Actions artifact only
+        uses: actions/upload-artifact@v6
+        with:
+          name: telemt-panel-lite-${{ needs.check-version.outputs.version }}-aarch64-ipk
+          path: bin/targets/**/packages/telemt-panel-lite_*.ipk
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish-latest-release:
+    needs: [check-version, preflight, build]
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.check-version.outputs.update == 'true'
+    concurrency:
+      group: entware-latest-publication
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download verified Panel Lite build artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Validate exact package set and SHA256 before upload
+        shell: bash
+        env:
+          PKG_VERSION: ${{ needs.check-version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          mapfile -t ipks < <(find out -type f -name 'telemt-panel-lite_*.ipk' | sort)
+          [[ ${#ipks[@]} -eq 1 ]] || { echo "::error::Expected exactly one Panel Lite IPK"; exit 1; }
+          name="$(basename "${ipks[0]}")"
+          [[ "$name" == "telemt-panel-lite_$PKG_VERSION-1_aarch64-3.10.ipk" ]] || {
+            echo "::error::Unexpected package filename: $name"; exit 1;
+          }
+          echo "PANEL_IPK=${ipks[0]}" >> "$GITHUB_ENV"
+          echo "PANEL_IPK_NAME=$name" >> "$GITHUB_ENV"
+          sha256sum "${ipks[0]}"
+
+      - name: Upload only Panel Lite package to shared latest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload latest "$PANEL_IPK"
+
+      - name: Download, checksum verify, then prune only older Panel Lite IPKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          gh release download latest --pattern "$PANEL_IPK_NAME" --dir "$work"
+          cmp "$PANEL_IPK" "$work/$PANEL_IPK_NAME" || {
+            echo "::error::Published Panel Lite IPK differs from verified artifact"; exit 1;
+          }
+          release_id="$(gh api "repos/$GH_REPO/releases/tags/latest" --jq .id)"
+          remote="$(mktemp)"
+          trap 'rm -rf "$work" "$remote"' EXIT
+          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | [.id, .name] | @tsv' > "$remote"
+          if ! awk -F '\t' -v keep="$PANEL_IPK_NAME" '$2 == keep { found=1 } END { exit !found }' "$remote"; then
+            echo "::error::Verified Panel Lite IPK not listed among release assets"; exit 1;
+          fi
+          while IFS=$'\t' read -r asset_id name; do
+            case "$name" in
+              telemt-panel-lite_*.ipk)
+                if [[ "$name" != "$PANEL_IPK_NAME" ]]; then
+                  gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+                fi ;;
+            esac
+          done < "$remote"
