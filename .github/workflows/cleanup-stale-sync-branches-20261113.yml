@@ -1,0 +1,35 @@
+name: One-time cleanup of stale upstream sync branches
+on:
+  push:
+    branches: [gh-action-build]
+    paths:
+      - '.github/workflows/cleanup-stale-sync-branches-20261113.yml'
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    if: github.repository == 'saymer-alt/entware-go'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete only 16 audited legacy conflict branches
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const upstreamSha = '255dd4f4fc89461e843db660e059bff85bed7f91';
+            if (context.ref !== 'refs/heads/gh-action-build') throw Error('Wrong branch; refusing cleanup');
+            const { owner, repo } = context.repo;
+            const comparison = await github.rest.repos.compareCommits({owner, repo, base: upstreamSha, head: context.sha});
+            if (comparison.data.behind_by !== 0) throw Error('Upstream history is not integrated; refusing cleanup');
+            const expected = new Map([["40844815376","61a802972a34597c518676fa5bf8f7b94c4d2be1"],["41029467471","5b2b9c47d3adef429cfcd4a6c8c420d04454e6fa"],["41185828329","0e2e35582498f130c569f7adbf2ac5d6194fb174"],["41293754894","433564cdaa5b05c8ca0d2d10faf361ab3c1a2260"],["41423985703","9edf3aa097b70db750a487304414be79eb01e0be"],["41614895170","71f73b6977e2bb0993a4b37f254104d12d488625"],["41809455767","e612c9797d69b2c3a032388cbc8bb4383c64947b"],["42005078404","dbe67ed9c4971f2e81fb4fdfe0710b7374d64172"],["42197210059","c5e5b233c539de9abc433136dafeffa6ec185d10"],["42358284461","6cc12c27c1024b5e17f5166eae15fbf2d59dbad0"],["42466970502","f2dee4c48767a00921b290f2fd22f081940f44a8"],["42598814748","c657a48d360f128e0edc2da6196fa7a8513d30b2"],["42797628967","4694020a66c851362f11c1736b9e8d8ef6111e4d"],["42997926037","a772b797ecc0ee86104739ca975cc5bab15484c7"],["43197583272","e076ad5532a354164ac0ebc160b4e352df49c1df"],["43404849038","6709a312c99ededf41e26b4c46781a4ad9508329"]]);
+            let removed = 0, skipped = 0;
+            for (const [id, sha] of expected) {
+              const ref = 'heads/sync-upstream/conflict-' + id;
+              let current;
+              try { current = (await github.rest.git.getRef({owner, repo, ref})).data.object.sha; }
+              catch (e) { if (e.status === 404) { skipped++; continue; } throw e; }
+              if (current !== sha) { core.warning(ref + ': changed since audit; leaving untouched'); skipped++; continue; }
+              await github.rest.git.deleteRef({owner, repo, ref});
+              removed++; core.info('Deleted legacy ' + ref);
+            }
+            await core.summary.addHeading('Legacy upstream conflict branches cleanup').addRaw('Deleted: ' + removed + '; skipped: ' + skipped).write();
+            if (skipped) core.warning('Some branches were absent or changed; review skipped refs');
