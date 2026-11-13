@@ -53,11 +53,11 @@ listener to the public WAN. Do not disable authentication.
 ## GitHub Actions and upgrade stages
 
 [`build-telemt-panel.yml`](../.github/workflows/build-telemt-panel.yml) is
-staged in Draft PR #27. A PR checks the pinned official ARM64 Lite archive and
-digest. Expensive PR SDK packaging requires the `run-telemt-panel-sdk` label.
-Pull requests do **not** publish or deploy.
+active in `gh-action-build` (merged PR #27, GitHub asset-name fix PR #28).
+A PR checks the pinned official ARM64 Lite archive and digest. Expensive PR SDK
+packaging requires the `run-telemt-panel-sdk` label. PRs do **not** publish or deploy.
 
-**After merging into `gh-action-build`**, a six-hour schedule checks official
+A six-hour schedule on `gh-action-build` checks official
 Panel **1.x** releases, including RC builds, rather than GitHub's latest stable
 0.6.x release. It selects the highest supported 1.x version with the expected
 official ARM64 MUSL Lite asset and a SHA-256 digest; unexpected releases, missing
@@ -87,3 +87,10 @@ These commands are examples; they are **not** automatically run by CI. The
 last check requires an already prepared, valid 1.x configuration. Real Keenetic
 service and API tests, migration, resource measurements and rollback remain
 separate acceptance gates.
+
+## Updating on Entware
+
+See the [Russian update guide](../docs/telemt-updates.ru.md) for the distinction
+between package updates and the panel's own upstream-binary update mechanism,
+including the `~rc` / `.rc` GitHub Release asset name difference, verification,
+private backups and manual installation.
