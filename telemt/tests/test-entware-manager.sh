@@ -6,7 +6,7 @@ root="/opt/tmp/telemt-ipk-test-$$"
 [ "$(id -u)" = 0 ] || { echo 'Run on a disposable CI runner with sudo' >&2; exit 2; }
 [ ! -e "$root" ] || exit 2
 [ ! -e /opt/bin/telemt ] || { echo 'CI test requires a disposable host without installed TeleMT' >&2; exit 2; }
-mkdir -p "$root/bin" "$root/control" "$root/data/opt/bin"
+mkdir -p /opt/bin "$root/bin" "$root/control" "$root/data/opt/bin"
 cleanup() {
   rm -rf "$root"
   rm -f /opt/bin/telemt-ipk-ci-test /opt/bin/telemt
