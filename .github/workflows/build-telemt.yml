@@ -123,6 +123,16 @@ jobs:
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
+          # Fail closed if the official license changes after the tested baseline.
+          curl -fsSL --retry 2 \
+            "https://raw.githubusercontent.com/telemt/telemt/3.5.17/docs/LICENSE/TELEMT-LICENSE.en.md" \
+            -o "$tmp/license-baseline"
+          curl -fsSL --retry 2 \
+            "https://raw.githubusercontent.com/telemt/telemt/$VERSION/docs/LICENSE/TELEMT-LICENSE.en.md" \
+            -o "$tmp/license-release"
+          cmp "$tmp/license-baseline" "$tmp/license-release" || {
+            echo "::error::Upstream TeleMT license changed: review needed before publishing"; exit 1;
+          }
           curl --fail --silent --show-error --location --retry 2 "$url" -o "$tmp/asset.tar.gz"
           echo "$expected  $tmp/asset.tar.gz" | sha256sum -c -
           # TeleMT's official 3.5.17 release workflow packages exactly one file.
