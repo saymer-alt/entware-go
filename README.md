@@ -1,207 +1,39 @@
 # entware-go
 
-Fork-specific Entware package feed for Go and Go-adjacent utilities used on Keenetic and other Entware targets.
+Неофициальный форк [Entware Go](https://github.com/spatiumstas/entware-go) с дополнительными пакетами для **Keenetic** и других устройств с Entware. Здесь находятся рецепты сборки и отдельные автоматизированные сборки IPK.
 
-The production package release is [`latest`](https://github.com/saymer-alt/entware-go/releases/tag/latest).
-Automated workflows build or package only their own assets and publish them into that shared release.
+**Готовые пакеты:** [GitHub Release `latest`](https://github.com/saymer-alt/entware-go/releases/tag/latest). Каждый процесс сборки публикует и обновляет только файлы своего пакета, не затрагивая остальные.
 
-## Packages
+## Основные пакеты
 
-- **mihomo** — multi-architecture Entware package, built automatically from the latest MetaCubeX/mihomo release.
-- **beszel-agent** — manually built Entware package.
-- **warpscout** — ARM64-only Entware package for WARPSCOUT, intended for Keenetic-class routers such as KN-1012 / KN-1812 / KN-3811 / KN-3812.
+| Пакет | Для чего нужен | Документация |
+| --- | --- | --- |
+| **Mihomo** | Прокси-ядро; автоматические сборки для нескольких архитектур | [Каталог пакета](mihomo/) |
+| **Beszel Agent** | Агент мониторинга; пакет собирается вручную | [Каталог пакета](beszel-agent/) |
+| **WARPSCOUT** | Диагностика WARP, WireGuard, AmneziaWG и MASQUE на ARM64 | [Установка и команды](warpscout/README.md) |
+| **TeleMT** | Telegram MTProxy для ARM64 | [Установка и обновление](docs/telemt-updates.ru.md) |
+| **TeleMT Panel Lite** | Панель управления TeleMT для ARM64 | [Установка и обновление](docs/telemt-updates.ru.md) |
+
+Это список отдельно сопровождаемых пакетов форка, а не полный перечень рецептов Entware.
+
+## WARPSCOUT (ARM64 Keenetic)
+
+WARPSCOUT публикуется как IPK для Entware `aarch64-3.10`. Это **консольная утилита**, а не фоновая служба: она не запускается автоматически. Поддерживаются устройства класса KN-1012, KN-1812, KN-3811 и KN-3812 с подходящей ARM64-версией Entware.
+
+**[Подробная инструкция: установка, безопасное обновление, AWG/WG/MASQUE, поиск узлов и проверка сборки](warpscout/README.md).**
+
+Новые версии проверяются каждые шесть часов. Установщик может выбрать пакет из Entware feed, даже если в GitHub уже есть более новая версия; для проверки обновлений предусмотрен отдельный `warpscout/update.sh` (см. [известное ограничение #21](https://github.com/saymer-alt/entware-go/issues/21)). Файл `/opt/etc/warpscout/warpscout-account.json` содержит приватные данные аккаунта — не публикуйте его.
 
 ## TeleMT и TeleMT Panel Lite (ARM64)
 
-Неофициальные Entware IPK для **TeleMT** и **TeleMT Panel Lite** собираются автоматически и публикуются в GitHub Release [latest](https://github.com/saymer-alt/entware-go/releases/tag/latest). Новые выпуски проверяются каждые шесть часов, но **на устройство не устанавливаются автоматически**.
+Неофициальные IPK для **TeleMT** и **TeleMT Panel Lite** автоматически собираются и публикуются в [`latest`](https://github.com/saymer-alt/entware-go/releases/tag/latest). Проверка новых версий выполняется каждые шесть часов.
 
-[Инструкция на русском: безопасная проверка, скачивание IPK, обновление и интеграция с панелью](docs/telemt-updates.ru.md).
+**[Инструкция на русском: проверка версий, скачивание и проверка IPK, обновление и особенности интеграции с панелью](docs/telemt-updates.ru.md).**
 
-## WARPSCOUT on ARM64 Keenetic
+## Важно об обновлениях
 
-WARPSCOUT is packaged only for `aarch64-3.10`. It is a command-line diagnostic utility, not a daemon:
-there is no init script or autostart.
+**Публикация IPK в GitHub Release не означает обновление на устройстве.** Пакет появится в `opkg update` / `opkg upgrade` только после обновления соответствующего индексируемого Entware feed. Скачанные из GitHub IPK перед ручной установкой необходимо проверить; порядок проверки приведён в инструкциях к пакетам.
 
-### One-line install and registration
+## Для сопровождающих
 
-For an ARM64 Keenetic with Entware already installed:
-
-```sh
-opkg update && opkg install curl ca-bundle && \
-curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/install.sh | sh
-```
-
-The installer is safe to run again. It:
-
-- verifies `aarch64` plus Entware `aarch64-3.10`/`aarch64-3.10_kn`;
-- first tries `opkg install warpscout`;
-- if the configured feed does not contain WARPSCOUT yet, downloads the current ARM64 IPK from this repository's `latest` release and installs it directly;
-- creates `/opt/etc/warpscout` with private permissions;
-- keeps an existing `warpscout-account.json`, or runs `warpscout register` when no account exists;
-- prints ready-to-copy WG/AWG/H3/H2 scan commands and then exits. WARPSCOUT itself remains an on-demand CLI utility.
-
-Install from a configured feed after the package has been indexed:
-
-```sh
-opkg update
-opkg install warpscout
-```
-
-Or copy the current `warpscout_*.ipk` from the repository's `latest` release to the router and install it directly:
-
-```sh
-opkg install /tmp/warpscout_<version>-<release>_aarch64-3.10.ipk
-warpscout version
-```
-
-### Update WARPSCOUT without losing the WARP account
-
-For a new version already indexed by your Entware feed:
-
-```sh
-opkg update && opkg upgrade warpscout
-warpscout version
-```
-
-First ensure JSON parser `jq` is installed: `opkg update && opkg install jq`. If the feed is behind the [latest verified package on GitHub](https://github.com/saymer-alt/entware-go/releases/tag/latest), use the **on-demand updater**, which compares package versions, verifies the GitHub release asset SHA-256 and refuses an unexpected download or downgrade:
-
-```sh
-curl -fSsL https://raw.githubusercontent.com/saymer-alt/entware-go/gh-action-build/warpscout/update.sh | sh
-```
-
-When using the short `curl | sh` form interactively, read its output: if the download fails, `sh` can exit successfully on empty input even when `curl` reports an error. For unattended automation, use a checked temporary-file download so the HTTP failure is propagated.
-
-The updater requires an already installed WARPSCOUT, ARM64 Entware, `curl`, `jq` and `sha256sum`. It does **not** register a new WARP account, modify `/opt/etc/warpscout`, reinstall equal versions, enable autorun or upgrade unrelated packages. If the GitHub API is inaccessible, the asset has no digest, the checksum differs, or the release has an unexpected format, it fails closed. On package-manager failure, check the installed version and investigate before retrying. Keep a private backup of `/opt/etc/warpscout/warpscout-account.json` when servicing Entware storage.
-
-**Known installer limitation:** `warpscout/install.sh` uses the feed first and falls back to GitHub only when `opkg install` fails; it may therefore report an older feed version as 'up to date' even when a newer GitHub IPK exists. Use `update.sh` for version discovery until that installer limitation is fixed ([#21](https://github.com/saymer-alt/entware-go/issues/21)). Manual IPK installation remains an option, but verify its SHA-256 before `opkg install`.
-
-Keep WARPSCOUT state on persistent Entware storage:
-
-```sh
-mkdir -p /opt/etc/warpscout
-cd /opt/etc/warpscout
-warpscout register
-```
-
-The generated `warpscout-account.json` contains private WARP account material. Do not publish or commit it.
-
-### Recommended workflow for Russia / filtered networks
-
-Plain WireGuard is useful as a diagnostic baseline, but it is **not** the recommended first scan on a filtered Russian access network. WARPSCOUT upstream explicitly recommends AmneziaWG or MASQUE when plain WireGuard is filtered, and documents the Moscow `DME` edge as DPI-filtered since April 2026.
-
-The tested WARPSCOUT v0.16.x CLI does **not** expose an `AWG2`/`AWG3` protocol selector. The supported AWG path is `-p awg` with the documented obfuscation controls (`I1`, junk packet count/sizes and the I1 generators). Do not add undocumented AWG-version flags.
-
-For a 512 MB ARM64 router start with four tunnel workers. The tested KN-1812 with 1 GB RAM handled `-jt 16` comfortably:
-
-```sh
-cd /opt/etc/warpscout
-JT=4        # 512 MB starting point
-# JT=16     # tested on KN-1812 / 1 GB
-```
-
-Start with AWG and a generated QUIC-looking I1 packet. This was the successful live profile on the KN-1812:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic -o awg-all.txt
-```
-
-To keep only Cloudflare edge nodes physically **outside Russia**, use the node-country filter:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -exclude-country RU -o awg-foreign.txt
-```
-
-If the goal is only to reject the Moscow edge while keeping other Russian nodes, use:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -exclude-node DME -o awg-no-dme.txt
-```
-
-`-exclude-country RU` filters **NODE LOCATION**, not the `SEEN AS` region. A tunnel may therefore land on a foreign node such as RIX/ARN/HEL/FRA while websites still see `SEEN AS=RU`. That distinction matters: NODE is the useful field when avoiding filtering attached to a Russian Cloudflare edge; `SEEN AS` is the field to inspect when you also care about the apparent exit country.
-
-Useful selectors once a foreign node is found:
-
-```sh
-# Best foreign endpoint only
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -exclude-country RU -best
-
-# Best foreign endpoint as a ready Mihomo proxy block
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -exclude-country RU -conf warp-awg.yaml -conf-type mihomo
-
-# Rank the selected foreign candidates by measured download speed
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -exclude-country RU -best -best-by speed
-```
-
-For a deep search, `-f` tests all 256 addresses in every built-in AWG/WG subnet. It is much slower; use the normal sampled scan first, especially on a 512 MB router:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic -f \
-  -exclude-country RU -o awg-foreign-full.txt
-```
-
-To see whether different reachable ports of the same sampled endpoint land differently, use the official port sweep:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 quic \
-  -sweep-ports open -exclude-country RU -o awg-foreign-ports.txt
-```
-
-If QUIC I1 does not pass the filter, try the other documented I1 generators before touching junk sizes. Upstream says I1 is usually the important part:
-
-```sh
-warpscout scan -p awg -P -jt "$JT" -gen-i1 dns
-warpscout scan -p awg -P -jt "$JT" -gen-i1 sip
-warpscout scan -p awg -P -jt "$JT" -gen-i1 stun
-warpscout scan -p awg -P -jt "$JT" -gen-i1 random
-```
-
-If none of those profiles works, let WARPSCOUT search both fresh I1 and junk settings:
-
-```sh
-warpscout find-junk -jt "$JT" -gen-i1 random
-```
-
-`find-junk` prints a ready-to-run `warpscout scan ...` command when it finds a set that reaches the threshold. There is normally no reason to force `-gen-junk` on every regular scan.
-
-### MASQUE H2 / H3 on a filtered network
-
-MASQUE uses SNI instead of AWG junk/I1. Find the SNI independently for each transport:
-
-```sh
-# TCP / HTTP/2 fallback — the more important first test on a filtering network
-warpscout find-sni -p masque-h2 -jt "$JT"
-
-# QUIC / HTTP/3 transport
-warpscout find-sni -p masque -jt "$JT"
-```
-
-Each command prints the scan command containing the SNI it found; use that exact SNI for the corresponding transport. An SNI that works for H2 may fail for H3 and vice versa.
-
-For `masque` (QUIC/H3), WARPSCOUT automatically covers the fixed anycast addresses and their known ports. For `masque-h2`, the real endpoint pools are `162.159.198.0/24` and `162.159.199.0/24`; add `-f` to the printed H2 scan if you intentionally want to test every address in both pools.
-
-**Important MASQUE limitation:** all MASQUE endpoints in one run land on the same Cloudflare NODE, chosen by the network/path rather than by the endpoint IP. WARPSCOUT therefore rejects `-node`, `-country`, `-exclude-node` and `-exclude-country` for both MASQUE transports. If MASQUE from the current ISP lands on DME, changing only the MASQUE endpoint IP will not select FRA/HEL/ARN/RIX; a different network/path is required.
-
-The first live KN-1812 test is a good example of why the transport matters: plain WG returned **0/70**, while AWG with `-gen-i1 quic` returned **70/70 in about 11 seconds**. The AWG scan saw DME and RIX nodes with `SEEN AS=RU`, and the best DME paths were about 2 ms while RIX was about 37-38 ms.
-
-See [`warpscout/README.md`](warpscout/README.md) for packaging details and CI verification.
-
-## WARPSCOUT update policy
-
-`.github/workflows/build-warpscout.yml` checks the latest upstream WARPSCOUT release every six hours,
-offset from the Mihomo workflow. When a new version is missing from this repository's `latest` release it:
-
-1. locates the official upstream `linux_arm64` release asset and verifies GitHub's SHA-256 digest;
-2. packages it as an Entware `aarch64-3.10` IPK;
-3. verifies the payload is AArch64 and the packaged binary is byte-identical to the official upstream binary;
-4. uploads the new `warpscout_*.ipk` to `latest`;
-5. removes only older `warpscout_*.ipk` assets;
-6. notifies the feed aggregator.
-
-WARPSCOUT v0.16.0 requires Go 1.26.3 while the current Entware SDK v2026.07.04 contains Go 1.26.1.
-The workflow therefore repacks the official static Linux/ARM64 upstream binary instead of modifying or
-bypassing the Entware SDK Go toolchain.
+[Правила внесения изменений](CONTRIBUTING.md) · [Стандарт выпусков](RELEASE-STANDARD.md) · [Политика безопасности](SECURITY.md)
