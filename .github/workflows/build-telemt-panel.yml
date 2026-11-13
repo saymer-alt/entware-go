@@ -1,0 +1,136 @@
+# Experimental Panel 1.0 RC3 Lite: cheap PR preflight, optional SDK build.
+# This workflow has no release, feed, deploy or live router write action.
+name: Build TeleMT Panel Lite aarch64 (experimental)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - gh-action-build
+    types: [opened, reopened, synchronize, labeled]
+    paths:
+      - telemt-panel-lite/**
+      - .github/workflows/build-telemt-panel.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-telemt-panel-aarch64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      binary_hash: ${{ steps.asset.outputs.binary_hash }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify official RC3 Lite asset, archive contents and licenses
+        id: asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset=telemt-panel-lite-aarch64-linux-musl.tar.gz
+          pinned="$(sed -n 's/^PKG_HASH:=//p' telemt-panel-lite/Makefile)"
+          version="$(sed -n 's/^PKG_VERSION:=//p' telemt-panel-lite/Makefile)"
+          [[ "$version" == '1.0.0~rc.3' ]] || { echo "::error::Unexpected package version"; exit 1; }
+          [[ "$pinned" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid SHA256"; exit 1; }
+          test -s telemt-panel-lite/files/LICENSE
+          test -s telemt-panel-lite/files/THIRD_PARTY_NOTICES.md
+          grep -q '^MIT License' telemt-panel-lite/files/LICENSE
+          release="$(gh api repos/amirotin/telemt_panel/releases/tags/v1.0.0-rc.3)"
+          url="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release")"
+          digest="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$release")"
+          [[ "$digest" == "sha256:$pinned" ]] || { echo "::error::Upstream SHA256 differs"; exit 1; }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl -fsSL --retry 2 "$url" -o "$tmp/archive.tar.gz"
+          echo "$pinned  $tmp/archive.tar.gz" | sha256sum -c -
+          [[ "$(tar -tzf "$tmp/archive.tar.gz")" == "telemt-panel" ]] || {
+            echo "::error::Unexpected archive contents"; exit 1;
+          }
+          tar -xzf "$tmp/archive.tar.gz" -C "$tmp"
+          bin="$tmp/telemt-panel"
+          test -x "$bin"
+          readelf -h "$bin" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$bin" | grep -q INTERP
+          ! readelf -d "$bin" | grep -q '(NEEDED)'
+          hash="$(sha256sum "$bin" | awk '{print $1}')"
+          echo "binary_hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "PASS: upstream ARM64 Lite binary $hash"
+
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-telemt-panel-sdk')
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Entware ARM64 Lite IPK
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: aarch64
+          PACKAGES: telemt-panel-lite
+          V: s
+          FEEDNAME: local
+
+      - name: Verify packaged payload, SHA256, license and safe defaults
+        shell: bash
+        env:
+          UPSTREAM_HASH: ${{ needs.preflight.outputs.binary_hash }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find bin/targets -type f -name 'telemt-panel-lite_*.ipk' | sort)
+          [[ "${#files[@]}" -eq 1 ]] || { echo "::error::Expected one Panel Lite IPK"; exit 1; }
+          ipk="$(realpath "${files[0]}")"
+          name="$(basename "$ipk")"
+          [[ "$name" == 'telemt-panel-lite_1.0.0~rc.3-1_aarch64-3.10.ipk' ]] || {
+            echo "::error::Unexpected package filename: $name"; exit 1;
+          }
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            if ar t "$ipk" >/dev/null 2>&1; then
+              ar x "$ipk"
+            elif tar -tf "$ipk" >/dev/null 2>&1; then
+              tar -xf "$ipk"
+            else
+              echo "::error::Unsupported IPK container"; exit 1
+            fi
+          )
+          mapfile -t archives < <(find "$tmp" -maxdepth 1 -type f -name 'data.tar.*')
+          [[ "${#archives[@]}" -eq 1 ]] || { echo "::error::Expected one data.tar"; exit 1; }
+          mkdir "$tmp/payload"
+          case "${archives[0]}" in
+            *.gz) tar -xzf "${archives[0]}" -C "$tmp/payload" ;;
+            *.xz) tar -xJf "${archives[0]}" -C "$tmp/payload" ;;
+            *.zst) tar --zstd -xf "${archives[0]}" -C "$tmp/payload" ;;
+            *) echo "::error::Unexpected data archive format"; exit 1 ;;
+          esac
+          bin="$tmp/payload/opt/bin/telemt-panel"
+          test -x "$bin"
+          readelf -h "$bin" | grep -Eq 'Machine:[[:space:]]*AArch64'
+          ! readelf -l "$bin" | grep -q INTERP
+          ! readelf -d "$bin" | grep -q '(NEEDED)'
+          [[ "$(sha256sum "$bin" | awk '{print $1}')" == "$UPSTREAM_HASH" ]] || {
+            echo "::error::Panel binary differs from upstream"; exit 1;
+          }
+          cmp telemt-panel-lite/files/LICENSE "$tmp/payload/opt/share/licenses/telemt-panel/LICENSE"
+          cmp telemt-panel-lite/files/THIRD_PARTY_NOTICES.md "$tmp/payload/opt/share/licenses/telemt-panel/THIRD_PARTY_NOTICES.md"
+          test ! -e "$tmp/payload/opt/etc/telemt-panel/config.toml"
+          test ! -e "$tmp/payload/opt/etc/init.d/S99telemt-panel"
+          echo "PASS: $name, byte-identical to upstream"
+
+      - name: Keep verified IPK as temporary Actions artifact only
+        uses: actions/upload-artifact@v6
+        with:
+          name: telemt-panel-lite-1.0.0-rc.3-aarch64-ipk-test
+          path: bin/targets/**/packages/telemt-panel-lite_*.ipk
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
