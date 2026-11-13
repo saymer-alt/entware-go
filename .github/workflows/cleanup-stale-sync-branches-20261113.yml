@@ -31,5 +31,5 @@ jobs:
               await github.rest.git.deleteRef({owner, repo, ref});
               removed++; core.info('Deleted legacy ' + ref);
             }
-            core.summary.addHeading('Legacy upstream conflict branches cleanup').addRaw('Deleted: ' + removed + '; skipped: ' + skipped).write();
+            await core.summary.addHeading('Legacy upstream conflict branches cleanup').addRaw('Deleted: ' + removed + '; skipped: ' + skipped).write();
             if (skipped) core.warning('Some branches were absent or changed; review skipped refs');
