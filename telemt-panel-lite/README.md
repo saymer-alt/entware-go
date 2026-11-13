@@ -50,12 +50,28 @@ Bind the administration panel to `127.0.0.1` and reach it via SSH tunnel or a
 separately authenticated local network reverse proxy. Do not open the admin
 listener to the public WAN. Do not disable authentication.
 
-## Verification and stages
+## GitHub Actions and upgrade stages
 
-`build-telemt-panel.yml` runs a read-only lightweight integrity check in
-Draft PRs; the expensive SDK build needs a `run-telemt-panel-sdk` PR label
-or an explicit manual workflow dispatch after the workflow exists on the
-default branch. CI must not publish or modify the shared `latest` release.
+[`build-telemt-panel.yml`](../.github/workflows/build-telemt-panel.yml) is
+staged in Draft PR #27. A PR checks the pinned official ARM64 Lite archive and
+digest. Expensive PR SDK packaging requires the `run-telemt-panel-sdk` label.
+Pull requests do **not** publish or deploy.
+
+**After merging into `gh-action-build`**, a six-hour schedule checks official
+Panel **1.x** releases, including RC builds, rather than GitHub's latest stable
+0.6.x release. It selects the highest supported 1.x version with the expected
+official ARM64 MUSL Lite asset and a SHA-256 digest; unexpected releases, missing
+assets and downgrades fail closed. The SDK build stages the official tagged
+MIT `LICENSE` and `THIRD_PARTY_NOTICES.md`, verifies the repackaged binary's
+SHA256 and absence of default configuration/init scripts, then publishes only
+`telemt-panel-lite_*.ipk` into the shared `latest` release. Published bytes
+are downloaded and compared before old Panel Lite assets are pruned; other
+packages are untouched and release writes share `entware-latest-publication`.
+
+This is still an unofficial upstream-binary package. Upstream 1.x changes may
+require manual adjustments to `/opt/etc/telemt-panel/config.toml`, service
+scripts or state migration; **GitHub CI will not rewrite or restart them**.
+A GitHub Release asset is not automatically an `opkg` feed update.
 
 After a separately approved build, download and verify the temporary Actions
 artifact before any test installation:
