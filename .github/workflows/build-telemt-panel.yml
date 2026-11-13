@@ -95,7 +95,9 @@ jobs:
             const target=await github.rest.repos.getReleaseByTag({owner,repo,tag:'latest'});
             const assets=await github.paginate(github.rest.repos.listReleaseAssets,
               {owner,repo,release_id:target.data.id,per_page:100});
-            const name='telemt-panel-lite_'+packageVersion+'-1_aarch64-3.10.ipk';
+            // GitHub Release upload normalizes '~' to '.' in asset names.
+            // The IPK control version must continue to use '~rc'.
+            const name='telemt-panel-lite_'+packageVersion.replaceAll('~','.')+'-1_aarch64-3.10.ipk';
             const published=assets.some(a=>a.name===name);
             core.setOutput('version',version);
             core.setOutput('package_version',packageVersion);
@@ -283,6 +285,9 @@ jobs:
           }
           echo "PANEL_IPK=${ipks[0]}" >> "$GITHUB_ENV"
           echo "PANEL_IPK_NAME=$name" >> "$GITHUB_ENV"
+          # GitHub normalizes '~' to '.' when creating Release asset names.
+          release_name="$(printf '%s' "$name" | tr '~' '.')"
+          echo "PANEL_RELEASE_NAME=$release_name" >> "$GITHUB_ENV"
           sha256sum "${ipks[0]}"
 
       - name: Upload only Panel Lite package to shared latest release
@@ -297,8 +302,8 @@ jobs:
           set -euo pipefail
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
-          gh release download latest --pattern "$PANEL_IPK_NAME" --dir "$work"
-          cmp "$PANEL_IPK" "$work/$PANEL_IPK_NAME" || {
+          gh release download latest --pattern "$PANEL_RELEASE_NAME" --dir "$work"
+          cmp "$PANEL_IPK" "$work/$PANEL_RELEASE_NAME" || {
             echo "::error::Published Panel Lite IPK differs from verified artifact"; exit 1;
           }
           release_id="$(gh api "repos/$GH_REPO/releases/tags/latest" --jq .id)"
@@ -306,13 +311,13 @@ jobs:
           trap 'rm -rf "$work" "$remote"' EXIT
           gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
             --jq '.[] | [.id, .name] | @tsv' > "$remote"
-          if ! awk -F '\t' -v keep="$PANEL_IPK_NAME" '$2 == keep { found=1 } END { exit !found }' "$remote"; then
+          if ! awk -F '\t' -v keep="$PANEL_RELEASE_NAME" '$2 == keep { found=1 } END { exit !found }' "$remote"; then
             echo "::error::Verified Panel Lite IPK not listed among release assets"; exit 1;
           fi
           while IFS=$'\t' read -r asset_id name; do
             case "$name" in
               telemt-panel-lite_*.ipk)
-                if [[ "$name" != "$PANEL_IPK_NAME" ]]; then
+                if [[ "$name" != "$PANEL_RELEASE_NAME" ]]; then
                   gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
                 fi ;;
             esac
