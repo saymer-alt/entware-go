@@ -3,6 +3,11 @@
 Entware package for WARPSCOUT, targeted at the owner's ARM64 Keenetic routers
 (KN-1012 / KN-1812 / KN-3811 / KN-3812 class).
 
+For a step-by-step **Russian-language Keenetic/AWG walkthrough** (find a working non-RU
+Cloudflare NODE, inspect loss and in-tunnel ping, export a configuration and import it
+into Mihomo), see [WARPSCOUT на Keenetic in link-generators](https://github.com/saymer-alt/link-generators/blob/main/docs/WARPSCOUT-KEENETIC.md).
+This document covers **Entware IPK installation, updates, packaging and deeper CLI/CI details**.
+
 ## Packaging choice
 
 The original package baseline was **v0.16.0** (not a constraint on the currently published rolling release). Its `go.mod` requires Go 1.26.3,
