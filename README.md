@@ -11,6 +11,12 @@ Automated workflows build or package only their own assets and publish them into
 - **beszel-agent** — manually built Entware package.
 - **warpscout** — ARM64-only Entware package for WARPSCOUT, intended for Keenetic-class routers such as KN-1012 / KN-1812 / KN-3811 / KN-3812.
 
+## TeleMT и TeleMT Panel Lite (ARM64)
+
+Неофициальные Entware IPK для **TeleMT** и **TeleMT Panel Lite** собираются автоматически и публикуются в GitHub Release [latest](https://github.com/saymer-alt/entware-go/releases/tag/latest). Новые выпуски проверяются каждые шесть часов, но **на устройство не устанавливаются автоматически**.
+
+[Инструкция на русском: безопасная проверка, скачивание IPK, обновление и интеграция с панелью](docs/telemt-updates.ru.md).
+
 ## WARPSCOUT on ARM64 Keenetic
 
 WARPSCOUT is packaged only for `aarch64-3.10`. It is a command-line diagnostic utility, not a daemon:
