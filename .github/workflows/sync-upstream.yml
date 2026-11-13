@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: sync-upstream
@@ -37,6 +36,8 @@ jobs:
 
       - name: Upstream unchanged - green exit
         if: steps.check.outputs.count == '0'
+        env:
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
         run: |
           echo "gh-action-build already contains upstream/master ($UPSTREAM_SHA). Nothing to do."
 
@@ -55,57 +56,36 @@ jobs:
             -m "Regular merge commit: no force push, no history rewrite, no conflict auto-resolution."
           git push origin HEAD:gh-action-build
 
-      - name: Conflicts - create diagnostic branch (never auto-resolve)
+      - name: Conflicts - report without publishing unsafe branches
         if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
         env:
           UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
         run: |
-          BRANCH="sync-upstream/conflict-${{ github.run_id }}"
-          git merge --abort || true
-          git checkout -b "$BRANCH"
-          git merge --no-commit --no-ff upstream/master || true
-          git diff --name-only --diff-filter=U > conflicted-files.txt
-          if [ ! -s conflicted-files.txt ]; then
-            echo "::error::Merge reported failure but no unmerged files were listed; refusing to publish anything."
-            exit 1
-          fi
-          echo "Conflicted files:"
-          cat conflicted-files.txt
-          git add -A
-          git commit -m "Sync upstream Entware/entware-go master ${UPSTREAM_SHA}: conflicts require manual resolution" \
-            -m "Merge committed with conflict markers for review only. Resolve the conflicts, then merge the result into gh-action-build. The target branch is never touched by this automation."
-          git push origin "HEAD:$BRANCH"
+          # The checked-out workspace is disposable: never commit conflict
+          # markers, publish a diagnostic branch or open an unreviewed PR.
+          set -eu
+          git diff --name-only --diff-filter=U > /tmp/sync-conflicts.txt
           {
-            echo "### Upstream sync: conflicts detected"
-            echo ""
+            echo "### Upstream sync: manual resolution required"
+            echo
             echo "Upstream: Entware/entware-go@${UPSTREAM_SHA}"
-            echo "Target branch: gh-action-build (untouched)"
-            echo ""
-            echo "Conflicted files (merge with conflict markers committed on ${BRANCH}):"
-            echo ""
-            sed 's/^/- /' conflicted-files.txt
-            echo ""
-            echo "Resolve the conflicts in this branch, then merge the result into gh-action-build."
-            echo "This run failed by design: conflicts are never resolved automatically (no ours/theirs), no force push is used."
-            echo "Stale sync-upstream/conflict-* branches can be deleted after manual resolution."
-          } > pr-body.md
-
-      - name: Conflicts - open pull request
-        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          BRANCH="sync-upstream/conflict-${{ github.run_id }}"
-          if gh pr view "$BRANCH" --json state >/dev/null 2>&1; then
-            echo "PR for $BRANCH already exists, not creating a duplicate."
+            echo "Target: gh-action-build (untouched)"
+            echo
+            if [ -s /tmp/sync-conflicts.txt ]; then
+              echo "Conflicted files:"
+              sed "s/^/- /" /tmp/sync-conflicts.txt
+            else
+              echo "Merge failed without unmerged paths. Inspect the merge step logs."
+            fi
+            echo
+            echo "No branch or PR was created. Resolve conflicts on a reviewed branch."
+            echo "Do not force-push or auto-select ours/theirs."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s /tmp/sync-conflicts.txt ]; then
+            echo "Unresolved upstream merge conflicts:"
+            cat /tmp/sync-conflicts.txt
+            echo "::error::Upstream merge conflicts require manual resolution; gh-action-build was not modified."
           else
-            gh pr create --base gh-action-build --head "$BRANCH" \
-              --title "Sync upstream: conflicts need manual resolution" \
-              --body-file pr-body.md
+            echo "::error::Upstream merge failed without conflict paths; inspect the merge logs."
           fi
-
-      - name: Conflicts - fail run with diagnostics
-        if: steps.check.outputs.count != '0' && steps.merge.outcome == 'failure'
-        run: |
-          echo "::error::Upstream merge has conflicts. A PR from sync-upstream/conflict-* was created for manual resolution. gh-action-build was not modified."
           exit 1
