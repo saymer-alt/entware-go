@@ -5,13 +5,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mihomo
-<<<<<<< HEAD
-PKG_VERSION:=1.19.30
-PKG_RELEASE:=2
-=======
 PKG_VERSION:=1.19.33
 PKG_RELEASE:=1
->>>>>>> upstream/master
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
@@ -84,7 +79,7 @@ define Package/mihomo/install
 	$(INSTALL_DIR) $(1)/opt/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/mihomo $(1)/opt/bin/mihomo
 	$(INSTALL_DIR) $(1)/opt/etc/init.d
-	$(INSTALL_BIN) ./files/S28mihomo $(1)/opt/etc/init.d
+	$(INSTALL_BIN) ./files/S99mihomo $(1)/opt/etc/init.d
 	$(INSTALL_DIR) $(1)/opt/etc/mihomo
 	$(INSTALL_CONF) ./files/config.yaml $(1)/opt/etc/mihomo
 endef
