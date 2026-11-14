@@ -14,6 +14,13 @@ cleanup() {
 trap cleanup EXIT
 printf '#!/bin/sh\nexit 0\n' > "$root/data/opt/bin/telemt"
 printf 'Package: telemt\nVersion: 3.5.17-1\nArchitecture: aarch64-3.10\n' > "$root/control/control"
+# Real Entware SDK IPKs always carry opkg's standard hook boilerplate; the
+# fixture mirrors that so every check below exercises the same whitelist.
+printf '%s\n' '#!/bin/sh' '[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0' \
+  '[ -s /opt/lib/functions.sh ] || exit 0' '. /opt/lib/functions.sh' \
+  'default_postinst $0 $@' > "$root/control/postinst"
+printf '%s\n' '#!/bin/sh' '[ -s /opt/lib/functions.sh ] || exit 0' \
+  '. /opt/lib/functions.sh' 'default_prerm $0 $@' > "$root/control/prerm"
 tar -czf "$root/control.tar.gz" -C "$root/control" .
 tar -czf "$root/data.tar.gz" -C "$root/data" .
 printf '2.0\n' > "$root/debian-binary"
@@ -116,4 +123,38 @@ rm -f /opt/bin/telemt
 sh "$base/telemt/install.sh" core --apply | grep -q 'PASS: package installed'
 test -s "$root/opkg-install-called"
 test "$(cat "$root/installed")" = '3.5.17-1'
-echo 'PASS: offline manifest, digest, metadata, cache, downgrade, clean install gates'
+# A custom maintainer script could mutate config/state or add autostart.
+# Rebuild the fixture with a rogue postinst; the dry run must fail closed.
+rebuild_fixture() {
+  rm -f "$root/stage/$name"
+  tar -czf "$root/control.tar.gz" -C "$root/control" .
+  tar -czf "$root/test.ipk" -C "$root" ./control.tar.gz ./data.tar.gz ./debian-binary
+  hash="$(sha256sum "$root/test.ipk" | awk '{print $1}')"
+  jq -n --arg name "$name" --arg url "$url" --arg digest "sha256:$hash" \
+    '{tag_name:"latest", assets:[{name:$name,browser_download_url:$url,digest:$digest}]}' > "$root/manifest.json"
+}
+rm -f "$root/installed" /opt/bin/telemt "$root/opkg-install-called"
+printf '#!/bin/sh\n. /opt/lib/functions.sh\nstart_service telemt\n' > "$root/control/postinst"
+rebuild_fixture
+if sh "$base/telemt/install.sh" core > "$root/custom.out" 2>&1; then
+  echo 'FAIL: accepted a custom maintainer script' >&2
+  exit 1
+fi
+test ! -e "$root/opkg-install-called"
+# A foreign preinst is rejected even with otherwise standard hooks.
+printf '#!/bin/sh\nexit 0\n' > "$root/control/preinst"
+printf '%s\n' '#!/bin/sh' '[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0' \
+  '[ -s /opt/lib/functions.sh ] || exit 0' '. /opt/lib/functions.sh' \
+  'default_postinst $0 $@' > "$root/control/postinst"
+rebuild_fixture
+if sh "$base/telemt/install.sh" core > "$root/preinst.out" 2>&1; then
+  echo 'FAIL: accepted a foreign preinst' >&2
+  exit 1
+fi
+test ! -e "$root/opkg-install-called"
+# The exact standard SDK hook bytes are accepted again.
+rm -f "$root/control/preinst"
+rebuild_fixture
+sh "$base/telemt/install.sh" core | grep -q 'DRY RUN'
+test ! -e "$root/opkg-install-called"
+echo 'PASS: offline manifest, digest, metadata, maintainer-script, cache, downgrade, clean install gates'

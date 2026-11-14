@@ -133,6 +133,26 @@ download() {
 control_field() {
   awk -F ': ' -v key="$1" '$1 == key {n++; value=$2} END {if (n==1) print value}' "$2"
 }
+std_hook() {
+  # The Entware SDK adds ONLY opkg's standard hook boilerplate to every IPK
+  # (default_postinst/default_prerm wrappers, no custom logic). Accept exactly
+  # those bytes; any other maintainer script or different content is custom
+  # logic that could mutate configuration, state or autostart.
+  case "$1" in
+    postinst) printf '%s\n' \
+      '#!/bin/sh' \
+      '[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0' \
+      '[ -s /opt/lib/functions.sh ] || exit 0' \
+      '. /opt/lib/functions.sh' \
+      'default_postinst $0 $@' ;;
+    prerm) printf '%s\n' \
+      '#!/bin/sh' \
+      '[ -s /opt/lib/functions.sh ] || exit 0' \
+      '. /opt/lib/functions.sh' \
+      'default_prerm $0 $@' ;;
+    *) return 1 ;;
+  esac
+}
 inspect() {
   # Entware IPK outer container is gzip-compressed TAR, not plain TAR or ar.
   # Extract only control metadata into a root-private temp directory.
@@ -151,9 +171,16 @@ inspect() {
     fail "Unexpected embedded Version in $name"
   [ "$(control_field Architecture "$scratch/control")" = 'aarch64-3.10' ] ||
     fail "Unexpected embedded Architecture in $name"
-  if tar -tzf "$scratch/control.tar.gz" | grep -Eq '(^|/)(preinst|postinst|prerm|postrm)$'; then
-    fail 'Unexpected executable maintainer scripts in the IPK'
-  fi
+  for hook in preinst postinst prerm postrm; do
+    tar -tzf "$scratch/control.tar.gz" | grep -Eq "(^|/)${hook}$" || continue
+    std_hook "$hook" > "$scratch/hook.expected" ||
+      fail 'Unexpected executable maintainer scripts in the IPK'
+    tar -xzOf "$scratch/control.tar.gz" "./$hook" > "$scratch/hook.actual" ||
+      fail 'Malformed control.tar.gz'
+    [ "$(sha256sum "$scratch/hook.expected" | awk '{print $1}')" = \
+      "$(sha256sum "$scratch/hook.actual" | awk '{print $1}')" ] ||
+      fail 'Unexpected executable maintainer scripts in the IPK'
+  done
   tar -xzOf "$file" ./data.tar.gz > "$scratch/data.tar.gz" ||
     fail 'Malformed IPK data archive'
   if tar -tzf "$scratch/data.tar.gz" | grep -Eq '^\./(opt/)?(etc|var)/'; then
