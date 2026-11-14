@@ -1,0 +1,153 @@
+# Experimental, isolated MIPS32LE compat-layer check for TeleMT 3.5.17.
+# Never ship, publish or install this output. Research only, mirrors the safety
+# boundaries of telemt-mipsle-core-3517-poc.yml (Draft #41).
+name: TeleMT 3.5.17 MIPSLE atomic64 compat check (no release)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - .github/workflows/telemt-mipsle-compat-3517-check.yml
+      - docs/research/telemt-mipsle-compat-3517/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-mipsle-compat-3517-check
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    name: Host x86_64 native-path tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch pinned TeleMT 3.5.17 only
+        uses: actions/checkout@v4
+        with:
+          repository: telemt/telemt
+          ref: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+          path: upstream
+          persist-credentials: false
+      - name: Verify exact source SHA
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "source SHA: $sha"
+          test "$sha" = "66708d2866f3f3a4541c4fa67984d408e71a8af4"
+      - name: Apply atomic64 compat patch (reviewed in this PR)
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          git apply --check --whitespace=nowarn \
+            ../docs/research/telemt-mipsle-compat-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          git apply --whitespace=nowarn \
+            ../docs/research/telemt-mipsle-compat-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          grep -n "portable-atomic" Cargo.toml
+          test -f src/compat.rs
+      - name: Install Rust (stable)
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustc -V
+      - name: Host cargo check (native std AtomicU64 path)
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          timeout 420s cargo check --locked
+      - name: Bounded tests — compat layer, counters, CAS, limits, quotas, replay
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          # Focused bounded subset per plan; full suite stays out of CI budget.
+          for filter in compat:: traffic_limiter quota_store quota_state replay slot_budget me_counters counters; do
+            echo "=== cargo test --release --locked $filter ==="
+            timeout 240s cargo test --release --locked --bin telemt "$filter"
+          done
+          echo "ATOMIC64_PORT_TEST: PASS (focused bounded subset, native path)"
+      - name: Safety boundary
+        if: always()
+        run: |
+          echo "Host tests only. No device, no QEMU, no release, no feed changes."
+
+  mipsle-cross:
+    name: One bounded MIPSLE cross-check, then ELF32 build on PASS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - name: Fetch pinned TeleMT 3.5.17 only
+        uses: actions/checkout@v4
+        with:
+          repository: telemt/telemt
+          ref: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+          path: upstream
+          persist-credentials: false
+      - name: Apply atomic64 compat patch (reviewed in this PR)
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          git apply --check --whitespace=nowarn \
+            ../docs/research/telemt-mipsle-compat-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          git apply --whitespace=nowarn \
+            ../docs/research/telemt-mipsle-compat-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          test -f src/compat.rs
+      - name: Install isolated Rust nightly and MIPSLE cross tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross binutils-mipsel-linux-gnu
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustc +nightly -V
+          echo "MIPSLE Rust target atomic cfg:"
+          rustc +nightly --print cfg --target mipsel-unknown-linux-gnu | grep target_has_atomic || true
+      - name: One bounded compat MIPSLE cross-check (typecheck only)
+        working-directory: upstream
+        env:
+          CARGO_BUILD_JOBS: '2'
+          RUSTFLAGS: '-C target-cpu=mips32r2 -C target-feature=+soft-float'
+        run: |
+          set -euo pipefail
+          echo "Patched tree: target mipsel-unknown-linux-gnu, MIPS32r2 softfloat"
+          echo "compat::AtomicU64 -> portable_atomic::AtomicU64 via target_has_atomic cfg"
+          if ! timeout 540s cargo +nightly -Z build-std=std,panic_abort \
+            check --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
+            echo "::error::TELEMT_3517_COMPAT_MIPSLE_CROSS_CHECK_BLOCKED (record first error, stop)"
+            exit 1
+          fi
+          echo "MIPSLE_CROSS_CHECK: PASS"
+      - name: Bounded ELF32 MIPSLE build (only on cross-check PASS)
+        working-directory: upstream
+        env:
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER: mipsel-linux-gnu-gcc
+          CC_mipsel_unknown_linux_gnu: mipsel-linux-gnu-gcc
+          CARGO_BUILD_JOBS: '2'
+          RUSTFLAGS: '-C target-cpu=mips32r2 -C target-feature=+soft-float'
+        run: |
+          set -euo pipefail
+          if ! timeout 300s cargo +nightly -Z build-std=std,panic_abort \
+            build --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
+            echo "::error::TELEMT_3517_COMPAT_MIPSLE_BINARY_BUILD_BLOCKED"
+            exit 1
+          fi
+          echo "MIPSLE_BINARY_BUILD: PASS"
+          binary=target/mipsel-unknown-linux-gnu/release/telemt
+          file "$binary"
+          readelf -h "$binary" | grep -E 'Class:|Data:|Machine:|Flags:'
+          readelf -h "$binary" | grep -q ELF32
+          readelf -h "$binary" | grep -q MIPS
+          python3 - "$binary" <<'PY'
+          from pathlib import Path
+          import sys
+          b = Path(sys.argv[1]).read_bytes()
+          assert b[:4] == b"\x7fELF" and b[4:6] == b"\x01\x01" and int.from_bytes(b[18:20], "little") == 8
+          print("HOST_BUILD_PASS size=", len(b), "QEMU=NOT_TESTED OPKG=NOT_TESTED FIELD=NOT_TESTED")
+          PY
+          echo "No artifact upload, no IPK, no release. Host build alone is not a production result."
+      - name: Safety boundary
+        if: always()
+        run: |
+          echo "Experimental compat layer only. No routers, no keys, no IPK, no releases."
