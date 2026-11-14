@@ -34,3 +34,7 @@ This repo builds/packages Entware IPK artifacts for Keenetic and other `/opt`-ba
 - [03 — Go compatibility and release-change checklist](docs/agent-guidance/03-go-compatibility-and-change-checklist.md) — for toolchain/version bumps and CI changes.
 
 Detailed old release history and measured behavior stay in the guides for provenance; they are not mandatory startup context or authorization to touch routers.
+
+## Token economy (KAS #420; ZCode/Codex/Kimi)
+
+Обязателен [узкий рабочий цикл](docs/agent-token-economy.md): одно задание и exact SHA; точечные источники и тесты (изменяемые installer/upgrade/rollback/publisher читать целиком перед правкой); `sh -n`/ShellCheck/host mocks перед SDK/QEMU; после **2 одинаковых бесполезных попыток** сменить гипотезу или `BLOCKED`. Повторять PASS лишь при совпадении SHA/SDK/asset digest; `CI PASS ≠ QEMU PASS ≠ FIELD PASS`. Не раздувать `latest`, сборки или токены ради квоты. Документы/PR/исследование не дают разрешения на merge/release или обновление роутера. Handoff: `PR | SHA | gates | run | blocker | next GO`.
