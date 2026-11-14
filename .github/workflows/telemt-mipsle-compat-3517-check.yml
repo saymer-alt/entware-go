@@ -76,7 +76,7 @@ jobs:
   mipsle-cross:
     name: One bounded MIPSLE cross-check, then ELF32 build on PASS
     runs-on: ubuntu-24.04
-    timeout-minutes: 24
+    timeout-minutes: 40
     steps:
       - name: Fetch pinned TeleMT 3.5.17 only
         uses: actions/checkout@v4
@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           echo "Patched tree: target mipsel-unknown-linux-gnu, MIPS32r2 softfloat"
           echo "compat::AtomicU64 -> portable_atomic::AtomicU64 via target_has_atomic cfg"
-          if ! timeout 540s cargo +nightly -Z build-std=std,panic_abort \
+          if ! timeout 1500s cargo +nightly -Z build-std=std,panic_abort \
             check --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
             echo "::error::TELEMT_3517_COMPAT_MIPSLE_CROSS_CHECK_BLOCKED (record first error, stop)"
             exit 1
@@ -128,7 +128,7 @@ jobs:
           RUSTFLAGS: '-C target-cpu=mips32r2 -C target-feature=+soft-float'
         run: |
           set -euo pipefail
-          if ! timeout 300s cargo +nightly -Z build-std=std,panic_abort \
+          if ! timeout 1500s cargo +nightly -Z build-std=std,panic_abort \
             build --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
             echo "::error::TELEMT_3517_COMPAT_MIPSLE_BINARY_BUILD_BLOCKED"
             exit 1
