@@ -1,5 +1,8 @@
 # AGENTS.md — entware-go fork, lean agent startup contract
 
+**Token budget (mandatory):** 2 identical FAIL → change hypothesis/BLOCKED; **3 fixes OR 3 full heavy builds per blocker → STOP + owner GO** (local+CI+sessions). No unchanged PASS reruns. [Local details](docs/agent-token-economy.md) · [global rule](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-RETRY-BUDGET.md). Safety tests and release approvals are never waived.
+
+
 **Read this short file at startup; do not preload all historical guidance, package recipes or workflow code.** This is the `saymer-alt/entware-go` fork of `spatiumstas/entware-go`, itself derived from `Entware/entware-go`. The only normal integration/default branch here is **`gh-action-build`**, **not `main` or `master`**. Upstream `master` is an input to a controlled sync, never the target branch for changes in this fork.
 
 ## Purpose, scope and owner authorization
@@ -34,7 +37,3 @@ This repo builds/packages Entware IPK artifacts for Keenetic and other `/opt`-ba
 - [03 — Go compatibility and release-change checklist](docs/agent-guidance/03-go-compatibility-and-change-checklist.md) — for toolchain/version bumps and CI changes.
 
 Detailed old release history and measured behavior stay in the guides for provenance; they are not mandatory startup context or authorization to touch routers.
-
-## Token economy (mandatory, all agents)
-
-**2 identical FAIL → change hypothesis/BLOCKED; 3 fix attempts OR 3 heavy builds per blocker → STOP + owner GO**, across local/CI/sessions. No unchanged PASS reruns; do cheap preflight first. Details: [local rules](docs/agent-token-economy.md) and [global policy](https://github.com/saymer-alt/saymer-alt/blob/docs/agent-hard-stop-budget-20261114/AGENT-RETRY-BUDGET.md). This never waives safety gates, publication approval or hardware checks. Handoff: `PR | SHA | attempts/builds | gates | blocker | next GO`.
