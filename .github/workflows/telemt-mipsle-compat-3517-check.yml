@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Check out this research branch (for the reviewed patch)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Fetch pinned TeleMT 3.5.17 only
         uses: actions/checkout@v4
         with:
@@ -78,6 +82,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
+      - name: Check out this research branch (for the reviewed patch)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Fetch pinned TeleMT 3.5.17 only
         uses: actions/checkout@v4
         with:
