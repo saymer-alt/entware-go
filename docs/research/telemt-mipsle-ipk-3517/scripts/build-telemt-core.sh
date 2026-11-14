@@ -1,0 +1,190 @@
+#!/bin/bash
+# Build TeleMT Core 3.5.17 for Entware mipsel-3.4 (glibc 2.27, /opt/lib/ld.so.1,
+# softfloat) and run the static Entware ABI gate. Designed for ubuntu-24.04 CI;
+# also reproduces locally (see docs/research/telemt-mipsle-ipk-3517/README.md).
+#
+# Key facts driving this recipe (measured 2026-11-14, see README):
+#  - Entware mipselsf-k3.4 runtime is glibc 2.27 soft-float; loader /opt/lib/ld.so.1
+#  - glibc 2.34+ crt1.o references __libc_start_main@GLIBC_2.34 -> binary would fail
+#    to load on 2.27; therefore crt/libc_nonshared come from glibc 2.24 cross dev
+#  - Entware toolchain is not published prebuilt; sysroot is assembled from the
+#    Entware runtime packages themselves (libc, libgcc, libpthread, librt)
+#  - compile stage uses distro 2.39 headers; link stage resolves ONLY against the
+#    Entware sysroot (gcc -B override), so any accidental >2.27 symbol use fails
+#    the build or the version gate instead of reaching a device
+set -euo pipefail
+
+UPSTREAM_SHA=66708d2866f3f3a4541c4fa67984d408e71a8af4
+# script is expected to be invoked from the repository root (CI default)
+PATCH_FILE="$(pwd)/${PATCH_FILE:-docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch}"
+EB="${EB:-$HOME/entware-build}"
+SR="$EB/sysroot"
+L="$SR/usr/mipsel-linux-gnu/lib"
+TARGET=mipsel-unknown-linux-gnu
+
+mkdir -p "$EB"; cd "$EB"
+
+echo "===== 1) pinned artifacts (sha256-verified) ====="
+cat > sha256.manifest <<'MANIFEST'
+0fcec2bb0fb545ee427985950557fa5c5a6e811f4885d6821ad6af006abd2486  dev24.deb
+45c7ef0bda2acb4475a75efee9734e83f69f54e128971b7a196d88c8b048a222  libc_2.27-12_mipsel-3.4.ipk
+bbecc26b579470d52053b72e41dddb70415963eac9f74baf1747b9d2ecdcaaa3  libgcc_8.4.0-12_mipsel-3.4.ipk
+8f50a9f331ad7b2bf6125c8826f71b643db62a113f09a93a3827ef3520bb3d34  libpthread_2.27-12_mipsel-3.4.ipk
+49880f71e56b1f14738b3ff1412d41a632a3c679e802d06fafdabd227566ce85  librt_2.27-12_mipsel-3.4.ipk
+MANIFEST
+sha256sum -c sha256.manifest 2>/dev/null || {
+  curl -fsSL --max-time 180 -o dev24.deb https://archive.debian.org/debian/pool/main/c/cross-toolchain-base/libc6-dev-mipsel-cross_2.24-10cross1_all.deb
+  for p in libc_2.27-12_mipsel-3.4.ipk libgcc_8.4.0-12_mipsel-3.4.ipk libpthread_2.27-12_mipsel-3.4.ipk librt_2.27-12_mipsel-3.4.ipk; do
+    curl -fsSL --max-time 120 "https://bin.entware.net/mipselsf-k3.4/$p" -o "$p"
+  done
+  sha256sum -c sha256.manifest
+}
+
+echo "===== 2) assemble Entware link-sysroot ====="
+rm -rf "$SR"; mkdir -p "$L"
+[ -d root24 ] || dpkg-deb -x dev24.deb root24
+for d in libc2 libgcc2 libpt librt; do rm -rf "$EB/$d"; mkdir -p "$EB/$d"; done
+tar xzf libc_2.27-12_mipsel-3.4.ipk -C libc2 && tar xzf libc2/data.tar.gz -C libc2
+tar xzf libgcc_8.4.0-12_mipsel-3.4.ipk -C libgcc2 && tar xzf libgcc2/data.tar.gz -C libgcc2
+tar xzf libpthread_2.27-12_mipsel-3.4.ipk -C libpt && tar xzf libpt/data.tar.gz -C libpt
+tar xzf librt_2.27-12_mipsel-3.4.ipk -C librt && tar xzf librt/data.tar.gz -C librt
+for d in libc2 libgcc2 libpt librt; do cp -a "$d/opt/lib/." "$L/"; done
+# glibc 2.24-era startup objects (2.39-era ones poison GLIBC_2.34 into .gnu.version_r)
+for c in crt1.o Scrt1.o crti.o crtn.o libc_nonshared.a; do
+  mipsel-linux-gnu-objcopy --remove-section .MIPS.abiflags root24/usr/mipsel-linux-gnu/lib/$c "$L/$c" 2>/dev/null \
+    || cp root24/usr/mipsel-linux-gnu/lib/$c "$L/$c"
+done
+printf 'GROUP ( libc.so.6 libc_nonshared.a AS_NEEDED ( ld.so.1 ) )\n' > "$L/libc.so"
+ln -sf libm.so.6 "$L/libm.so"; ln -sf libpthread.so.0 "$L/libpthread.so"
+ln -sf librt.so.1 "$L/librt.so"; ln -sf libdl.so.2 "$L/libdl.so"
+ln -sf libutil.so.1 "$L/libutil.so"; ln -sf libresolv.so.2 "$L/libresolv.so"
+echo "sysroot members: $(ls "$L" | wc -l)"
+
+echo "===== 3) compiler/linker wrappers ====="
+GCC=$(command -v mipsel-linux-gnu-gcc || command -v mipsel-linux-gnu-gcc-12)
+[ -n "$GCC" ] || { echo "no mipsel cross gcc found"; exit 1; }
+cat > "$EB/mipsel-entware-cc" <<EOF
+#!/bin/sh
+# No -msoft-float: distro 2.39 headers lack gnu/stubs-o32_soft.h. The C sources
+# compiled (ring/aws-lc) contain no FP math, so no cop1 is emitted; the
+# FP-instruction census gate in step 6 proves it.
+exec $GCC "\$@"
+EOF
+cat > "$EB/mipsel-entware-link-gcc" <<EOF
+#!/bin/sh
+exec $GCC -B$L/ -msoft-float --sysroot=$SR \\
+  -Wl,--dynamic-linker=/opt/lib/ld.so.1 \\
+  -Wl,-rpath,/opt/lib \\
+  "\$@"
+EOF
+chmod +x "$EB/mipsel-entware-cc" "$EB/mipsel-entware-link-gcc"
+
+echo "===== 4) upstream tree + reviewed compat patch ====="
+cd "$EB"
+if [ ! -d upstream/.git ]; then
+  git clone -q https://github.com/telemt/telemt upstream
+fi
+cd upstream
+git fetch -q origin "$UPSTREAM_SHA" 2>/dev/null || true
+git checkout -q -f "$UPSTREAM_SHA"
+git clean -qfd -e target
+test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA" || { echo "SHA_MISMATCH"; exit 1; }
+git apply --check --whitespace=nowarn "$PATCH_FILE"
+git apply --whitespace=nowarn "$PATCH_FILE"
+test -f src/compat.rs && grep -q portable-atomic Cargo.toml || { echo "PATCH_APPLY_INCOMPLETE"; exit 1; }
+echo "patch applied on $UPSTREAM_SHA"
+
+echo "===== 5) bounded TeleMT MIPSLE build (Entware ABI) ====="
+# glibc-2.34+ symbol backport shim: the C sources compile against distro 2.39
+# headers where _GNU_SOURCE redirects clock_gettime/nanosleep/fcntl/ioctl/stat
+# to __*_time64/__isoc23_* names, and rust 1.102 std weak!-refers
+# __clock_gettime64 (strong after fat-LTO inlining). glibc 2.27 has none of
+# them; the shim provides faithful implementations (time64 structs -> 2.27
+# syscalls; Y2038-unsafe truncation acceptable for a research build).
+mkdir -p "$EB/shim"
+cat > "$EB/shim/shim.c" <<'EOF'
+#include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+/* glibc 2.39 32-bit time64 struct timespec: { i64 sec @0, i32 nsec @8, pad } */
+struct ts64 { long long tv_sec; long tv_nsec; };
+
+int __clock_gettime64(clockid_t clk, struct ts64 *tp) {
+    struct timespec ts;
+    int r = clock_gettime(clk, &ts);
+    if (r == 0) { tp->tv_sec = ts.tv_sec; tp->tv_nsec = ts.tv_nsec; }
+    return r;
+}
+
+int __nanosleep64(const struct ts64 *req, struct ts64 *rem) {
+    struct timespec rq, rm;
+    rq.tv_sec = (time_t)req->tv_sec;
+    rq.tv_nsec = (long)req->tv_nsec;
+    int r = nanosleep(&rq, &rm);
+    if (rem != 0 && r != 0) { rem->tv_sec = rm.tv_sec; rem->tv_nsec = rm.tv_nsec; }
+    return r;
+}
+
+int __fcntl_time64(int fd, int cmd, long arg) {
+    return fcntl(fd, cmd, arg);
+}
+
+int __ioctl_time64(int fd, unsigned long req, long arg) {
+    return ioctl(fd, req, arg);
+}
+
+/* aws-lc vm_ube_detect.c: caller checks only the return value */
+int __stat64_time64(const char *path, void *buf) {
+    struct stat st;
+    return stat(path, &st);
+}
+
+long __isoc23_strtol(const char *nptr, char **endptr, int base) {
+    return strtol(nptr, endptr, base);
+}
+EOF
+mipsel-linux-gnu-gcc -fPIC -c "$EB/shim/shim.c" -o "$EB/shim/shim.o"
+# NOTE: link shim.o as an OBJECT, not an archive — archives positioned before
+# the referencing objects are not pulled, leaving the refs unresolved.
+export RUST_LIBC_UNSTABLE_GNU_TIME_BITS=32
+export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=mips32r2 -C target-feature=+soft-float -Aunexpected_cfgs -C link-arg=$EB/shim/shim.o"
+export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER="$EB/mipsel-entware-link-gcc"
+export CC_mipsel_unknown_linux_gnu="$EB/mipsel-entware-cc"
+export CARGO_BUILD_JOBS=2
+# libc's build script does not declare rerun-if-env-changed for the time-bits
+# env var; force a rerun so time32 ABI actually takes effect.
+cargo clean -p libc
+if ! timeout 1700 cargo +nightly -Z build-std=std,panic_abort \
+    build --release --locked --target "$TARGET" --bin telemt; then
+  echo "::error::TELEMT_3517_ENTWARE_BUILD_BLOCKED (record first error, stop)"
+  exit 1
+fi
+BIN="target/$TARGET/release/telemt"
+test -f "$BIN" || { echo "TELEMT_ENTWARE_BUILD: FAIL (no binary)"; exit 1; }
+echo "TELEMT_3517_CORE_BUILD: PASS"
+
+echo "===== 6) Entware ABI gate (readelf -l/-d/-V/-h, FP census, abiflags) ====="
+file "$BIN" | head -1
+readelf -h "$BIN" | grep -E 'Flags:|Type:'
+INTERP=$(readelf -l "$BIN" | grep -oE '/opt/lib/ld\.so\.1' | head -1)
+[ "$INTERP" = "/opt/lib/ld.so.1" ] || { echo "ABI_GATE: FAIL interpreter=$(readelf -l "$BIN" | grep -oE 'interpreter: .*' | head -1)"; exit 1; }
+readelf -d "$BIN" | grep -E 'NEEDED|RUNPATH'
+GLIBC_MAX=$(readelf -V "$BIN" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)
+echo "max GLIBC symbol version: $GLIBC_MAX"
+case "$GLIBC_MAX" in
+  GLIBC_2.27|GLIBC_2.2[0-6]|GLIBC_2.1[0-9]|GLIBC_2.[0-9]) echo "GLIBC_GATE: PASS";;
+  *) echo "::error::GLIBC_GATE: FAIL (max $GLIBC_MAX > 2.27)"; exit 1;;
+esac
+FP='\bmfc1\b|\bmtc1\b|\bldc1\b|\bsdc1\b|\blwc1\b|\bswc1\b|\bcvt\.[sd]\.|\bdiv\.[sd]\b|\bmul\.[sd]\b|\badd\.[sd]\b|\bsub\.[sd]\b|\bmadd\.[sd]\b|\bmsub\.[sd]\b|\bmov\.[sd]\b'
+FP_COUNT=$(mipsel-linux-gnu-objdump -d "$BIN" | grep -icE "$FP" || true)
+echo "FPU instructions: $FP_COUNT"
+[ "${FP_COUNT:-0}" -eq 0 ] || { echo "::error::FP_GATE: FAIL (FPU instructions on FPU-less MT7621)"; exit 1; }
+ABIFLAGS=$(readelf -n "$BIN" | grep -c 'MIPS ABI Flags' || true)
+echo "abiflags sections: $ABIFLAGS (0 = legacy presentation, same as Entware runtime libs)"
+readelf -V "$BIN" | grep -q 'GLIBC_2.34' && { echo "::error::stale GLIBC_2.34 ref"; exit 1; } || true
+echo -n "binary sha256: "; sha256sum "$BIN"
+echo "CORE_ENTWARE_ABI: PASS (static gates; QEMU_RUNTIME=NOT_TESTED)"
