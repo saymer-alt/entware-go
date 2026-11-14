@@ -1,5 +1,8 @@
 # AGENTS.md — entware-go fork, lean agent startup contract
 
+**Token budget (mandatory):** 2 identical FAIL → change hypothesis/BLOCKED; **3 fixes OR 3 full heavy builds per blocker → STOP + owner GO** (local+CI+sessions). No unchanged PASS reruns. [Local details](docs/agent-token-economy.md) · [global rule](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-RETRY-BUDGET.md). Safety tests and release approvals are never waived.
+
+
 **Read this short file at startup; do not preload all historical guidance, package recipes or workflow code.** This is the `saymer-alt/entware-go` fork of `spatiumstas/entware-go`, itself derived from `Entware/entware-go`. The only normal integration/default branch here is **`gh-action-build`**, **not `main` or `master`**. Upstream `master` is an input to a controlled sync, never the target branch for changes in this fork.
 
 ## Purpose, scope and owner authorization
