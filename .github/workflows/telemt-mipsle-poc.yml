@@ -1,0 +1,148 @@
+# Experimental MIPSLE proof only; never publish, install or upload unreviewed binaries.
+name: TeleMT MIPSLE offline feasibility (no publish)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - .github/workflows/telemt-mipsle-poc.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-mipsle-poc
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Inspect historical MIPSLE Entware IPKs (metadata only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in \
+            'telemt_3.5.5-1_mipsel-3.4.ipk:telemt:3.5.5-1' \
+            'telemt-panel_0.6.2-1_mipsel-3.4.ipk:telemt-panel:0.6.2-1'; do
+            IFS=: read -r name package version <<< "$entry"
+            url="https://test.entware.net/mipssf-k3.4/4test/le/$name"
+            candidate="$RUNNER_TEMP/$name"
+            if curl -q -fsSL --proto '=https' --proto-redir '=https' \
+                --retry 0 --connect-timeout 10 --max-time 35 --max-filesize 41943040 \
+                "$url" -o "$candidate"; then
+              python3 - "$candidate" "$package" "$version" <<'PY'
+          import hashlib
+          import io
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          path, expected_package, expected_version = sys.argv[1:]
+          data = Path(path).read_bytes()
+          if len(data) > 40 * 1024 * 1024:
+              raise SystemExit("ARCHIVE_TOO_BIG")
+          def member(archive, name):
+              with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+                  match = [m for m in tar.getmembers()
+                           if m.name.lstrip("./") == name and m.isfile()]
+                  if len(match) != 1:
+                      raise SystemExit("ARCHIVE_MEMBER_NOT_UNIQUE: " + name)
+                  obj = tar.extractfile(match[0]).read()
+                  if len(obj) > 40 * 1024 * 1024:
+                      raise SystemExit("ARCHIVE_MEMBER_TOO_BIG")
+                  return obj
+          control = member(member(data, "control.tar.gz"), "control").decode("utf-8")
+          fields = {}
+          for row in control.splitlines():
+              if ": " not in row:
+                  continue
+              key, value = row.split(": ", 1)
+              if key in ("Package", "Version", "Architecture"):
+                  if key in fields:
+                      raise SystemExit("CONTROL_DUPLICATE_FIELD")
+                  fields[key] = value
+          expected = {"Package": expected_package, "Version": expected_version,
+                      "Architecture": "mipsel-3.4"}
+          if fields != expected:
+              raise SystemExit("CONTROL_MISMATCH: " + str(fields))
+          with tarfile.open(fileobj=io.BytesIO(member(data, "data.tar.gz")), mode="r:gz") as tar:
+              matches = [m for m in tar.getmembers() if m.isfile()
+                         and m.name.rstrip("/").split("/")[-1] == expected_package]
+              if len(matches) != 1:
+                  raise SystemExit("ELF_BINARY_NOT_UNIQUE")
+              binary = tar.extractfile(matches[0]).read(64)
+          if (binary[:4] != b"\x7fELF" or binary[4] != 1
+                  or binary[5] != 1 or int.from_bytes(binary[18:20], "little") != 8):
+              raise SystemExit("ELF_NOT_MIPSLE_32")
+          print("LEGACY_METADATA_PASS", expected_package, expected_version,
+                "MIPS32LE ELF, sha256=" + hashlib.sha256(data).hexdigest(),
+                "SHA_UNTRUSTED_HISTORICAL")
+          PY
+            else
+              echo "LEGACY_ARCHIVE_UNAVAILABLE: $name (not proof of build impossibility)"
+            fi
+          done
+      - name: Checkout pinned Panel Lite RC4 source
+        uses: actions/checkout@v4
+        with:
+          repository: amirotin/telemt_panel
+          ref: 758d155fe309ec99bea6df2544d0e3c5d1bb8ad4
+          path: panel-src
+          persist-credentials: false
+      - name: Setup upstream Go version
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: panel-src/go.mod
+          cache: true
+          cache-dependency-path: panel-src/go.sum
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: panel-src/web/package-lock.json
+      - name: Prepare upstream frontend
+        shell: bash
+        working-directory: panel-src/web
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Attempt pure-Go MIPSLE Panel Lite RC4 cross-build
+        shell: bash
+        working-directory: panel-src
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 758d155fe309ec99bea6df2544d0e3c5d1bb8ad4
+          go version
+          go tool dist list | grep -Fx 'linux/mipsle'
+          export GOTOOLCHAIN=local
+          export CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat
+          export GOEXPERIMENT=nojsonv2
+          go build -trimpath -tags lite \
+            -ldflags='-s -w -X main.version=1.0.0-rc.4' \
+            -o "$RUNNER_TEMP/telemt-panel-mipsle" ./cmd/panel
+          file "$RUNNER_TEMP/telemt-panel-mipsle"
+          readelf -h "$RUNNER_TEMP/telemt-panel-mipsle" |
+            grep -E 'Class:|Data:|Machine:'
+          readelf -h "$RUNNER_TEMP/telemt-panel-mipsle" | grep -q 'ELF32'
+          readelf -h "$RUNNER_TEMP/telemt-panel-mipsle" | grep -q 'MIPS'
+          python3 - "$RUNNER_TEMP/telemt-panel-mipsle" <<'PY'
+          import sys
+          from pathlib import Path
+          elf = Path(sys.argv[1]).read_bytes()
+          assert elf[:4] == b"\x7fELF"
+          assert elf[4] == 1 and elf[5] == 1
+          assert int.from_bytes(elf[18:20], "little") == 8
+          print("MIPSLE_PANEL_BUILD_PASS", "bytes=", len(elf),
+                "runtime=NOT_TESTED", "ipk=NOT_BUILT", "publication=NONE")
+          PY
+      - name: Explicit proof boundary
+        if: always()
+        run: |
+          echo 'Scope: historical IPK metadata and MIPSLE Go cross-compilation only.'
+          echo 'Not tested: TeleMT Rust MIPSLE build, real opkg, QEMU, physical KN-1913, Telegram connectivity.'
+          echo 'No binaries or artifacts are uploaded and no GitHub Releases are modified.'
