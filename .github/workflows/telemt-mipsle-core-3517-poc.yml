@@ -1,0 +1,145 @@
+# Experimental, isolated MIPS32LE feasibility check. Never ship or install this output.
+name: TeleMT 3.5.17 MIPSLE core PoC (no release)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - .github/workflows/telemt-mipsle-core-3517-poc.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-mipsle-core-3517-poc
+  cancel-in-progress: false
+
+jobs:
+  source-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Fetch pinned TeleMT 3.5.17 only
+        uses: actions/checkout@v4
+        with:
+          repository: telemt/telemt
+          ref: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+          path: upstream
+          persist-credentials: false
+      - name: Prove exact source and count direct 64-bit atomic usage
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 66708d2866f3f3a4541c4fa67984d408e71a8af4
+          grep -q '^version = "3.5.17"$' Cargo.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          files = list(Path("src").rglob("*.rs"))
+          hits = [(str(p),len(re.findall(r"\bAtomicU64\b",p.read_text(errors="replace")))) for p in files]
+          print("SOURCE_3517_SHA=66708d2866f3f3a4541c4fa67984d408e71a8af4")
+          print("SOURCE_ATOMIC_U64_OCCURRENCES=",sum(n for _,n in hits))
+          print("SOURCE_ATOMIC_U64_FILES=",sum(n>0 for _,n in hits))
+          print("NOTE: counts include tests in src; atomic support is assessed separately")
+          PY
+      - name: Inspect historical Entware TeleMT 3.5.5 IPK ABI (never execute)
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://test.entware.net/mipssf-k3.4/4test/le/telemt_3.5.5-1_mipsel-3.4.ipk'
+          if ! curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 0 \
+              --connect-timeout 8 --max-time 35 --max-filesize 41943040 \
+              "$url" -o "$RUNNER_TEMP/historical.ipk"; then
+            echo "HISTORICAL_ARCHIVE_UNAVAILABLE: not evidence of build impossibility"
+            exit 0
+          fi
+          python3 - "$RUNNER_TEMP/historical.ipk" "$RUNNER_TEMP/historical-telemt" <<'PY'
+          from pathlib import Path
+          import hashlib,io,sys,tarfile
+          raw=Path(sys.argv[1]).read_bytes()
+          assert len(raw)<40*1024*1024
+          def extract(data,name):
+              with tarfile.open(fileobj=io.BytesIO(data),mode="r:gz") as t:
+                  matches=[m for m in t.getmembers() if m.isfile() and m.name.lstrip("./")==name]
+                  assert len(matches)==1,(name,len(matches))
+                  assert matches[0].size<40*1024*1024
+                  return t.extractfile(matches[0]).read()
+          control=extract(extract(raw,"control.tar.gz"),"control").decode()
+          for field in ("Package: telemt","Version: 3.5.5-1","Architecture: mipsel-3.4"):
+              assert field in control.splitlines(),field
+          dat=extract(raw,"data.tar.gz")
+          with tarfile.open(fileobj=io.BytesIO(dat),mode="r:gz") as t:
+              matches=[m for m in t.getmembers() if m.isfile() and m.name.split("/")[-1]=="telemt"]
+              assert len(matches)==1
+              assert matches[0].size<40*1024*1024
+              elf=t.extractfile(matches[0]).read()
+          assert elf[:4]==b"\x7fELF" and elf[4:6]==b"\x01\x01" and int.from_bytes(elf[18:20],"little")==8
+          Path(sys.argv[2]).write_bytes(elf)
+          print("HISTORICAL_MIPSLE_ELF_PASS, untrusted SHA256=",hashlib.sha256(raw).hexdigest())
+          PY
+          file "$RUNNER_TEMP/historical-telemt"
+          readelf -h "$RUNNER_TEMP/historical-telemt" | grep -E 'Class:|Data:|Machine:|Flags:'
+          echo "Historical interpreter:"
+          readelf -l "$RUNNER_TEMP/historical-telemt" | grep -A1 INTERP || true
+          echo "Historical NEEDED libraries:"
+          readelf -d "$RUNNER_TEMP/historical-telemt" 2>/dev/null | grep NEEDED || true
+          echo "Historical GLIBC symbol version requirements:"
+          readelf -V "$RUNNER_TEMP/historical-telemt" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -12 || true
+          echo "Historical possible 64-bit atomic helper calls:"
+          readelf -Ws "$RUNNER_TEMP/historical-telemt" 2>/dev/null | grep -E '__atomic_.*_8|__sync_.*_8' | head -20 || true
+          echo "Historical artifact is for metadata research only, never execute or install."
+      - name: Install isolated Rust and MIPSLE cross tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross binutils-mipsel-linux-gnu
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustc +nightly -V
+          mipsel-linux-gnu-gcc -v 2>&1 | tail -3
+          echo "MIPSLE Rust target atomic cfg:"
+          rustc +nightly --print cfg --target mipsel-unknown-linux-gnu | grep target_has_atomic || true
+      - name: One bounded unmodified TeleMT Rust 3.5.17 cross-build attempt
+        shell: bash
+        working-directory: upstream
+        env:
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER: mipsel-linux-gnu-gcc
+          CC_mipsel_unknown_linux_gnu: mipsel-linux-gnu-gcc
+          CARGO_BUILD_JOBS: '2'
+          RUSTFLAGS: '-C target-cpu=mips32r2 -C target-feature=+soft-float'
+        run: |
+          set -euo pipefail
+          echo "Attempting vanilla upstream: target mipsel-unknown-linux-gnu, MIPS32r2 softfloat"
+          echo "No source patches, no atomics emulation, no binary publication."
+          if ! timeout 540s cargo +nightly -Z build-std=std,panic_abort \
+            check --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
+            echo "::error::TELEMT_3517_MIPSLE_CROSS_CHECK_BLOCKED (inspect first Cargo/rustc error above)"
+            exit 1
+          fi
+          echo "CROSS_CHECK_PASS: trying binary build"
+          if ! timeout 210s cargo +nightly -Z build-std=std,panic_abort \
+            build --release --locked --target mipsel-unknown-linux-gnu --bin telemt; then
+            echo "::error::TELEMT_3517_MIPSLE_BINARY_BUILD_BLOCKED"
+            exit 1
+          fi
+          binary=target/mipsel-unknown-linux-gnu/release/telemt
+          file "$binary"
+          readelf -h "$binary" | grep -E 'Class:|Data:|Machine:|Flags:'
+          readelf -h "$binary" | grep -q ELF32
+          readelf -h "$binary" | grep -q MIPS
+          python3 - "$binary" <<'PY'
+          from pathlib import Path
+          import sys
+          b=Path(sys.argv[1]).read_bytes()
+          assert b[:4]==b"\x7fELF" and b[4:6]==b"\x01\x01" and int.from_bytes(b[18:20],"little")==8
+          print("HOST_BUILD_PASS size=",len(b),"QEMU=NOT_TESTED OPKG=NOT_TESTED FIELD=NOT_TESTED")
+          PY
+          echo "No executable artifact upload; no installation; no release. A host build alone is not a production result."
+      - name: Safety boundary
+        if: always()
+        run: |
+          echo "Experimental 3.5.17 only. Historical IPK treated as untrusted data."
+          echo "No routers contacted, no Telegram keys, no releases, no package feeds changed."
