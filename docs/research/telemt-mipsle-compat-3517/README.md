@@ -70,11 +70,17 @@ RUSTFLAGS='-C target-cpu=mips32r2 -C target-feature=+soft-float' \
 CI reproduction: `.github/workflows/telemt-mipsle-compat-3517-check.yml`
 (host tests job + one bounded MIPSLE cross-check → ELF32 build on PASS).
 
-## Status gates
+## Status gates (measured 2026-11-14)
 
-See the PR body and Issue #37 comment for the live status of
-`ATOMIC64_SOURCE_AUDIT`, `ATOMIC64_PORT_TEST`, `MIPSLE_CROSS_CHECK`,
-`MIPSLE_BINARY_BUILD`, `QEMU`, `OPKG`, `FIELD`.
+| Gate | Result | Evidence |
+|---|---|---|
+| `ATOMIC64_SOURCE_AUDIT` | PASS | 692 `AtomicU64` mentions in 76 `src/` files (427 struct fields); no `AtomicI64`, no aliased imports, no `repr(C)`/FFI exposure; `.wait()`/`.notify()`/`.as_ptr()` never used on `AtomicU64`; CAS sites: slot_budget, traffic_limiter, quota_store, replay, user_admission, ip_tracker, me/writer_counters |
+| `ATOMIC64_PORT_TEST` (host x86_64, native path) | PASS | `cargo test --bin telemt`: **2774 passed, 76 ignored**; 3 parallel-execution flakes (`proxy::client` TLS-masking) pass 3/3 in isolation and are unrelated to the compat layer (host alias is the identical `std` type) |
+| `MIPSLE_CROSS_CHECK` | PASS | `cargo +nightly -Z build-std=std,panic_abort check --release --locked --target mipsel-unknown-linux-gnu --bin telemt` with `-C target-cpu=mips32r2 -C target-feature=+soft-float`: **0 errors**; nightly 1.102.0-nightly (2026-11-13), portable-atomic 1.15.0 |
+| `MIPSLE_BINARY_BUILD` | PASS | `file`: `ELF 32-bit LSB pie executable, MIPS, MIPS32 rel2, dynamically linked, interpreter /lib/ld.so.1`; `readelf -h`: `o32, mips32r2, pic`; ~26.8 MB unstripped, cross gcc 12.3.0 (noble cross packages), glibc 2.39 sysroot |
+| `QEMU` | NOT_TESTED | emulator not ready |
+| `OPKG` | NOT_TESTED | no IPK built or published by design |
+| `FIELD` | NOT_TESTED | no router access without owner GO |
 
 A green host build proves typechecking and host semantics only. Lock-fallback
 throughput/latency on MT7621, `ring` crypto behavior, memory usage and `opkg`
