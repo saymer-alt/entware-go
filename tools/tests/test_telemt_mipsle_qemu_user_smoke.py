@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 from pathlib import Path
 from subprocess import CompletedProcess
 import sys
@@ -27,7 +28,8 @@ class OfflineTests(unittest.TestCase):
 
     def test_accepts_preflight_approved_stub(self):
         with tempfile.TemporaryDirectory() as td, \
-             patch.object(smoke, "audit", return_value={"format": "ipk", "sha256": "test"}), \
+             patch.object(smoke, "audit", return_value={"format": "ipk", "sha256": "test", "checks": {}}), \
+             patch.object(smoke, "mips_fp_abi", return_value=3), \
              patch.object(smoke, "ipk_parts", return_value=({}, {"opt/bin/telemt": b"core"})):
             src = Path(td) / "test.ipk"
             src.write_bytes(b"test")
@@ -51,6 +53,25 @@ class OfflineTests(unittest.TestCase):
             with self.assertRaisesRegex(smoke.SmokeError, "complete IPK"):
                 smoke.verify_ipk(src, "core", hashlib.sha256(b"test").hexdigest())
 
+    def test_mips_fp_abi_segment_rejects_hard_float(self):
+        blob = bytearray(108)
+        blob[:6] = b"\x7fELF\x01\x01"
+        struct.pack_into("<I", blob, 28, 52)
+        struct.pack_into("<HH", blob, 42, 32, 1)
+        struct.pack_into("<IIIII", blob, 52, 0x70000003, 84, 84, 84, 24)
+        blob[84 + 7] = 5   # FPXX (incompatible with softfloat loader)
+        self.assertEqual(smoke.mips_fp_abi(bytes(blob)), 5)
+        blob[84 + 7] = 3   # Entware softfloat
+        self.assertEqual(smoke.mips_fp_abi(bytes(blob)), 3)
+
+    def test_missing_mips_abi_segment_refused(self):
+        blob = bytearray(108)
+        blob[:6] = b"\x7fELF\x01\x01"
+        struct.pack_into("<I", blob, 28, 52)
+        struct.pack_into("<HH", blob, 42, 32, 1)
+        with self.assertRaisesRegex(smoke.SmokeError, "exactly one"):
+            smoke.mips_fp_abi(bytes(blob))
+
     def test_qemu_unavailable_blocks(self):
         with patch.object(smoke.shutil, "which", return_value=None):
             with self.assertRaisesRegex(smoke.SmokeError, "requires qemu-mipsel"):
@@ -73,12 +94,15 @@ class OfflineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
              patch.object(smoke.shutil, "which", side_effect=lambda n: "/usr/bin/" + n), \
              patch.object(smoke, "verify_lib_dir", return_value=(Path(td), Path(td) / "ld.so.1")), \
+             patch.object(smoke.shutil, "copyfile"), \
              patch.object(smoke.subprocess, "run", return_value=CompletedProcess([], 0, b"TeleMT 3.5.17\n", b"")) as invoke:
             result = smoke.run_qemu_cli(b"mock-code", Path(td))
             argv = invoke.call_args.args[0]
             self.assertEqual(argv[:5], ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--"])
-            self.assertIn("--library-path", argv)
+            self.assertIn("-L", argv)
+            self.assertNotIn("--library-path", argv)
             self.assertEqual(argv[-1], "--version")
+            self.assertIn("guestroot/opt/bin/telemt", argv[-2])
             self.assertEqual(invoke.call_args.kwargs["env"]["HOME"], invoke.call_args.kwargs["cwd"])
             self.assertNotIn("LD_PRELOAD", invoke.call_args.kwargs["env"])
             self.assertEqual(result["status"], "QEMU_USER_CLI_SMOKE_PASS")
