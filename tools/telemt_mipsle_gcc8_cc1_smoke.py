@@ -107,8 +107,12 @@ def unpack_ipk(blob: bytes, root: Path, package: str) -> int:
                     if target.is_absolute() or ".." in target.parts:
                         raise ProbeError("unsafe symlink in IPK")
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    if dest.exists() or dest.is_symlink():
-                        raise ProbeError("duplicate symlink target")
+                    if dest.is_symlink():
+                        if str(dest.readlink()) != member.linkname:
+                            raise ProbeError("mismatched existing SDK symlink")
+                        continue
+                    if dest.exists():
+                        raise ProbeError("symlink conflicts with existing file")
                     dest.symlink_to(member.linkname)
                 elif member.islnk():
                     raise ProbeError("hardlink in IPK not supported")
