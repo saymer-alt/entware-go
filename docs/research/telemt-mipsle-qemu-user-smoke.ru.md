@@ -1,39 +1,43 @@
-# TeleMT MIPSLE — реальный QEMU User Mode smoke, 15.11.2026
+# TeleMT MIPSLE — реальный QEMU User Mode, 15.11.2026
 
-Зависимый [Draft PR #45](https://github.com/saymer-alt/entware-go/pull/45) на research-ветке [PR #44](https://github.com/saymer-alt/entware-go/pull/44). Это **не** целиком эмулятор KeeneticOS, не `opkg install` и не аппаратная приёмка.
+Документ фиксирует выполненные испытания реальных IPK. Зависимый [Draft PR #45](https://github.com/saymer-alt/entware-go/pull/45) на [Draft PR #44](https://github.com/saymer-alt/entware-go/pull/44). **Это не эмуляция KeeneticOS, не опробованная opkg-установка и не тест работы Telegram-прокси.**
 
-## Фактически выполнено (без Z AI)
+## Актуальная приёмка: Core из run 43742529964
 
-- В изолированном Debian x86_64 установлен `qemu-mipsel 7.2.22`. Процессы запускались с `unshare --user --map-root-user --net` (внешняя сеть гостю недоступна).
-- Получены исходные GitHub Actions ZIP из [run 43624729371](https://github.com/saymer-alt/entware-go/actions/runs/43624729371); проверены SHA-256 обоих IPK.
-- Из официального `bin.entware.net/mipselsf-k3.4` загружены и проверены SHA-256 `libc_2.27-12`, `libgcc_8.4.0-12`, `libpthread_2.27-12`, `librt_2.27-12`. Библиотеки извлечены в отдельный одноразовый `guestroot/opt/lib` (в том числе `ld.so.1`).
-- **Panel Lite RC4: PASS — `--version`** с `qemu-mipsel -cpu 24Kc -L guestroot guestroot/opt/bin/telemt-panel --version`: `EXIT 0`, ответ `telemt-panel 1.0.0-rc.4 (lite: memory)`. Другие функции панели не проверялись.
-- **Core 3.5.17: FAIL** — при аналогичном запуске штатного ELF `EXIT 1: qemu: Can't find a matching FPU mode`. Подтверждено для CPU 24Kc/24Kf/74Kf. `readelf -A` доказал **PT_MIPS_ABIFLAGS.fp_abi=5**, cpr1_size=1, `Hard float (32-bit CPU, Any FPU)` у Core, а у *реального* загрузчика Entware 2.27 **fp_abi=3, cpr1_size=0**, Soft float. Ранее ошибочная документация утверждала отсутствие секции `.MIPS.abiflags`: на самом деле она есть в обоих ELF.
-- **Диагностика, не готовый фикс:** только в временной копии Core ELF изменены 2 байта `PT_MIPS_ABIFLAGS` для анализа (не в исходном IPK). QEMU прошёл прежний FPU-gate, затем Rust завершился `EXIT 134`, `thread 'main' has overflowed its stack`. Увеличение гостевого стека до 64 МиБ не устранило сбой. Диагностическая копия содержит неконсистентные `.gnu.attributes` и **не пригодна для публикации/использования**.
+- [GitHub Actions #43742529964](https://github.com/saymer-alt/entware-go/actions/runs/43742529964): 4/4 SUCCESS. IPK `telemt_3.5.17-1_mipsel-3.4.ipk`, SHA-256 `b8dfbb83380d8f4353151b0de43d8c34ceb2369aea45cb6ddaf3b3089a798e5d`; ELF SHA-256 `3efa4a53c1d50bf1b7a0ed6ca7de98201faf0fa2e27eaaf5f1cd589a6bf26063`. ZIP CRC + SHA проверены после независимого скачивания.
+- Официальные runtime-пакеты Entware `libc 2.27-12`, `libgcc 8.4.0-12`, `libpthread 2.27-12`, `librt 2.27-12` независимо загружены и SHA-256 совпали с утверждёнными пинами. Файлы извлечены в одноразовый `guestroot/opt/lib`.
+- Настоящий `qemu-mipsel 7.2.22`, `-cpu 24Kc`, `-L guestroot`, `unshare --user --map-root-user --net` (никаких Telegram-соединений и доступного гостю внешнего сетевого интерфейса). И Core, и загрузчик Entware: `FP ABI: Soft float`.
+- `telemt healthcheck --mode=qemu-smoke-invalid` → **EXIT 2**, правильный текст `Invalid --mode value`. Проверяет CLI без запуска сервера.
+- `telemt run /tmp/.../invalid-existing.toml`: файл с незакрытой TOML-таблицей зафиксирован перед запуском. Из-за поведения QEMU `-L` дополнительно скопирован по тому же абсолютному пути **в гостевой корень**, иначе `openat` возвращал ENOENT даже при наличии файла на хосте. После зеркалирования → **EXIT 1, настоящий TOML parse error / unclosed table**, файл не изменён. В отличие от предыдущего IPK, **нет** `invalid timestamp`, Rust panic или `stack overflow`.
+- Core **не имеет** поддерживаемого `--version`. Старый ошибочный QEMU-smoke с `--version` запускал обычный серверный путь. Текущий скрипт [`tools/telemt_mipsle_qemu_user_smoke.py`](../../tools/telemt_mipsle_qemu_user_smoke.py) использует только два явно проверенных отрицательных сценария.
 
-Таблица доказательств:
-
-| Гейт | Статус |
+| Гейт | Фактический статус |
 |---|---|
-| GitHub IPK SHA-256, Entware runtime IPK SHA-256 | **PASS** |
-| Panel Lite CLI `--version` под QEMU User Mode | **PASS** |
-| Core FP ABI compatibility / запуск `--version` | **FAIL** |
-| QEMU User Mode запуск Core после пересборки с правильным ABI | **NOT_TESTED** |
-| KeeneticOS MT7621 / native `opkg` / service restart / persistence | **NOT_TESTED** |
-| Real KN-1913 / Telegram network / RAM 256MiB / heavy crypto | **NOT_TESTED** |
+| SHA-256/ELF MIPSLE softfloat/glibc static | **PASS** |
+| Panel Lite RC4 CLI `--version` (старый оригинальный IPK) | **PASS** |
+| Core CLI: отвергнуть неподдерживаемый healthcheck mode | **PASS** |
+| Core Tokio: прочитать некорректный TOML и завершиться контролируемо | **PASS**, только отрицательный сценарий |
+| Core рабочий сервер/HTTPS/Telegram, ресурсы и crypto | **NOT_TESTED** |
+| KeeneticOS MT7621, native `opkg`, перезапуск, сохранение настроек | **NOT_TESTED** |
+| Реальный Keenetic KN-1913 | **NOT_TESTED** |
 
-## Fail-closed проверочный скрипт
+## Прошлые неудачи и доказанный прогресс
 
-`tools/telemt_mipsle_qemu_user_smoke.py` теперь отказывается принимать Core, если `PT_MIPS_ABIFLAGS.fp_abi != 3`. Раньше сценарий напрямую исполнял гостевой загрузчик и мог **пропустить** сочетание несовместимых FP ABI процесса и интерпретатора. Теперь скрипт исполняет именно оригинальный guest ELF с `-L disposable-root`, чтобы QEMU проверил его настоящий `PT_INTERP`; прежний "direct loader" путь удалён. Опциональный запуск требует `unshare`, `qemu-mipsel`, предварительно скачанные доверенные библиотеки Entware, и явно заданный `--run-core-cli`.
+Начальный оригинальный Core из Actions 43624729371 (IPK SHA `a04f754375056439c3d5584bf7d868eb547f844c4779e3076bfbdd84129d63fa`) не запускался из-за **FP ABI=5**, несовместимого с Entware softfloat ABI=3. Следующий Core после исправления softfloat (Actions 43720897639) достиг Rust, но падал на рекурсивных `__clock_gettime64` и подобных функциях shim, `stack overflow`. Коммит `c001a82` исправил явные вызовы glibc time32. Затем выявлен и исправлен порядок линковки `-lc shim.o -lc`. Core из Actions 43726565495 получил корректный softfloat и прекратил переполнение стека, но падал на `invalid timestamp` из-за смешения 8-байтного MIPS O32 `timespec32` и 16-байтного `timespec64`. Коммиты `7fa6cb6` + `bedab32` исправили время и отдельную запись `stat` в буфер неправильной структуры; для этих исправлений есть независимый QEMU-пробник и четыре регрессионных теста.
 
-До исправления Core ниже ожидается **BLOCKED / FP ABI 5**, а не успешный запуск:
+## Использование
 
 ```bash
+python3 -m unittest discover -s tools/tests -p 'test_telemt_mipsle_qemu_user_smoke.py' -v
+
+# host-only статическая проверка по pinned IPK:
+python3 tools/telemt_mipsle_qemu_user_smoke.py --core-ipk /verified/new/core.ipk
+
+# только на одноразовом x86_64 lab host с заранее проверенными Entware /opt/lib:
 python3 tools/telemt_mipsle_qemu_user_smoke.py \
-  --core-ipk /path/telemt_3.5.17-1_mipsel-3.4.ipk \
-  --panel-ipk /path/telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+  --core-ipk /verified/new/core.ipk \
+  --entware-lib-dir /verified/entware/opt/lib \
+  --run-core-cli
 ```
 
-Новый корректный Core потребует отдельной SHA-256 фиксации и review. **Не менять бинарные метаданные постфактум ради ложного PASS**: нужно пересобрать C/Rust с согласованным настоящим softfloat toolchain/sysroot, проверить отсутствие FP-инструкций, совпадение `.MIPS.abiflags` и `.gnu.attributes`, затем отдельно исследовать вторую ошибку `stack overflow`. Это **два отдельных блокера**.
-
-Офлайн-тесты скрипта: `python3 -I -m unittest discover -s tools/tests -p 'test_telemt_mipsle_qemu_user_smoke.py' -v`. Никакого запуска на роутере или публикации release/feed без отдельного согласия владельца.
+Не устанавливать файлы на устройство и не сливать Draft PR только на основании двух отрицательных smoke-тестов. Для полноценного приёма нужны настоящий сервисный запуск в MT7621/KeeneticOS, `opkg`, проверки памяти и rollback.

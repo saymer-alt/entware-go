@@ -19,8 +19,9 @@ import tempfile
 
 from telemt_mipsle_ipk_preflight import audit, bounded_file, elf_info, ipk_parts
 
-# Frozen GitHub Actions run 43624729371 / PR #44, verified 2026-11-14.
-CORE_SHA = "a04f754375056439c3d5584bf7d868eb547f844c4779e3076bfbdd84129d63fa"
+# Frozen Core IPK: Actions run 43742529964, PR #44, checked 2026-11-15.
+# Panel Lite remains pinned from original run 43624729371.
+CORE_SHA = "b8dfbb83380d8f4353151b0de43d8c34ceb2369aea45cb6ddaf3b3089a798e5d"
 PANEL_SHA = "0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68"
 NEEDED_LIBS = (
     "ld.so.1", "libc.so.6", "libgcc_s.so.1", "libpthread.so.0",
@@ -93,42 +94,80 @@ def verify_lib_dir(lib_dir: Path) -> tuple[Path, Path]:
     return root, root / "ld.so.1"
 
 
-def run_qemu_cli(core: bytes, lib_dir: Path, timeout_seconds: int = 12) -> dict:
+def run_qemu_cli(core: bytes, lib_dir: Path, timeout_seconds: int = 15) -> dict:
+    """Validate safe, deterministic negative CLI+Tokio paths; never start proxy."""
     qemu = shutil.which("qemu-mipsel")
     unshare = shutil.which("unshare")
     if not qemu or not unshare:
-        raise SmokeError("QEMU_USER_BLOCKED: requires qemu-mipsel AND unshare (user+network namespaces)")
+        raise SmokeError("QEMU_USER_BLOCKED: requires qemu-mipsel AND unshare")
     libs, _loader = verify_lib_dir(lib_dir)
     with tempfile.TemporaryDirectory(prefix="telemt-qemu-user-") as td:
-        root = Path(td) / "guestroot"
+        work = Path(td)
+        root = work / "guestroot"
         bindir, libdir = root / "opt/bin", root / "opt/lib"
         bindir.mkdir(parents=True)
         libdir.mkdir(parents=True)
         binary = bindir / "telemt"
         binary.write_bytes(core)
         binary.chmod(0o700)
-        # Copy the vetted Entware libraries into a disposable guest prefix.
-        # Dereference symlinks verified to stay inside the trusted library dir.
         for name in NEEDED_LIBS:
             shutil.copyfile(libs / name, libdir / name)
-        # Execute the guest *ELF itself*, so QEMU validates the actual
-        # executable's PT_MIPS_ABIFLAGS against its PT_INTERP (PR #44 blocker).
-        cmd = [unshare, "--user", "--map-root-user", "--net", "--",
-               qemu, "-cpu", "24Kc", "-L", str(root), str(binary), "--version"]
+
+        # QEMU -L prefixes guest-path lookups. Rust's O_NOFOLLOW/openat
+        # sandbox resolves a relative filename against that guest root.
+        # Store the SAME invalid config in the host tempdir AND guest prefix,
+        # so success proves TOML was actually read (not merely ENOENT).
+        invalid = b"[broken-toml-table\n"
+        host_config = work / "invalid-existing.toml"
+        host_config.write_bytes(invalid)
+        guest_config = root / host_config.relative_to("/")
+        guest_config.parent.mkdir(parents=True)
+        guest_config.write_bytes(invalid)
+        base = [unshare, "--user", "--map-root-user", "--net", "--",
+                qemu, "-cpu", "24Kc", "-L", str(root), str(binary)]
         env = {"HOME": td, "TMPDIR": td, "PATH": "/usr/bin:/bin", "LANG": "C"}
-        try:
-            p = subprocess.run(cmd, cwd=td, env=env, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               timeout=timeout_seconds, check=False)
-        except subprocess.TimeoutExpired as exc:
-            raise SmokeError("QEMU_USER_BLOCKED: CLI test timed out (not a PASS)") from exc
-        if p.returncode != 0:
-            raise SmokeError(f"QEMU_USER_BLOCKED: guest exit={p.returncode}; inspect local stderr privately")
-        return {"status": "QEMU_USER_CLI_SMOKE_PASS", "exit_code": p.returncode,
-                "stdout_preview": p.stdout.decode("utf-8", "replace")[:300],
-                "limitations": ["native guest ELF and actual PT_INTERP executed",
-                                "no opkg/MT7621/crypto/network/real-router acceptance",
-                                "library provenance must be verified separately"]}
+
+        def run(*arguments: str) -> subprocess.CompletedProcess:
+            try:
+                return subprocess.run(
+                    base + list(arguments), cwd=td, env=env,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, timeout=timeout_seconds, check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise SmokeError("QEMU_USER_BLOCKED: guest timeout (not a PASS)") from exc
+
+        cli = run("healthcheck", "--mode=qemu-smoke-invalid")
+        cli_err = cli.stderr.decode("utf-8", "replace")
+        if cli.returncode != 2 or "Invalid --mode value 'qemu-smoke-invalid'" not in cli_err:
+            raise SmokeError(f"QEMU_USER_BLOCKED: CLI unexpected exit={cli.returncode}")
+
+        startup = run("run", str(host_config))
+        startup_err = startup.stderr.decode("utf-8", "replace")
+        if (startup.returncode != 1
+                or "TOML parse error" not in startup_err
+                or "unclosed table" not in startup_err
+                or "panicked" in startup_err
+                or "invalid timestamp" in startup_err
+                or "stack overflow" in startup_err):
+            raise SmokeError(
+                f"QEMU_USER_BLOCKED: unsafe or unverified Tokio/config result"
+                f" (exit={startup.returncode}); inspect local stderr privately"
+            )
+        if host_config.read_bytes() != invalid or guest_config.read_bytes() != invalid:
+            raise SmokeError("QEMU_USER_BLOCKED: test config was unexpectedly modified")
+        return {
+            "status": "QEMU_USER_CORE_READONLY_NEGATIVE_SMOKE_PASS",
+            "cli_exit_code": cli.returncode,
+            "invalid_toml_exit_code": startup.returncode,
+            "configuration_unchanged": True,
+            "network_isolation": "unshare --net per guest process",
+            "limitations": [
+                "only negative CLI and malformed-config Tokio startup verified",
+                "no successful runtime/listener, opkg/MT7621 or real-router acceptance",
+                "library provenance must be verified separately",
+            ],
+        }
 
 
 def main(argv: list[str] | None = None) -> int:

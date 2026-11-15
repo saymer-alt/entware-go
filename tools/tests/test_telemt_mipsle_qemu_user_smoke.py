@@ -101,29 +101,55 @@ class OfflineTests(unittest.TestCase):
                 smoke.verify_lib_dir(root)
 
     def test_isolated_invocation_and_no_host_env_leak(self):
+        def completed(args, **kwargs):
+            if args[-2:] == ["healthcheck", "--mode=qemu-smoke-invalid"]:
+                return CompletedProcess(args, 2, b"",
+                    b"[telemt] Invalid --mode value 'qemu-smoke-invalid' (supported: liveness, ready)\n")
+            if args[-2] == "run":
+                return CompletedProcess(args, 1, b"",
+                    b"[telemt] Error: Config error: TOML parse error at line 1\nunclosed table\n")
+            raise AssertionError(args)
         with tempfile.TemporaryDirectory() as td, \
              patch.object(smoke.shutil, "which", side_effect=lambda n: "/usr/bin/" + n), \
              patch.object(smoke, "verify_lib_dir", return_value=(Path(td), Path(td) / "ld.so.1")), \
              patch.object(smoke.shutil, "copyfile"), \
-             patch.object(smoke.subprocess, "run", return_value=CompletedProcess([], 0, b"TeleMT 3.5.17\n", b"")) as invoke:
+             patch.object(smoke.subprocess, "run", side_effect=completed) as invoke:
             result = smoke.run_qemu_cli(b"mock-code", Path(td))
-            argv = invoke.call_args.args[0]
-            self.assertEqual(argv[:5], ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--"])
-            self.assertIn("-L", argv)
-            self.assertNotIn("--library-path", argv)
-            self.assertEqual(argv[-1], "--version")
-            self.assertIn("guestroot/opt/bin/telemt", argv[-2])
-            self.assertEqual(invoke.call_args.kwargs["env"]["HOME"], invoke.call_args.kwargs["cwd"])
-            self.assertNotIn("LD_PRELOAD", invoke.call_args.kwargs["env"])
-            self.assertEqual(result["status"], "QEMU_USER_CLI_SMOKE_PASS")
+            self.assertEqual(invoke.call_count, 2)
+            first = invoke.call_args_list[0]
+            second = invoke.call_args_list[1]
+            for call in (first, second):
+                argv = call.args[0]
+                self.assertEqual(argv[:5], ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--"])
+                self.assertIn("-L", argv)
+                self.assertNotIn("--library-path", argv)
+                self.assertEqual(call.kwargs["env"]["HOME"], call.kwargs["cwd"])
+                self.assertNotIn("LD_PRELOAD", call.kwargs["env"])
+            self.assertEqual(first.args[0][-2:], ["healthcheck", "--mode=qemu-smoke-invalid"])
+            self.assertEqual(second.args[0][-2], "run")
+            self.assertTrue(second.args[0][-1].endswith("invalid-existing.toml"))
+            self.assertEqual(result["status"], "QEMU_USER_CORE_READONLY_NEGATIVE_SMOKE_PASS")
 
-    def test_nonzero_exit_is_not_pass(self):
+    def test_missing_config_error_never_counts_as_toml_pass(self):
         with tempfile.TemporaryDirectory() as td, \
              patch.object(smoke.shutil, "which", side_effect=lambda n: "/usr/bin/" + n), \
              patch.object(smoke, "verify_lib_dir", return_value=(Path(td), Path(td) / "ld.so.1")), \
              patch.object(smoke.shutil, "copyfile"), \
-             patch.object(smoke.subprocess, "run", return_value=CompletedProcess([], 1, b"", b"failure")):
-            with self.assertRaisesRegex(smoke.SmokeError, "exit=1"):
+             patch.object(smoke.subprocess, "run", side_effect=[
+                 CompletedProcess([], 2, b"", b"Invalid --mode value 'qemu-smoke-invalid'"),
+                 CompletedProcess([], 1, b"", b"Config error: No such file or directory")]):
+            with self.assertRaisesRegex(smoke.SmokeError, "unsafe or unverified"):
+                smoke.run_qemu_cli(b"mock-code", Path(td))
+
+    def test_tokio_timestamp_panic_blocks(self):
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(smoke.shutil, "which", side_effect=lambda n: "/usr/bin/" + n), \
+             patch.object(smoke, "verify_lib_dir", return_value=(Path(td), Path(td) / "ld.so.1")), \
+             patch.object(smoke.shutil, "copyfile"), \
+             patch.object(smoke.subprocess, "run", side_effect=[
+                 CompletedProcess([], 2, b"", b"Invalid --mode value 'qemu-smoke-invalid'"),
+                 CompletedProcess([], 1, b"", b"panicked: invalid timestamp; TOML parse error; unclosed table")]):
+            with self.assertRaisesRegex(smoke.SmokeError, "unsafe or unverified"):
                 smoke.run_qemu_cli(b"mock-code", Path(td))
 
 
