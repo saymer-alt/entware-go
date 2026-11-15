@@ -82,6 +82,8 @@ def unpack_ipk(blob: bytes, root: Path, package: str) -> int:
         count = 0
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as contents:
             for member in contents:
+                if member.name in ('.', './'):
+                    continue
                 dst = safe_member_path(member.name)
                 if dst.parts[:2] not in (("opt", "include"), ("opt", "lib"), ("opt", "bin")):
                     continue
