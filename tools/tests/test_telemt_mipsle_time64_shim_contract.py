@@ -13,10 +13,14 @@ SCRIPT = (Path(__file__).resolve().parents[2]
 
 
 def shim_source():
-    s = SCRIPT.read_text(encoding="utf-8")
-    a = 'cat > "$EB/shim/shim.c" <<\\'EOF\\'\n'
-    return s.split(a, 1)[1].split("\nEOF\n", 1)[0]
-
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith("cat > ") and "shim/shim.c" in line and "EOF" in line]
+    if len(starts) != 1:
+        raise AssertionError("unique shim heredoc must exist")
+    begin = starts[0]
+    end = lines.index("EOF", begin + 1)
+    return "\n".join(lines[begin + 1:end]) + "\n"
 
 class Time64AbiContract(unittest.TestCase):
     def test_entware_time32_explicit_fixed_width_layout(self):
