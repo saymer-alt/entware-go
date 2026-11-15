@@ -36,6 +36,16 @@ class OfflineTests(unittest.TestCase):
             report, binary = smoke.verify_ipk(src, "core", hashlib.sha256(b"test").hexdigest())
             self.assertEqual((report["format"], binary), ("ipk", b"core"))
 
+    def test_rejects_core_hard_float_before_any_qemu_execution(self):
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(smoke, "audit", return_value={"format": "ipk", "checks": {}}), \
+             patch.object(smoke, "mips_fp_abi", return_value=5), \
+             patch.object(smoke, "ipk_parts", return_value=({}, {"opt/bin/telemt": b"core"})):
+            src = Path(td) / "test.ipk"
+            src.write_bytes(b"test")
+            with self.assertRaisesRegex(smoke.SmokeError, "Core FP ABI 5"):
+                smoke.verify_ipk(src, "core", hashlib.sha256(b"test").hexdigest())
+
     def test_rejects_unexpected_ipk_payload(self):
         with tempfile.TemporaryDirectory() as td, \
              patch.object(smoke, "audit", return_value={"format": "ipk"}), \
