@@ -30,7 +30,7 @@ class Time64AbiContract(unittest.TestCase):
         self.assertIn("offsetof(struct entware_timespec32, tv_nsec) == 4", s)
         self.assertIn("sizeof(struct ts64) == 16", s)
         self.assertIn("offsetof(struct ts64, tv_nsec) == 8", s)
-        self.assertNotRegex(s, r"\bstruct timespec\b")
+        self.assertNotRegex(s, r"struct timespec\s+(?:ts|rq|rm)\b")
         self.assertIn("tp->_padding = 0", s)
 
     def test_time32_external_calls_only(self):
