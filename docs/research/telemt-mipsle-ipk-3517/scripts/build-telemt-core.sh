@@ -207,7 +207,12 @@ echo "SHIM_TIME32_RELOCATIONS: PASS (all six external glibc functions)"
 # NOTE: link shim.o as an OBJECT, not an archive — archives positioned before
 # the referencing objects are not pulled, leaving the refs unresolved.
 export RUST_LIBC_UNSTABLE_GNU_TIME_BITS=32
-export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=mips32r2 -C target-feature=+soft-float -Aunexpected_cfgs -C link-arg=$EB/shim/shim.o"
+# Rust inserts its first -lc before the explicit link-arg shim.o. The
+# Entware libc.so GROUP also references libc_nonshared.a (static archive):
+# stat() is pulled only if another -lc follows the late shim object.
+# Reproduced: -lc shim.o => undefined stat; -lc shim.o -lc => QEMU exit 0
+# (including --as-needed). Keep the shim as an object, never a patched ELF.
+export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=mips32r2 -C target-feature=+soft-float -Aunexpected_cfgs -C link-arg=$EB/shim/shim.o -C link-arg=-lc"
 export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER="$EB/mipsel-entware-link-gcc"
 export CC_mipsel_unknown_linux_gnu="$EB/mipsel-entware-cc"
 export CFLAGS_mipsel_unknown_linux_gnu="-msoft-float -I$EB/compat-headers"

@@ -1,5 +1,14 @@
 # TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental)
 
+> **15.11.2026 linker ordering follow-up.** Experimental run
+> [43725340519](https://github.com/saymer-alt/entware-go/actions/runs/43725340519)
+> blocked at link time (`shim.o: undefined reference to stat`), so no new
+> Core IPK was produced. Reproduced using **real** Entware 2.27 glibc link
+> sysroot and MIPSLE: `-lc shim.o` fails, `-lc shim.o -lc` links and runs
+> under QEMU (also with `--as-needed`). The present recipe adds a final
+> `-C link-arg=-lc` after the shim object. This is **candidate code** until
+> a new CI Core artifact and its genuine QEMU runtime are verified.
+>
 > **15.11.2026 — additional runtime blocker root cause verified.** The correctly
 > softfloat Core from GitHub Actions run 43720897639 still aborted on QEMU
 > with `thread 'main' has overflowed its stack`. Its disassembly showed
