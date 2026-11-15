@@ -57,6 +57,8 @@ def parse_command(argv: list[str]) -> tuple[Path, Path, list[str]]:
         elif arg.startswith(("-O", "-g")) and re.fullmatch(
                 r"-(?:O[0-3sSz]|g(?:[0-3]|gdb[0-3])?)", arg):
             opts.append(arg)
+        elif arg.startswith(("-Wl,", "-Wa,", "-Wp,", "-Wl=", "-Wa=", "-Wp=")):
+            raise ProbeError(f"unsupported compiler-driver pass-through {arg!r}")
         elif arg.startswith("-W") and re.fullmatch(r"-W[A-Za-z0-9_,=.+-]+", arg):
             opts.append(arg)
         elif arg.startswith("-std=") and re.fullmatch(r"-std=(?:c(?:89|90|99|11|17|1x|2x)|gnu(?:89|90|99|11|17|1x|2x))", arg):
