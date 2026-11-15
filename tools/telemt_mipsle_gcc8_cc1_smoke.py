@@ -161,6 +161,20 @@ def compile_source(root: Path, src: Path, output: Path) -> dict:
                 "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
                 "scope": "C object only; not full GCC driver, linker, Cargo or TeleMT runtime"}
 
+def prepare_sdk(workspace: Path) -> Path:
+    work = workspace.resolve()
+    if work in (Path("/"), Path("/opt"), Path("/usr")):
+        raise ProbeError("use a disposable scratch workspace")
+    work.mkdir(parents=True, exist_ok=True)
+    root, cache = work / "guestroot", work / "verified-ipks"
+    root.mkdir(exist_ok=True)
+    cache.mkdir(exist_ok=True)
+    for name in PINS:
+        unpack_ipk(verified_ipk(name, cache), root, name)
+    check_root(root)
+    return root
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--workspace", required=True, type=Path, help="scratch directory, not /opt")
@@ -168,15 +182,7 @@ def main() -> int:
     p.add_argument("--output", required=True, type=Path)
     a = p.parse_args()
     try:
-        work = a.workspace.resolve()
-        if work == Path("/") or work == Path("/opt") or work == Path("/usr"):
-            raise ProbeError("use a disposable scratch workspace")
-        work.mkdir(parents=True, exist_ok=True)
-        root, cache = work / "guestroot", work / "verified-ipks"
-        root.mkdir(exist_ok=True)
-        cache.mkdir(exist_ok=True)
-        for name in PINS:
-            unpack_ipk(verified_ipk(name, cache), root, name)
+        root = prepare_sdk(a.workspace)
         result = compile_source(root, a.source, a.output)
         print(json.dumps(result, indent=2))
         return 0
