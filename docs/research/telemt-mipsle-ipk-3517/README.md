@@ -1,5 +1,15 @@
 # TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental)
 
+> **Additional ABI hazard:** the previous `__stat64_time64` stub
+> used a modern `struct stat` stack local but called legacy Entware
+> `stat()`. With real glibc 2.27, an isolated MIPSLE QEMU test
+> segfaulted directly after `stat` returned. The revised stub (used
+> only for an aws-lc caller that checks return status, not struct data)
+> provides a 512-byte, 16-byte aligned opaque buffer. The **exact
+> time64 shim variant + this buffer**, linked with verified Entware
+> glibc 2.27, passed 200 clock calls, nanosleep, stat and a time_t
+> overflow check under QEMU. This does NOT prove full Core runtime.
+>
 > **15.11.2026 — verified runtime time64 layout defect, new candidate (not
 > accepted yet).** GitHub Actions [43726565495](https://github.com/saymer-alt/entware-go/actions/runs/43726565495)
 > completed 4/4 SUCCESS and emitted Core IPK SHA-256

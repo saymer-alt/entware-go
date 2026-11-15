@@ -40,6 +40,13 @@ class Time64AbiContract(unittest.TestCase):
         self.assertIn(' __asm__("clock_gettime")', s)
         self.assertIn(' __asm__("nanosleep")', s)
 
+    def test_stat_uses_opaque_aligned_legacy_buffer(self):
+        s = shim_source()
+        self.assertIn("legacy_stat_storage[512]", s)
+        self.assertIn("__attribute__((aligned(16)))", s)
+        self.assertNotIn("struct stat st;", s)
+        self.assertIn("entware_stat32(path, (struct stat *)(void *)legacy_stat_storage)", s)
+
     def test_nanosleep_overflow_fails_closed(self):
         s = shim_source()
         self.assertIn("req->tv_sec < INT32_MIN || req->tv_sec > INT32_MAX", s)

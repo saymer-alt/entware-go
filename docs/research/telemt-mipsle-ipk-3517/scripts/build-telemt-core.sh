@@ -205,10 +205,17 @@ int __ioctl_time64(int fd, unsigned long req, long arg) {
     return entware_ioctl32(fd, req, arg);
 }
 
-/* aws-lc vm_ube_detect.c: caller checks only the return value */
+/* aws-lc vm_ube_detect.c: caller checks only the return value.
+ * The old Entware/O32 stat() writes a layout different from glibc-2.39
+ * time64 struct stat. An in-header 'struct stat st' may be too short,
+ * corrupting the stack even when the return status is all we need.
+ * Keep a generously sized, aligned scratch buffer, never interpret it.
+ * This is specifically a return-only compatibility stub, NOT a general
+ * implementation of __stat64_time64 (which must populate caller data).
+ */
 int __stat64_time64(const char *path, void *buf) {
-    struct stat st;
-    return entware_stat32(path, &st);
+    unsigned char legacy_stat_storage[512] __attribute__((aligned(16)));
+    return entware_stat32(path, (struct stat *)(void *)legacy_stat_storage);
 }
 
 long __isoc23_strtol(const char *nptr, char **endptr, int base) {
