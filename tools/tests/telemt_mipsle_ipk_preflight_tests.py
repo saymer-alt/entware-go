@@ -20,18 +20,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import telemt_mipsle_ipk_preflight as pf  # noqa: E402
 
 
-def tiny_elf(*, dynamic: bool, interp: str | None) -> bytes:
+def tiny_elf(*, dynamic: bool, interp: str | None, fp_abi: int | None = 3) -> bytes:
     """52-byte ELF32 MIPS LE header + optional PT_INTERP program header."""
     phnum = 0
     extra = b""
     phoff = 52
     if interp is not None:
         # PT_DYNAMIC (type 2) marks the ELF dynamic; PT_INTERP (type 3) carries the loader path.
-        phnum = 2
+        phnum = 2 if fp_abi is None else 3
         payload = interp.encode() + b"\0"
+        offset = 52 + 32 * phnum
         dynamic_hdr = struct.pack("<IIIIIIII", 2, 0, 0, 0, 0, 0, 0, 0)
-        interp_hdr = struct.pack("<IIIIIIII", 3, 116, 0, 0, len(payload), 0, 0, 0)
-        extra = dynamic_hdr + interp_hdr + payload
+        interp_hdr = struct.pack("<IIIIIIII", 3, offset, 0, 0, len(payload), 0, 0, 0)
+        if fp_abi is None:
+            extra = dynamic_hdr + interp_hdr + payload
+        else:
+            abi = struct.pack("<HBBBBBBIIII", 0, 32, 2, 1, 0, 0, fp_abi, 0, 0, 0, 0)
+            abi_hdr = struct.pack("<IIIIIIII", 0x70000003, offset + len(payload),
+                                  0, 0, len(abi), len(abi), 4, 8)
+            extra = dynamic_hdr + interp_hdr + abi_hdr + payload + abi
     ident = b"\x7fELF" + bytes([1, 1, 1, 0]) + b"\0" * 8
     eh = ident + struct.pack("<HHIIIIIHHHHHH", 2, 8, 1, 0, phoff, 0, 0, 0, 32, phnum, 0, 0, 0)
     return eh + extra
@@ -87,6 +94,18 @@ class CoreModeTests(unittest.TestCase):
         out = pf.audit(self._write(blob), "core")
         self.assertEqual(out["checks"]["ipk_control"]["Architecture"], "mipsel-3.4")
         self.assertEqual(out["checks"]["binary_path"], "opt/bin/telemt")
+
+    def test_core_rejects_hard_float(self) -> None:
+        blob = make_ipk(CORE_CONTROL, {"opt/bin/telemt": tiny_elf(
+            dynamic=True, interp="/opt/lib/ld.so.1", fp_abi=5)})
+        with self.assertRaisesRegex(pf.AuditError, "softfloat"):
+            pf.audit(self._write(blob), "core")
+
+    def test_core_rejects_missing_fp_abi(self) -> None:
+        blob = make_ipk(CORE_CONTROL, {"opt/bin/telemt": tiny_elf(
+            dynamic=True, interp="/opt/lib/ld.so.1", fp_abi=None)})
+        with self.assertRaisesRegex(pf.AuditError, "softfloat"):
+            pf.audit(self._write(blob), "core")
 
     def test_core_rejects_wrong_interpreter(self) -> None:
         blob = make_ipk(CORE_CONTROL, {"opt/bin/telemt": tiny_elf(dynamic=True, interp="/lib/ld.so.1")})

@@ -20,6 +20,7 @@ PATCH_FILE="$(pwd)/${PATCH_FILE:-docs/research/telemt-mipsle-ipk-3517/telemt-3.5
 EB="${EB:-$HOME/entware-build}"
 SR="$EB/sysroot"
 L="$SR/usr/mipsel-linux-gnu/lib"
+PREFLIGHT_FILE="$(pwd)/tools/telemt_mipsle_ipk_preflight.py"
 TARGET=mipsel-unknown-linux-gnu
 
 mkdir -p "$EB"; cd "$EB"
@@ -50,25 +51,55 @@ tar xzf libpthread_2.27-12_mipsel-3.4.ipk -C libpt && tar xzf libpt/data.tar.gz 
 tar xzf librt_2.27-12_mipsel-3.4.ipk -C librt && tar xzf librt/data.tar.gz -C librt
 for d in libc2 libgcc2 libpt librt; do cp -a "$d/opt/lib/." "$L/"; done
 # glibc 2.24-era startup objects (2.39-era ones poison GLIBC_2.34 into .gnu.version_r)
+# These old crt objects have zero COP1 instructions (verified separately), but
+# their hardfloat attributes poison even a softfloat application. Fail closed
+# if the underlying code changes; strip metadata ONLY on isolated copies.
 for c in crt1.o Scrt1.o crti.o crtn.o libc_nonshared.a; do
-  mipsel-linux-gnu-objcopy --remove-section .MIPS.abiflags root24/usr/mipsel-linux-gnu/lib/$c "$L/$c" 2>/dev/null \
-    || cp root24/usr/mipsel-linux-gnu/lib/$c "$L/$c"
+  src="root24/usr/mipsel-linux-gnu/lib/$c"
+  if mipsel-linux-gnu-objdump -dr "$src" |
+      grep -iE '(^|[[:space:]])(mfc1|mtc1|lwc1|swc1|ldc1|sdc1|cvt\.[sd]|add\.[sd])([[:space:]]|$)'; then
+    echo "::error::glibc startup object $c contains FPU instructions"; exit 1
+  fi
+  mipsel-linux-gnu-objcopy --remove-section .MIPS.abiflags \
+    --remove-section .gnu.attributes "$src" "$L/$c"
 done
 printf 'GROUP ( libc.so.6 libc_nonshared.a AS_NEEDED ( ld.so.1 ) )\n' > "$L/libc.so"
 ln -sf libm.so.6 "$L/libm.so"; ln -sf libpthread.so.0 "$L/libpthread.so"
 ln -sf librt.so.1 "$L/librt.so"; ln -sf libdl.so.2 "$L/libdl.so"
 ln -sf libutil.so.1 "$L/libutil.so"; ln -sf libresolv.so.2 "$L/libresolv.so"
+# Debian GCC crtbegin/crtend files also have hardfloat attributes by default.
+# Their no-FPU copies must be used by -B before the GCC built-in search path.
+GCC=$(command -v mipsel-linux-gnu-gcc || command -v mipsel-linux-gnu-gcc-12)
+GCC_LIBDIR=$(dirname "$("$GCC" -print-libgcc-file-name)")
+for c in crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o; do
+  test -f "$GCC_LIBDIR/$c" || continue
+  if mipsel-linux-gnu-objdump -dr "$GCC_LIBDIR/$c" |
+      grep -iE '(^|[[:space:]])(mfc1|mtc1|lwc1|swc1|ldc1|sdc1|cvt\.[sd]|add\.[sd])([[:space:]]|$)'; then
+    echo "::error::GCC startup object $c contains FPU instructions"; exit 1
+  fi
+  mipsel-linux-gnu-objcopy --remove-section .MIPS.abiflags \
+    --remove-section .gnu.attributes "$GCC_LIBDIR/$c" "$L/$c"
+done
 echo "sysroot members: $(ls "$L" | wc -l)"
 
 echo "===== 3) compiler/linker wrappers ====="
 GCC=$(command -v mipsel-linux-gnu-gcc || command -v mipsel-linux-gnu-gcc-12)
 [ -n "$GCC" ] || { echo "no mipsel cross gcc found"; exit 1; }
+# Host Debian cross-glibc has only o32_hard availability stubs.
+# This research-only alias supplies __stub_* feature macros, not libc ABI
+# declarations, from the *same installed headers*. It is NOT a substitute
+# for the genuine softfloat glibc development sysroot.
+test -f /usr/mipsel-linux-gnu/include/gnu/stubs-o32_hard.h || {
+  echo "::error::cross-glibc stub header missing"; exit 1;
+}
+mkdir -p "$EB/compat-headers/gnu"
+cat > "$EB/compat-headers/gnu/stubs-o32_soft.h" <<'STUB'
+/* Research-only selection of libc __stub_* availability macros. */
+#include <gnu/stubs-o32_hard.h>
+STUB
 cat > "$EB/mipsel-entware-cc" <<EOF
 #!/bin/sh
-# No -msoft-float: distro 2.39 headers lack gnu/stubs-o32_soft.h. The C sources
-# compiled (ring/aws-lc) contain no FP math, so no cop1 is emitted; the
-# FP-instruction census gate in step 6 proves it.
-exec $GCC "\$@"
+exec $GCC -msoft-float -I$EB/compat-headers "\$@"
 EOF
 cat > "$EB/mipsel-entware-link-gcc" <<EOF
 #!/bin/sh
@@ -147,13 +178,17 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
     return strtol(nptr, endptr, base);
 }
 EOF
-mipsel-linux-gnu-gcc -fPIC -c "$EB/shim/shim.c" -o "$EB/shim/shim.o"
+"$EB/mipsel-entware-cc" -fPIC -c "$EB/shim/shim.c" -o "$EB/shim/shim.o"
+mipsel-linux-gnu-readelf -A "$EB/shim/shim.o" | grep -qF 'FP ABI: Soft float' || {
+  echo "::error::glibc-compat shim is not softfloat"; exit 1;
+}
 # NOTE: link shim.o as an OBJECT, not an archive — archives positioned before
 # the referencing objects are not pulled, leaving the refs unresolved.
 export RUST_LIBC_UNSTABLE_GNU_TIME_BITS=32
 export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=mips32r2 -C target-feature=+soft-float -Aunexpected_cfgs -C link-arg=$EB/shim/shim.o"
 export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER="$EB/mipsel-entware-link-gcc"
 export CC_mipsel_unknown_linux_gnu="$EB/mipsel-entware-cc"
+export CFLAGS_mipsel_unknown_linux_gnu="-msoft-float -I$EB/compat-headers"
 export CARGO_BUILD_JOBS=2
 # libc's build script does not declare rerun-if-env-changed for the time-bits
 # env var; force a rerun so time32 ABI actually takes effect.
@@ -183,8 +218,16 @@ FP='\bmfc1\b|\bmtc1\b|\bldc1\b|\bsdc1\b|\blwc1\b|\bswc1\b|\bcvt\.[sd]\.|\bdiv\.[
 FP_COUNT=$(mipsel-linux-gnu-objdump -d "$BIN" | grep -icE "$FP" || true)
 echo "FPU instructions: $FP_COUNT"
 [ "${FP_COUNT:-0}" -eq 0 ] || { echo "::error::FP_GATE: FAIL (FPU instructions on FPU-less MT7621)"; exit 1; }
-ABIFLAGS=$(readelf -n "$BIN" | grep -c 'MIPS ABI Flags' || true)
-echo "abiflags sections: $ABIFLAGS (0 = legacy presentation, same as Entware runtime libs)"
+# Earlier readelf -n incorrectly reported 0 flags, although QEMU rejects
+# PT_MIPS_ABIFLAGS.fp_abi=5. Check both real executable ABI and GNU attrs.
+ABIDUMP=$(mipsel-linux-gnu-readelf -A "$BIN")
+for required in 'Tag_GNU_MIPS_ABI_FP: Soft float' 'FP ABI: Soft float' 'CPR1 size: 0'; do
+  if ! grep -qF "$required" <<<"$ABIDUMP"; then
+    echo "::error::FP_ABI_GATE: FAIL missing $required"; exit 1
+  fi
+done
+python3 "$PREFLIGHT_FILE" --kind core --file "$BIN" > "$EB/core-elf-preflight.json"
+echo "FP_ABI_GATE: PASS (real PT_MIPS_ABIFLAGS=3 + GNU softfloat)"
 readelf -V "$BIN" | grep -q 'GLIBC_2.34' && { echo "::error::stale GLIBC_2.34 ref"; exit 1; } || true
 echo -n "binary sha256: "; sha256sum "$BIN"
 echo "CORE_ENTWARE_ABI: PASS (static gates; QEMU_RUNTIME=NOT_TESTED)"

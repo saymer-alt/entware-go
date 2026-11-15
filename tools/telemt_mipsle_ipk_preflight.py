@@ -133,11 +133,16 @@ def elf_info(binary: bytes) -> dict:
         raise AuditError("invalid ELF program header table")
     interp = None
     dynamic = False
+    fp_abis = []
     for n in range(phnum):
         at = phoff + n * phentsize
         p_type, p_offset, _, _, p_filesz = struct.unpack_from("<IIIII", binary, at)
         if p_offset + p_filesz > len(binary):
             raise AuditError("ELF segment outside file")
+        if p_type == 0x70000003:  # PT_MIPS_ABIFLAGS
+            if p_filesz != 24:
+                raise AuditError("malformed PT_MIPS_ABIFLAGS")
+            fp_abis.append(binary[p_offset + 7])
         if p_type == 2:
             dynamic = True
         if p_type == 3:
@@ -145,7 +150,8 @@ def elf_info(binary: bytes) -> dict:
             interp = s.decode("ascii", "replace")
     return {"elf_class": "ELF32", "endianness": "little", "machine": "MIPS", "elf_type": e_type,
             "mips_arch_flag": f"0x{flags & 0xf0000000:08x}", "interpreter": interp,
-            "dynamic_segment": dynamic, "size_bytes": len(binary)}
+            "dynamic_segment": dynamic, "mips_fp_abi": fp_abis[0] if len(fp_abis) == 1 else None,
+            "mips_abi_segments": len(fp_abis), "size_bytes": len(binary)}
 
 
 def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
@@ -190,10 +196,12 @@ def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
             raise AuditError("expected dynamically linked TeleMT core, got static ELF")
         if info["interpreter"] != ENTWARE_INTERP:
             raise AuditError(f"expected Entware interpreter {ENTWARE_INTERP}, got {info['interpreter']}")
+        if info["mips_abi_segments"] != 1 or info["mips_fp_abi"] != 3:
+            raise AuditError("Core MIPS FP ABI is not Entware softfloat (PT_MIPS_ABIFLAGS=3 required)")
     output["checks"]["elf"] = info
     output["checks"]["arch"] = "PASS: ELF32 MIPS little-endian"
     if kind == "core":
-        output["checks"]["entware_abi"] = f"PASS: dynamic, interpreter {ENTWARE_INTERP} (glibc symbol versions are gated separately via readelf -V)"
+        output["checks"]["entware_abi"] = f"PASS: dynamic, MIPS softfloat fp_abi=3, interpreter {ENTWARE_INTERP} (glibc versions separately gated via readelf -V)"
     output["checks"]["packaging"] = "PASS: control and payload" if is_ipk else "NOT_TESTED: raw ELF"
     return output
 

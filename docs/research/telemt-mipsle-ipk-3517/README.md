@@ -1,4 +1,15 @@
-# TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental, QEMU-ready)
+# TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental)
+
+> **15.11.2026: prior Core CI ABI PASS is a proven FALSE POSITIVE.** Under
+> actual QEMU User Mode the previous hardfloat Core (FP ABI 5) fails against
+> Entware's softfloat loader (FP ABI 3). The recipe here is a **new research
+> candidate**, not yet a successful TeleMT Core runtime. We now compile
+> C/shim with -msoft-float, use audited FPU-free crt copies, and reject
+> non-softfloat ABI before IPK publication. The Debian glibc __stub_ header
+> alias is research-only; a native Entware cross-glibc dev sysroot remains
+> preferable. Panel Lite RC4 CLI is independently QEMU verified.
+> Do not merge/release/deploy before real new Core smoke passes. Details:
+> [dependent PR #45](https://github.com/saymer-alt/entware-go/pull/45).
 
 Продолжение Issue #37 после PR #43 (compat-слой atomic64): превращаем два успешно
 кросс-скомпилированных бинарника в **два отдельных экспериментальных IPK**, ABI-совместимых
