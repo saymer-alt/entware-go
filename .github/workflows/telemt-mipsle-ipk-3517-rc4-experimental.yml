@@ -11,6 +11,7 @@ on:
       - .github/workflows/telemt-mipsle-ipk-3517-rc4-experimental.yml
       - docs/research/telemt-mipsle-ipk-3517/**
       - tools/telemt_mipsle_ipk_preflight.py
+      - tools/tests/test_telemt_mipsle_time64_shim_contract.py
   workflow_dispatch:
 
 permissions:
@@ -39,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin gh-action-build
-          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|\.github/workflows/telemt-mipsle-ipk-3517-rc4-experimental\.yml)'
+          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|tools/tests/test_telemt_mipsle_time64_shim_contract\.py|\.github/workflows/telemt-mipsle-ipk-3517-rc4-experimental\.yml)'
           changed=$(git diff --name-only origin/gh-action-build...HEAD)
           echo "$changed"
           if echo "$changed" | grep -qvE "$allowed"; then
@@ -51,6 +52,11 @@ jobs:
             exit 1
           fi
           echo "BOUNDARY_GUARD: PASS (research-scope-only changes)"
+
+      - name: Regression tests for MIPS O32 time64 shim (host-only)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/tests -p 'test_telemt_mipsle_time64_shim_contract.py' -v
 
   core-ipk:
     name: Core 3.5.17 Entware build, ABI gate, IPK
