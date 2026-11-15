@@ -144,9 +144,22 @@ cat > "$EB/shim/shim.c" <<'EOF'
 /* glibc 2.39 32-bit time64 struct timespec: { i64 sec @0, i32 nsec @8, pad } */
 struct ts64 { long long tv_sec; long tv_nsec; };
 
+/* CRITICAL: the distro headers may redirect clock_gettime/nanosleep/fcntl
+ * into our own __*_time64 definitions. That creates silent infinite recursion
+ * (confirmed in production ELF disassembly and QEMU stack overflow).
+ * Explicit assembler aliases force real Entware glibc-2.27 time32 symbols.
+ * Unlike changing ELF bytes, this preserves the generated machine-code ABI.
+ */
+extern int entware_clock_gettime32(clockid_t, struct timespec *) __asm__("clock_gettime");
+extern int entware_nanosleep32(const struct timespec *, struct timespec *) __asm__("nanosleep");
+extern int entware_fcntl32(int, int, ...) __asm__("fcntl");
+extern int entware_ioctl32(int, unsigned long, ...) __asm__("ioctl");
+extern int entware_stat32(const char *, struct stat *) __asm__("stat");
+extern long entware_strtol32(const char *, char **, int) __asm__("strtol");
+
 int __clock_gettime64(clockid_t clk, struct ts64 *tp) {
     struct timespec ts;
-    int r = clock_gettime(clk, &ts);
+    int r = entware_clock_gettime32(clk, &ts);
     if (r == 0) { tp->tv_sec = ts.tv_sec; tp->tv_nsec = ts.tv_nsec; }
     return r;
 }
@@ -155,33 +168,42 @@ int __nanosleep64(const struct ts64 *req, struct ts64 *rem) {
     struct timespec rq, rm;
     rq.tv_sec = (time_t)req->tv_sec;
     rq.tv_nsec = (long)req->tv_nsec;
-    int r = nanosleep(&rq, &rm);
+    int r = entware_nanosleep32(&rq, &rm);
     if (rem != 0 && r != 0) { rem->tv_sec = rm.tv_sec; rem->tv_nsec = rm.tv_nsec; }
     return r;
 }
 
 int __fcntl_time64(int fd, int cmd, long arg) {
-    return fcntl(fd, cmd, arg);
+    return entware_fcntl32(fd, cmd, arg);
 }
 
 int __ioctl_time64(int fd, unsigned long req, long arg) {
-    return ioctl(fd, req, arg);
+    return entware_ioctl32(fd, req, arg);
 }
 
 /* aws-lc vm_ube_detect.c: caller checks only the return value */
 int __stat64_time64(const char *path, void *buf) {
     struct stat st;
-    return stat(path, &st);
+    return entware_stat32(path, &st);
 }
 
 long __isoc23_strtol(const char *nptr, char **endptr, int base) {
-    return strtol(nptr, endptr, base);
+    return entware_strtol32(nptr, endptr, base);
 }
 EOF
 "$EB/mipsel-entware-cc" -fPIC -c "$EB/shim/shim.c" -o "$EB/shim/shim.o"
 mipsel-linux-gnu-readelf -A "$EB/shim/shim.o" | grep -qF 'FP ABI: Soft float' || {
   echo "::error::glibc-compat shim is not softfloat"; exit 1;
 }
+# Fail early if a future header/toolchain change accidentally redirects
+# time32 libc calls into our own shim symbols again.
+SHIM_RELOCS=$(mipsel-linux-gnu-readelf -r "$EB/shim/shim.o")
+for external in clock_gettime nanosleep fcntl ioctl stat strtol; do
+  if ! grep -Eq "[[:space:]]${external}([[:space:]]|$)" <<<"$SHIM_RELOCS"; then
+    echo "::error::shim missing external time32/libc relocation: $external"; exit 1
+  fi
+done
+echo "SHIM_TIME32_RELOCATIONS: PASS (all six external glibc functions)"
 # NOTE: link shim.o as an OBJECT, not an archive — archives positioned before
 # the referencing objects are not pulled, leaving the refs unresolved.
 export RUST_LIBC_UNSTABLE_GNU_TIME_BITS=32
@@ -228,6 +250,15 @@ for required in 'Tag_GNU_MIPS_ABI_FP: Soft float' 'FP ABI: Soft float' 'CPR1 siz
 done
 python3 "$PREFLIGHT_FILE" --kind core --file "$BIN" > "$EB/core-elf-preflight.json"
 echo "FP_ABI_GATE: PASS (real PT_MIPS_ABIFLAGS=3 + GNU softfloat)"
+# Prove no shim wrapper directly branches to itself. This caught the genuine
+# Core stack overflow even though all previous static ABI checks passed.
+for sym in __clock_gettime64 __nanosleep64 __fcntl_time64 __ioctl_time64 __stat64_time64; do
+  if mipsel-linux-gnu-objdump -d --disassemble="$sym" "$BIN" |
+       grep -Eq "[[:space:]]bal[[:space:]].*<$sym>"; then
+    echo "::error::SHIM_RECURSION_GATE: FAIL self-call in $sym"; exit 1
+  fi
+done
+echo "SHIM_RECURSION_GATE: PASS (no direct self-branches)"
 readelf -V "$BIN" | grep -q 'GLIBC_2.34' && { echo "::error::stale GLIBC_2.34 ref"; exit 1; } || true
 echo -n "binary sha256: "; sha256sum "$BIN"
 echo "CORE_ENTWARE_ABI: PASS (static gates; QEMU_RUNTIME=NOT_TESTED)"

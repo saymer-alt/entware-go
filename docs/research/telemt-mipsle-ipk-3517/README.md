@@ -1,5 +1,18 @@
 # TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental)
 
+> **15.11.2026 — additional runtime blocker root cause verified.** The correctly
+> softfloat Core from GitHub Actions run 43720897639 still aborted on QEMU
+> with `thread 'main' has overflowed its stack`. Its disassembly showed
+> direct self-recursion in `__clock_gettime64`, `__nanosleep64`,
+> `__fcntl_time64`, `__ioctl_time64`, and `__stat64_time64`. The new
+> C shim forces external legacy glibc-2.27 symbols through assembler aliases
+> and checks relocations plus linked-ELF disassembly. An isolated softfloat
+> MIPSLE C probe using the same aliases was executed with real Entware
+> glibc 2.27 and exited 0; **the new TeleMT Core has NOT yet been tested**.
+> This is research-only; do not merge/release/install until Core QEMU runtime
+> and separate opkg/MT7621 checks are accepted.
+>
+
 > **15.11.2026: prior Core CI ABI PASS is a proven FALSE POSITIVE.** Under
 > actual QEMU User Mode the previous hardfloat Core (FP ABI 5) fails against
 > Entware's softfloat loader (FP ABI 3). The recipe here is a **new research
