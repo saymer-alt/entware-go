@@ -55,7 +55,7 @@ def parse_command(argv: list[str]) -> tuple[Path, Path, list[str]]:
                      "-fno-unwind-tables", "-fno-lto"):
             opts.append(arg)
         elif arg.startswith(("-O", "-g")) and re.fullmatch(
-                r"-(?:O[0-3sSz]|g(?:[0-3]|gdb[0-3])?)", arg):
+                r"-(?:O[0-3sSz]|g(?:[0-3]|gdb[0-3]|dwarf-[2-5])?)", arg):
             opts.append(arg)
         elif arg.startswith(("-Wl,", "-Wa,", "-Wp,", "-Wl=", "-Wa=", "-Wp=")):
             raise ProbeError(f"unsupported compiler-driver pass-through {arg!r}")
@@ -148,12 +148,45 @@ def assemble(root: Path, src: Path, dst: Path, opts: list[str]) -> dict:
     return {"status": "SOFTFLOAT_C_BRIDGE_PASS", "kind": src.suffix, "fp_abi": 3}
 
 
+def detect_compiler_family(root: Path, argv: list[str]) -> int:
+    """cc-rs '-E path.c' family detection via the *real* Entware GCC8 cc1.
+
+    GCC-family recognition must not silently use a host x86 or distro hardfloat
+    compiler. This mode is preprocessing only: no object/library can be emitted.
+    """
+    if len(argv) != 2 or argv[0] != "-E":
+        raise ProbeError("unsupported preprocessor invocation")
+    source = Path(argv[1]).resolve()
+    if not source.is_file() or source.suffix != ".c" or source.stat().st_size > 100_000:
+        raise ProbeError("unsafe compiler-family probe source")
+    check_root(root)
+    qemu, unshare = shutil.which("qemu-mipsel"), shutil.which("unshare")
+    if not qemu or not unshare:
+        raise ProbeError("QEMU isolation unavailable for -E probe")
+    cmd = [unshare, "--user", "--map-root-user", "--net", "--",
+           qemu, "-cpu", "24Kc", "-L", str(root),
+           str(root / CC1), "-E", "-quiet", "-msoft-float",
+           "-march=mips32r2", "-isystem", str(root / "opt/include"), str(source)]
+    result = subprocess.run(cmd, timeout=16, stdin=subprocess.DEVNULL,
+                            capture_output=True, check=False,
+                            env={"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": "/tmp"})
+    if result.returncode:
+        raise ProbeError(f"compiler family probe failed: exit={result.returncode}; "
+                         f"stderr={result.stderr[:400]!r}")
+    if len(result.stdout) > 1_000_000:
+        raise ProbeError("oversized compiler-family probe output")
+    sys.stdout.buffer.write(result.stdout)
+    return 0
+
+
 def main() -> int:
     try:
         root_name = os.environ.get("ENTWARE_MIPSEL_GUESTROOT", "")
         if not root_name:
             raise ProbeError("ENTWARE_MIPSEL_GUESTROOT is required; never auto-download inside cc-rs")
         root = Path(root_name).resolve(strict=True)
+        if sys.argv[1:2] == ["-E"]:
+            return detect_compiler_family(root, sys.argv[1:])
         source, output, args = parse_command(sys.argv[1:])
         evidence = assemble(root, source, output, args)
         if os.environ.get("ENTWARE_CC_VERBOSE") == "1":

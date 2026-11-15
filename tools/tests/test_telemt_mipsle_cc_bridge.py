@@ -1,6 +1,8 @@
 """Fast host-only tests: fail closed on unsafe cc-rs flags and invalid object output."""
 from __future__ import annotations
 from pathlib import Path
+import io
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -126,6 +128,72 @@ class BridgeTests(unittest.TestCase):
         with patch.object(bridge.subprocess, "run",
                           return_value=subprocess.CompletedProcess([], 0, b"", b"")):
             bridge.exec_bounded(["test"], 3)
+
+
+
+class CargoRealCcTests(unittest.TestCase):
+    """Regress the actual cc 1.4.5 calls observed in a pinned Cargo host probe."""
+
+    def test_ccrs_dwarf4_gcc8_accepted(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "ring.c"
+            src.write_text("int value;")
+            out = Path(td) / "ring.o"
+            args = ["-O0", "-ffunction-sections", "-fdata-sections", "-fPIC",
+                    "-g", "-gdwarf-4", "-fno-omit-frame-pointer", "-Wall",
+                    "-Wextra", "-o", str(out), "-c", str(src)]
+            _, _, flags = bridge.parse_command(args)
+            self.assertIn("-gdwarf-4", flags)
+
+    def test_unsupported_dwarf_flag_still_denied(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "ring.c"
+            src.write_text("int value;")
+            with self.assertRaisesRegex(bridge.ProbeError, "unsupported"):
+                bridge.parse_command(["-c", str(src), "-o",
+                                      str(Path(td) / "ring.o"), "-gdwarf-99"])
+
+    def test_ccrs_family_probe_uses_guest_gcc8_and_outputs_stdout(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "root"
+            root.mkdir()
+            source = Path(td) / "detect_compiler_family.c"
+            source.write_text("#ifdef __GNUC__\n__GNUC__\n#endif\n")
+            result = subprocess.CompletedProcess([], 0, b"__GNUC__ = 8\n", b"")
+            out = io.BytesIO()
+            with patch.object(bridge, "check_root"), \
+                 patch.object(bridge.shutil, "which",
+                              side_effect=lambda tool: "/usr/bin/" + tool), \
+                 patch.object(bridge.subprocess, "run", return_value=result) as call, \
+                 patch.object(bridge.sys, "stdout", SimpleNamespace(buffer=out)):
+                self.assertEqual(bridge.detect_compiler_family(root, ["-E", str(source)]), 0)
+                self.assertEqual(out.getvalue(), b"__GNUC__ = 8\n")
+                argv = call.call_args.args[0]
+                self.assertEqual(argv[:5],
+                                 ["/usr/bin/unshare", "--user", "--map-root-user",
+                                  "--net", "--"])
+                self.assertIn(str(root / bridge.CC1), argv)
+
+    def test_failed_family_probe_never_returns_dummy_compiler(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "detect_compiler_family.c"
+            src.write_text("int x;")
+            root = Path(td) / "root"
+            root.mkdir()
+            with patch.object(bridge, "check_root"), \
+                 patch.object(bridge.shutil, "which",
+                              side_effect=lambda tool: "/usr/bin/" + tool), \
+                 patch.object(bridge.subprocess, "run",
+                              return_value=subprocess.CompletedProcess([], 1, b"", b"failed")):
+                with self.assertRaisesRegex(bridge.ProbeError, "family probe failed"):
+                    bridge.detect_compiler_family(root, ["-E", str(src)])
+
+    def test_family_probe_rejects_extra_arguments(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(bridge.ProbeError, "unsupported preprocessor"):
+                bridge.detect_compiler_family(Path(td), ["-E", "file.c", "-o", "file.i"])
+
+
 
 
 if __name__ == "__main__":
