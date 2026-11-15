@@ -1,19 +1,32 @@
-# TeleMT MIPSLE: дешёвый QEMU User Mode smoke (без готового эмулятора Keenetic)
+# TeleMT MIPSLE — реальный QEMU User Mode smoke, 15.11.2026
 
-**Статус: подготовленный инструмент; реальные MIPSLE IPK здесь не запускались.**
-Связан с [PR #44](https://github.com/saymer-alt/entware-go/pull/44) и Issue #37.
-Не путать с [Keenetic Ported MT7621 E2E](https://github.com/saymer-alt/router-emulator/issues/73).
+Зависимый [Draft PR #45](https://github.com/saymer-alt/entware-go/pull/45) на research-ветке [PR #44](https://github.com/saymer-alt/entware-go/pull/44). Это **не** целиком эмулятор KeeneticOS, не `opkg install` и не аппаратная приёмка.
 
-## Зачем и что уже сделано
+## Фактически выполнено (без Z AI)
 
-Чтобы не расходовать Z AI на повторную Rust/LTO-компиляцию, проверить именно **готовые** IPK из GitHub Actions run 43624729371:
-- `telemt_3.5.17-1_mipsel-3.4.ipk`, SHA256 `a04f754375056439c3d5584bf7d868eb547f844c4779e3076bfbdd84129d63fa`;
-- `telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk`, SHA256 `0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68`.
+- В изолированном Debian x86_64 установлен `qemu-mipsel 7.2.22`. Процессы запускались с `unshare --user --map-root-user --net` (внешняя сеть гостю недоступна).
+- Получены исходные GitHub Actions ZIP из [run 43624729371](https://github.com/saymer-alt/entware-go/actions/runs/43624729371); проверены SHA-256 обоих IPK.
+- Из официального `bin.entware.net/mipselsf-k3.4` загружены и проверены SHA-256 `libc_2.27-12`, `libgcc_8.4.0-12`, `libpthread_2.27-12`, `librt_2.27-12`. Библиотеки извлечены в отдельный одноразовый `guestroot/opt/lib` (в том числе `ld.so.1`).
+- **Panel Lite RC4: PASS — `--version`** с `qemu-mipsel -cpu 24Kc -L guestroot guestroot/opt/bin/telemt-panel --version`: `EXIT 0`, ответ `telemt-panel 1.0.0-rc.4 (lite: memory)`. Другие функции панели не проверялись.
+- **Core 3.5.17: FAIL** — при аналогичном запуске штатного ELF `EXIT 1: qemu: Can't find a matching FPU mode`. Подтверждено для CPU 24Kc/24Kf/74Kf. `readelf -A` доказал **PT_MIPS_ABIFLAGS.fp_abi=5**, cpr1_size=1, `Hard float (32-bit CPU, Any FPU)` у Core, а у *реального* загрузчика Entware 2.27 **fp_abi=3, cpr1_size=0**, Soft float. Ранее ошибочная документация утверждала отсутствие секции `.MIPS.abiflags`: на самом деле она есть в обоих ELF.
+- **Диагностика, не готовый фикс:** только в временной копии Core ELF изменены 2 байта `PT_MIPS_ABIFLAGS` для анализа (не в исходном IPK). QEMU прошёл прежний FPU-gate, затем Rust завершился `EXIT 134`, `thread 'main' has overflowed its stack`. Увеличение гостевого стека до 64 МиБ не устранило сбой. Диагностическая копия содержит неконсистентные `.gnu.attributes` и **не пригодна для публикации/использования**.
 
-Новый `tools/telemt_mipsle_qemu_user_smoke.py` **по умолчанию не исполняет** TeleMT.
-Он сверяет pinned SHA, использует уже существующий `telemt_mipsle_ipk_preflight.py` для проверки ELF/архитектуры/control и отклоняет дополнительные payload-пути.
+Таблица доказательств:
 
-### Шаг 1: только offline static (Python 3, без сети)
+| Гейт | Статус |
+|---|---|
+| GitHub IPK SHA-256, Entware runtime IPK SHA-256 | **PASS** |
+| Panel Lite CLI `--version` под QEMU User Mode | **PASS** |
+| Core FP ABI compatibility / запуск `--version` | **FAIL** |
+| QEMU User Mode запуск Core после пересборки с правильным ABI | **NOT_TESTED** |
+| KeeneticOS MT7621 / native `opkg` / service restart / persistence | **NOT_TESTED** |
+| Real KN-1913 / Telegram network / RAM 256MiB / heavy crypto | **NOT_TESTED** |
+
+## Fail-closed проверочный скрипт
+
+`tools/telemt_mipsle_qemu_user_smoke.py` теперь отказывается принимать Core, если `PT_MIPS_ABIFLAGS.fp_abi != 3`. Раньше сценарий напрямую исполнял гостевой загрузчик и мог **пропустить** сочетание несовместимых FP ABI процесса и интерпретатора. Теперь скрипт исполняет именно оригинальный guest ELF с `-L disposable-root`, чтобы QEMU проверил его настоящий `PT_INTERP`; прежний "direct loader" путь удалён. Опциональный запуск требует `unshare`, `qemu-mipsel`, предварительно скачанные доверенные библиотеки Entware, и явно заданный `--run-core-cli`.
+
+До исправления Core ниже ожидается **BLOCKED / FP ABI 5**, а не успешный запуск:
 
 ```bash
 python3 tools/telemt_mipsle_qemu_user_smoke.py \
@@ -21,31 +34,6 @@ python3 tools/telemt_mipsle_qemu_user_smoke.py \
   --panel-ipk /path/telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
 ```
 
-При совпадении входных IPK выводит `STATIC_PREFLIGHT_PASS`; `QEMU_USER_CORE_CLI`, `QEMU_SYSTEM_MT7621`, `OPKG_INSTALL_ROLLBACK`, `PHYSICAL_DEVICE` остаются **NOT_TESTED**.
+Новый корректный Core потребует отдельной SHA-256 фиксации и review. **Не менять бинарные метаданные постфактум ради ложного PASS**: нужно пересобрать C/Rust с согласованным настоящим softfloat toolchain/sysroot, проверить отсутствие FP-инструкций, совпадение `.MIPS.abiflags` и `.gnu.attributes`, затем отдельно исследовать вторую ошибку `stack overflow`. Это **два отдельных блокера**.
 
-### Шаг 2: опциональный ограниченный qemu-user запуск Core `--version`
-
-Нужен Linux x86_64 с `qemu-mipsel` (`qemu-user`) и `unshare` из util-linux, **а также локально распакованный и отдельно проверенный** каталог динамических библиотек Entware **mipsel-3.4/glibc 2.27** (loader `ld.so.1`, libc, libgcc_s, pthread, rt, m, dl). Он может быть подготовлен в research-окружении PR #44 по pinned SHA пакетов. **Не использовать живой `/opt` роутера.**
-
-```bash
-python3 tools/telemt_mipsle_qemu_user_smoke.py \
-  --core-ipk /path/telemt_3.5.17-1_mipsel-3.4.ipk \
-  --run-core-cli \
-  --entware-lib-dir "$HOME/entware-build/sysroot/usr/mipsel-linux-gnu/lib"
-```
-
-Режим `--run-core-cli` только по явному флагу: извлекает проверенный ELF в одноразовый каталог, запускает **гостевой** `ld.so.1` под `qemu-mipsel` с `--library-path` на каталоге Entware, выполняет `--version`; `unshare --user --map-root-user --net` отключает сеть, а 12-секундный timeout не позволяет зависнуть навсегда. Нет sudo, опkg и изменения системных файлов. Для полного filesystem sandbox этот инструмент **не предназначен**: используйте отдельную тестовую VM/WSL.
-
-Если user namespaces отключены, qemu отсутствует, loader/libs не совпадают, случился timeout, nonzero exit или загрузчик падает — статус **BLOCKED**; запрещено ставить PASS или убирать изоляцию. Не нужно запускать полную Rust-компиляцию заново. Сетевые ключи/конфигурации не передаются.
-
-**Ограничения PASS:** `QEMU_USER_CLI_SMOKE_PASS` доказывает только выполнение версии CLI через напрямую вызванный гостевой загрузчик. Это **не** доказывает путь PT_INTERP в реальной гостевой ОС, фактическую установку opkg, корректность glibc shim под рабочей нагрузкой, сеть Telegram, crypto, lock-fallback AtomicU64, RAM 256 MB, физический KN-1913. Panel Lite пока только статически проверяется, сервер не запускается.
-
-### Дешёвые unit-тесты
-
-```bash
-python3 -I -m unittest discover -s tools/tests -p 'test_telemt_mipsle_qemu_user_smoke.py' -v
-```
-
-Локально при подготовке: 10/10 PASS (checksum, path escape, unexpected package payload, absent QEMU, offline process isolation, nonzero exit). Реальные MIPSLE ELF/IPK **не доступны в этой локальной среде**, поэтому интеграция с ними NOT_TESTED. Никаких SDK/LTO/QEMU-system/публикаций/живых устройств в этом PR нет.
-
-**GitHub PR — отдельная зависимая ветка от PR #44**; не мержить самостоятельно в `gh-action-build` и не запускать release workflow. Результаты реальных IPK должны фиксироваться отдельно с SHA/версиями libc/QEMU. После готовности полноценного эмулятора приоритет у настоящих MT7621/Entware/opkg испытаний.
+Офлайн-тесты скрипта: `python3 -I -m unittest discover -s tools/tests -p 'test_telemt_mipsle_qemu_user_smoke.py' -v`. Никакого запуска на роутере или публикации release/feed без отдельного согласия владельца.
