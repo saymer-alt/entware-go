@@ -111,6 +111,7 @@ class OfflineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
              patch.object(smoke.shutil, "which", side_effect=lambda n: "/usr/bin/" + n), \
              patch.object(smoke, "verify_lib_dir", return_value=(Path(td), Path(td) / "ld.so.1")), \
+             patch.object(smoke.shutil, "copyfile"), \
              patch.object(smoke.subprocess, "run", return_value=CompletedProcess([], 1, b"", b"failure")):
             with self.assertRaisesRegex(smoke.SmokeError, "exit=1"):
                 smoke.run_qemu_cli(b"mock-code", Path(td))
