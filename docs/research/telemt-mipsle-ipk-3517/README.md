@@ -1,5 +1,24 @@
 # TeleMT 3.5.17 + Panel Lite RC4 → Entware mipsel-3.4 IPK (experimental)
 
+> **15.11.2026 — verified runtime time64 layout defect, new candidate (not
+> accepted yet).** GitHub Actions [43726565495](https://github.com/saymer-alt/entware-go/actions/runs/43726565495)
+> completed 4/4 SUCCESS and emitted Core IPK SHA-256
+> `7c1c8b3486b075c357186e8ab5e427eb42b6d41fbc3a2fb6c1762ff4d714b131`.
+> Actual original ELF in isolated qemu-mipsel/Entware glibc 2.27
+> **passes** `healthcheck --mode=qemu-smoke-invalid` negative CLI
+> (exit 2). Tokio startup with an existing invalid TOML
+> **fails** with Rust `InvalidData("invalid timestamp")` and times out
+> (exit 124), NOT a runtime PASS. The source ELF disassembly shows the
+> old `__clock_gettime64` shim reading 12 bytes from the newer C header's
+> `struct timespec`, while legacy `clock_gettime` in Entware 2.27
+> writes the 8-byte MIPS O32 time32 layout. This branch now uses
+> **explicit** 8-byte legacy time32 / 16-byte Rust time64 structures with
+> compile-time size and field-offset assertions, including nanosleep
+> and a guarded 2038 overflow. A separate network-isolated QEMU
+> repro with actual Entware 2.27 glibc, time64 build headers and
+> 200 valid CLOCK_MONOTONIC/REALTIME calls plus nanosleep: PASS.
+> **Full Core runtime on this revision NOT_TESTED; no release/feed/physical router.**
+>
 > **15.11.2026 linker ordering follow-up.** Experimental run
 > [43725340519](https://github.com/saymer-alt/entware-go/actions/runs/43725340519)
 > blocked at link time (`shim.o: undefined reference to stat`), so no new

@@ -140,9 +140,22 @@ cat > "$EB/shim/shim.c" <<'EOF'
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <errno.h>
 
-/* glibc 2.39 32-bit time64 struct timespec: { i64 sec @0, i32 nsec @8, pad } */
-struct ts64 { long long tv_sec; long tv_nsec; };
+/* The BUILD headers (glibc 2.39) may use a 16-byte 64-bit timespec even
+ * though the LEGACY Entware glibc 2.27 clock_gettime/nanosleep symbols on
+ * MIPS O32 take an EIGHT-byte { int32 sec, int32 nsec } timespec.
+ * NEVER pass the build header's struct timespec to Entware's time32 libc.
+ * Rust std __clock_gettime64 uses a distinct 16-byte result structure.
+ */
+struct entware_timespec32 { int32_t tv_sec; int32_t tv_nsec; };
+struct ts64 { int64_t tv_sec; int32_t tv_nsec; int32_t _padding; };
+_Static_assert(sizeof(struct entware_timespec32) == 8, "MIPS O32 legacy timespec32 size");
+_Static_assert(offsetof(struct entware_timespec32, tv_nsec) == 4, "MIPS O32 legacy nsec offset");
+_Static_assert(sizeof(struct ts64) == 16, "Rust __timespec64 size");
+_Static_assert(offsetof(struct ts64, tv_nsec) == 8, "Rust __timespec64 nsec offset");
 
 /* CRITICAL: the distro headers may redirect clock_gettime/nanosleep/fcntl
  * into our own __*_time64 definitions. That creates silent infinite recursion
@@ -150,26 +163,37 @@ struct ts64 { long long tv_sec; long tv_nsec; };
  * Explicit assembler aliases force real Entware glibc-2.27 time32 symbols.
  * Unlike changing ELF bytes, this preserves the generated machine-code ABI.
  */
-extern int entware_clock_gettime32(clockid_t, struct timespec *) __asm__("clock_gettime");
-extern int entware_nanosleep32(const struct timespec *, struct timespec *) __asm__("nanosleep");
+extern int entware_clock_gettime32(clockid_t, struct entware_timespec32 *) __asm__("clock_gettime");
+extern int entware_nanosleep32(const struct entware_timespec32 *, struct entware_timespec32 *) __asm__("nanosleep");
 extern int entware_fcntl32(int, int, ...) __asm__("fcntl");
 extern int entware_ioctl32(int, unsigned long, ...) __asm__("ioctl");
 extern int entware_stat32(const char *, struct stat *) __asm__("stat");
 extern long entware_strtol32(const char *, char **, int) __asm__("strtol");
 
 int __clock_gettime64(clockid_t clk, struct ts64 *tp) {
-    struct timespec ts;
+    struct entware_timespec32 ts = {0, 0};
     int r = entware_clock_gettime32(clk, &ts);
-    if (r == 0) { tp->tv_sec = ts.tv_sec; tp->tv_nsec = ts.tv_nsec; }
+    if (r == 0) {
+        tp->tv_sec = (int64_t)ts.tv_sec;
+        tp->tv_nsec = ts.tv_nsec;
+        tp->_padding = 0;
+    }
     return r;
 }
 
 int __nanosleep64(const struct ts64 *req, struct ts64 *rem) {
-    struct timespec rq, rm;
-    rq.tv_sec = (time_t)req->tv_sec;
-    rq.tv_nsec = (long)req->tv_nsec;
-    int r = entware_nanosleep32(&rq, &rm);
-    if (rem != 0 && r != 0) { rem->tv_sec = rm.tv_sec; rem->tv_nsec = rm.tv_nsec; }
+    if (req->tv_sec < INT32_MIN || req->tv_sec > INT32_MAX) {
+        errno = EOVERFLOW; /* Entware 2.27 time_t cannot encode it. */
+        return -1;
+    }
+    struct entware_timespec32 rq = {(int32_t)req->tv_sec, req->tv_nsec};
+    struct entware_timespec32 rm = {0, 0};
+    int r = entware_nanosleep32(&rq, rem != 0 ? &rm : 0);
+    if (rem != 0 && r != 0) {
+        rem->tv_sec = (int64_t)rm.tv_sec;
+        rem->tv_nsec = rm.tv_nsec;
+        rem->_padding = 0;
+    }
     return r;
 }
 
