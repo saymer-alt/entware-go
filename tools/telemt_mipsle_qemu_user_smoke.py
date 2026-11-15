@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,26 @@ class SmokeError(RuntimeError):
     pass
 
 
+def mips_fp_abi(binary: bytes) -> int:
+    """Read ELF32 MIPS PT_MIPS_ABIFLAGS.fp_abi; 3 is softfloat."""
+    if len(binary) < 52 or binary[:6] != b"\x7fELF\x01\x01":
+        raise SmokeError("invalid ELF32 little-endian")
+    phoff = struct.unpack_from("<I", binary, 28)[0]
+    phentsize, phnum = struct.unpack_from("<HH", binary, 42)
+    if phentsize < 32 or phnum > 256 or phoff + phentsize * phnum > len(binary):
+        raise SmokeError("invalid ELF32 program header table")
+    matches = []
+    for index in range(phnum):
+        typ, offset, _, _, size = struct.unpack_from("<IIIII", binary, phoff + index * phentsize)
+        if typ == 0x70000003:  # PT_MIPS_ABIFLAGS
+            if size != 24 or offset + size > len(binary):
+                raise SmokeError("malformed PT_MIPS_ABIFLAGS")
+            matches.append(binary[offset + 7])
+    if len(matches) != 1:
+        raise SmokeError("expected exactly one PT_MIPS_ABIFLAGS segment")
+    return matches[0]
+
+
 def verify_ipk(path: Path, kind: str, expected_sha: str) -> tuple[dict, bytes]:
     if not re.fullmatch(r"[a-f0-9]{64}", expected_sha):
         raise SmokeError("expected SHA-256 must be 64 lowercase hex digits")
@@ -44,7 +65,13 @@ def verify_ipk(path: Path, kind: str, expected_sha: str) -> tuple[dict, bytes]:
     binary_path = "opt/bin/telemt" if kind == "core" else "opt/bin/telemt-panel"
     if set(payload) != {binary_path}:
         raise SmokeError(f"unexpected IPK payload paths (expected only {binary_path})")
-    return report, payload[binary_path]
+    binary = payload[binary_path]
+    if kind == "core":
+        fp_abi = mips_fp_abi(binary)
+        if fp_abi != 3:
+            raise SmokeError(f"Core FP ABI {fp_abi} != Entware softfloat 3")
+        report["checks"]["fp_abi"] = "PASS: MIPS softfloat (3)"
+    return report, binary
 
 
 def verify_lib_dir(lib_dir: Path) -> tuple[Path, Path]:
@@ -61,6 +88,8 @@ def verify_lib_dir(lib_dir: Path) -> tuple[Path, Path]:
             raise SmokeError(f"invalid MIPS ELF library: {name}") from exc
         if info["machine"] != "MIPS" or info["elf_class"] != "ELF32":
             raise SmokeError(f"wrong library architecture: {name}")
+    if mips_fp_abi((root / "ld.so.1").read_bytes()) != 3:
+        raise SmokeError("Entware loader is not softfloat FP ABI=3")
     return root, root / "ld.so.1"
 
 
@@ -69,37 +98,37 @@ def run_qemu_cli(core: bytes, lib_dir: Path, timeout_seconds: int = 12) -> dict:
     unshare = shutil.which("unshare")
     if not qemu or not unshare:
         raise SmokeError("QEMU_USER_BLOCKED: requires qemu-mipsel AND unshare (user+network namespaces)")
-    libs, loader = verify_lib_dir(lib_dir)
+    libs, _loader = verify_lib_dir(lib_dir)
     with tempfile.TemporaryDirectory(prefix="telemt-qemu-user-") as td:
-        binary = Path(td) / "telemt"
+        root = Path(td) / "guestroot"
+        bindir, libdir = root / "opt/bin", root / "opt/lib"
+        bindir.mkdir(parents=True)
+        libdir.mkdir(parents=True)
+        binary = bindir / "telemt"
         binary.write_bytes(core)
         binary.chmod(0o700)
-        # Direct loader invocation does not prove host PT_INTERP resolution.
-        cmd = [
-            unshare, "--user", "--map-root-user", "--net", "--",
-            qemu, str(loader), "--library-path", str(libs), str(binary), "--version",
-        ]
+        # Copy the vetted Entware libraries into a disposable guest prefix.
+        # Dereference symlinks verified to stay inside the trusted library dir.
+        for name in NEEDED_LIBS:
+            shutil.copyfile(libs / name, libdir / name)
+        # Execute the guest *ELF itself*, so QEMU validates the actual
+        # executable's PT_MIPS_ABIFLAGS against its PT_INTERP (PR #44 blocker).
+        cmd = [unshare, "--user", "--map-root-user", "--net", "--",
+               qemu, "-cpu", "24Kc", "-L", str(root), str(binary), "--version"]
         env = {"HOME": td, "TMPDIR": td, "PATH": "/usr/bin:/bin", "LANG": "C"}
         try:
-            p = subprocess.run(
-                cmd, cwd=td, env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=timeout_seconds, check=False,
-            )
+            p = subprocess.run(cmd, cwd=td, env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               timeout=timeout_seconds, check=False)
         except subprocess.TimeoutExpired as exc:
             raise SmokeError("QEMU_USER_BLOCKED: CLI test timed out (not a PASS)") from exc
         if p.returncode != 0:
-            # Do not emit potentially sensitive guest output.
-            raise SmokeError(f"QEMU_USER_BLOCKED: exit={p.returncode}; inspect local stderr privately")
-        return {
-            "status": "QEMU_USER_CLI_SMOKE_PASS", "exit_code": p.returncode,
-            "stdout_preview": p.stdout.decode("utf-8", "replace")[:300],
-            "limitations": [
-                "direct guest loader, not actual guest PT_INTERP resolution",
-                "no opkg/MT7621/crypto/network/physical-device acceptance",
-                "library provenance must be verified separately",
-            ],
-        }
+            raise SmokeError(f"QEMU_USER_BLOCKED: guest exit={p.returncode}; inspect local stderr privately")
+        return {"status": "QEMU_USER_CLI_SMOKE_PASS", "exit_code": p.returncode,
+                "stdout_preview": p.stdout.decode("utf-8", "replace")[:300],
+                "limitations": ["native guest ELF and actual PT_INTERP executed",
+                                "no opkg/MT7621/crypto/network/real-router acceptance",
+                                "library provenance must be verified separately"]}
 
 
 def main(argv: list[str] | None = None) -> int:
