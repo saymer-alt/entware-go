@@ -12,7 +12,11 @@ name: TeleMT MIPSLE getrandom-fallback experimental IPK (no release)
 
 on:
   pull_request:
-    branches: [gh-action-build]
+    # this research PR is stacked on the PR #44 research branch; once the PR
+    # base is the stacked research branch, the rc4 workflow (scoped to PRs
+    # against gh-action-build) no longer fires on it and THIS workflow is the
+    # (strictly stronger) isolation guard that covers the stacked delta
+    branches: [gh-action-build, research/telemt-mipsle-ipk-3517-20261114]
     paths:
       - .github/workflows/telemt-mipsle-ipk-3517-getfb-experimental.yml
       - docs/research/telemt-mipsle-ipk-3517/**
@@ -101,6 +105,9 @@ jobs:
         run: bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
         env:
           CARGO_BUILD_JOBS: '2'
+          # opt-in fork assembly; the default script path keeps the frozen
+          # PR #44 3.5.17-1 build byte-identical
+          TELEMT_GETFB: '1'
       - name: Entropy fallback gate (host tests + qemu-user target runs, fail-closed)
         run: bash docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh ~/entware-build
       - name: Package telemt_3.5.17-2fb1_mipsel-3.4.ipk
