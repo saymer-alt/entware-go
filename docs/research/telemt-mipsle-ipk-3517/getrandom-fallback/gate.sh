@@ -90,8 +90,17 @@ echo "===== GATE 3) fail-closed without entropy devices ====="
 # Sanity first: with devices present the fail-closed binary skips by design.
 "$QEMU" -L "$PREFIX" "$FC" | grep -q 'RS_FAIL_CLOSED_SKIPPED_DEVICE_PRESENT' \
   || { echo "::error::fail-closed skip semantics broken"; exit 1; }
-unshare -m sh -c "mount -t tmpfs none /dev && $QEMU -L $PREFIX $FC; rc=\$?; exit \$rc"
-echo "FAIL_CLOSED_NO_ENTROPY: PASS (every fork returned an error; no fabricated success)"
+# A mount namespace with an empty /dev is required; unprivileged user
+# namespaces are blocked on GitHub-hosted runners, so fall back to root.
+FC_RUN="mount -t tmpfs none /dev && $QEMU -L $PREFIX $FC; rc=\$?; exit \$rc"
+if unshare -m sh -c "$FC_RUN"; then
+  echo "FAIL_CLOSED_NO_ENTROPY: PASS (every fork returned an error; no fabricated success)"
+elif sudo -n unshare -m sh -c "$FC_RUN"; then
+  echo "FAIL_CLOSED_NO_ENTROPY: PASS via sudo namespace (every fork returned an error; no fabricated success)"
+else
+  echo "::error::could not create the fail-closed mount namespace"
+  exit 1
+fi
 
 echo "===== GATE 4) ABI fingerprint of the probe binaries ====="
 for b in "$FB" "$FC"; do
