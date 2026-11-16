@@ -17,6 +17,7 @@ set -euo pipefail
 UPSTREAM_SHA=66708d2866f3f3a4541c4fa67984d408e71a8af4
 # script is expected to be invoked from the repository root (CI default)
 PATCH_FILE="$(pwd)/${PATCH_FILE:-docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch}"
+RESEARCH_DIR="$(pwd)/docs/research/telemt-mipsle-ipk-3517"
 EB="${EB:-$HOME/entware-build}"
 SR="$EB/sysroot"
 L="$SR/usr/mipsel-linux-gnu/lib"
@@ -130,7 +131,7 @@ echo "===== 4.5) checksum-verified getrandom forks (ENOSYS-only MIPS /dev/urando
 # returns ENOSYS while /dev/urandom works; rand 0.10.2 ThreadRng panics and the
 # daemon dies. This step wires the reviewed ENOSYS-only fallback forks into the
 # build; see docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/README.md.
-bash "$(pwd)/docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/assemble-forks.sh" "$EB"
+bash "$RESEARCH_DIR/getrandom-fallback/assemble-forks.sh" "$EB"
 
 echo "===== 5) bounded TeleMT MIPSLE build (Entware ABI) ====="
 # glibc-2.34+ symbol backport shim: the C sources compile against distro 2.39
