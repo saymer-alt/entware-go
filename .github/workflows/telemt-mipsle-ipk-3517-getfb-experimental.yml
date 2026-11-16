@@ -42,13 +42,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Only research files may change (delta vs the PR #44 base commit)
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           BASE=bedab32bc405eff4b4f45b7f57e7d1b2cb1085b1
           git fetch -q origin gh-action-build || true
           # this branch is stacked on the PR #44 research branch; the guard
-          # inspects THIS branch's own delta, not the inherited PR #44 files
-          changed=$(git diff --name-only "$BASE...HEAD")
+          # inspects THIS branch's own delta via the PR HEAD sha, because
+          # actions/checkout checks out the merge ref for pull_request events
+          # and the base branch has moved past the PR #44 base commit
+          changed=$(git diff --name-only "$BASE...$HEAD_SHA")
           echo "$changed"
           allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight\.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|\.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental\.yml)'
           if echo "$changed" | grep -qvE "$allowed"; then
