@@ -41,22 +41,25 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Only research files may change
+      - name: Only research files may change (delta vs the PR #44 base commit)
         run: |
           set -euo pipefail
-          git fetch -q origin gh-action-build
-          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight\.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|\.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental\.yml)'
-          changed=$(git diff --name-only origin/gh-action-build...HEAD)
+          BASE=bedab32bc405eff4b4f45b7f57e7d1b2cb1085b1
+          git fetch -q origin gh-action-build || true
+          # this branch is stacked on the PR #44 research branch; the guard
+          # inspects THIS branch's own delta, not the inherited PR #44 files
+          changed=$(git diff --name-only "$BASE...HEAD")
           echo "$changed"
+          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight\.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|\.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental\.yml)'
           if echo "$changed" | grep -qvE "$allowed"; then
             echo "::error::Files outside the isolated research scope are modified"
             exit 1
           fi
-          if echo "$changed" | grep -qE '\.github/workflows/(telemt-arm64|telemt-mipsle-core-3517-poc|telemt-mipsle-compat-3517-check|telemt-mipsle-ipk-3517-rc4-experimental)'; then
+          if echo "$changed" | grep -qE '^\.github/workflows/(telemt-arm64|telemt-mipsle-core-3517-poc|telemt-mipsle-compat-3517-check|telemt-mipsle-ipk-3517-rc4-experimental)'; then
             echo "::error::Existing workflows must not be modified"
             exit 1
           fi
-          if git diff origin/gh-action-build...HEAD -- docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh | grep -q '^+'; then
+          if git diff "$BASE...HEAD" -- docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh | grep -q '^+'; then
             echo "::error::PR #44 frozen patch and packaging script must not be modified"
             exit 1
           fi
