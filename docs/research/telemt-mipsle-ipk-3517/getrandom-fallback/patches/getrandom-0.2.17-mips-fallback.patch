@@ -1,0 +1,141 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 626f9cf..7abb1c8 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -119,3 +119,6 @@ default-features = false
+ [target."cfg(unix)".dependencies.libc]
+ version = "0.2.154"
+ default-features = false
++
++[[test]]
++name = "mips_fallback_integration"
+diff --git a/src/lib.rs b/src/lib.rs
+index 4d2e4ea..81d5b9c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -258,6 +258,18 @@ cfg_if! {
+     ))] {
+         mod util_libc;
+         #[path = "getrandom.rs"] mod imp;
++    } else if #[cfg(all(
++        target_os = "linux",
++        target_arch = "mips",
++        target_env = "gnu",
++    ))] {
++        // Research-only Entware/MIPS32r2 softfloat (MT7621-class, kernel
++        // 4.9-ndm-5): getrandom(2) is ENOSYS while /dev/urandom works.
++        // Routed ONLY here; all other platforms keep their stock backend.
++        mod util_libc;
++        mod use_file;
++        mod lazy;
++        #[path = "linux_mips_with_fallback.rs"] mod imp;
+     } else if #[cfg(all(
+         not(feature = "linux_disable_fallback"),
+         any(
+diff --git a/src/linux_mips_with_fallback.rs b/src/linux_mips_with_fallback.rs
+new file mode 100644
+index 0000000..80e9cb2
+--- /dev/null
++++ b/src/linux_mips_with_fallback.rs
+@@ -0,0 +1,69 @@
++//! Implementation for Linux / MIPS (o32) with `/dev/urandom` fallback.
++//!
++//! Research-only Entware/MIPS32r2 softfloat fork of upstream
++//! `linux_android_with_fallback.rs` (getrandom, MIT OR Apache-2.0), selected
++//! ONLY for `all(target_os = "linux", target_arch = "mips", target_env = "gnu")`
++//! by `lib.rs`. Platform fact (proven 2026-11-16 on KeeneticOS Ported
++//! 5.1.8 MT7621, kernel 4.9-ndm-5): getrandom(2) returns ENOSYS while the
++//! /dev/urandom driver itself works. Deltas from upstream:
++//!   1. fallback on ENOSYS only (upstream additionally falls back on EPERM for
++//!      seccomp-blocked getrandom; deliberately not adopted here so any other
++//!      failure surfaces as a hard error),
++//!   2. this module is routed only for Linux/MIPS/gnu; no other platform's
++//!      backend selection is changed.
++//! The readiness barrier, EINTR/partial handling and fail-closed semantics are
++//! upstream's own code, unchanged.
++use crate::{
++    lazy::LazyBool,
++    util_libc::{getrandom_syscall, last_os_error, sys_fill_exact},
++    {use_file, Error},
++};
++use core::mem::MaybeUninit;
++
++pub fn getrandom_inner(dest: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
++    // Research-only test hook (upstream 0.4.x parity): force the fallback
++    // path regardless of getrandom(2) availability.
++    #[cfg(getrandom_test_linux_fallback)]
++    {
++        return use_file::getrandom_inner(dest);
++    }
++    // getrandom(2) was introduced in Linux 3.17
++    static HAS_GETRANDOM: LazyBool = LazyBool::new();
++    if HAS_GETRANDOM.unsync_init(is_getrandom_available) {
++        sys_fill_exact(dest, getrandom_syscall)
++    } else {
++        #[cfg(getrandom_test_linux_without_fallback)]
++        panic!("Fallback is triggered with enabled `getrandom_test_linux_without_fallback`");
++        use_file::getrandom_inner(dest)
++    }
++}
++
++fn is_getrandom_available() -> bool {
++    if getrandom_syscall(&mut []) < 0 {
++        match last_os_error().raw_os_error() {
++            Some(libc::ENOSYS) => false, // No kernel support
++            // ENOSYS-only per the research assignment: any other error keeps the
++            // getrandom path so the real call surfaces the failure (fail closed).
++            _ => true,
++        }
++    } else {
++        true
++    }
++}
++
++#[cfg(test)]
++mod mips_fallback_tests {
++    use super::getrandom_inner;
++
++    /// Entropy source must yield distinct consecutive buffers both on the
++    /// getrandom(2) path and (with `--cfg getrandom_test_linux_fallback`)
++    /// on the /dev/urandom fallback path with its readiness barrier.
++    #[test]
++    fn entropy_source_returns_distinct_buffers() {
++        let mut a = [0u8; 32];
++        let mut b = [0u8; 32];
++        getrandom_inner(&mut a).expect("entropy source failed");
++        getrandom_inner(&mut b).expect("entropy source failed");
++        assert_ne!(a, b, "entropy source produced identical consecutive buffers");
++    }
++}
+diff --git a/tests/mips_fallback_integration.rs b/tests/mips_fallback_integration.rs
+new file mode 100644
+index 0000000..24e9b16
+--- /dev/null
++++ b/tests/mips_fallback_integration.rs
+@@ -0,0 +1,26 @@
++//! Research-only integration probes for the MIPS /dev/urandom fallback fork.
++//! The `getrandom_test_linux_fallback` cfg (upstream's own test hook) forces
++//! the fallback path regardless of getrandom(2) availability.
++
++#[test]
++fn entropy_fill_returns_distinct_bytes() {
++    let mut a = [0u8; 32];
++    let mut b = [0u8; 32];
++    getrandom::getrandom(&mut a).expect("entropy source failed");
++    getrandom::getrandom(&mut b).expect("entropy source failed");
++    assert_ne!(a, b, "entropy source produced identical consecutive buffers");
++}
++
++/// Exercised inside a mount namespace whose /dev is an empty tmpfs:
++/// the crate must fail closed (return an error), never fabricate success.
++#[test]
++fn missing_entropy_device_fails_closed() {
++    if std::path::Path::new("/dev/urandom").exists() {
++        return; // skip outside the fail-closed namespace
++    }
++    let mut a = [0u8; 32];
++    assert!(
++        getrandom::getrandom(&mut a).is_err(),
++        "entropy fill must NOT succeed without an entropy device"
++    );
++}

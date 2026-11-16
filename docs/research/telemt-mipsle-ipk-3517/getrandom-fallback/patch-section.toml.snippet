@@ -1,0 +1,9 @@
+# Research-only Entware/MIPS32r2 softfloat entropy fallback forks:
+# getrandom(2) is ENOSYS on the 4.9-ndm-5 kernel while /dev/urandom works.
+# Each fork = checksum-verified crates.io source + reviewed delta patch
+# (ENOSYS-only /dev/urandom fallback with upstream's own readiness barrier).
+# Applied ONLY by the experimental MIPSLE build; not for upstream publication.
+[patch.crates-io]
+getrandom-0_4_3 = { package = "getrandom", version = "0.4.3", path = "../compat/getrandom-0.4.3-entware" }
+getrandom-0_3_4 = { package = "getrandom", version = "0.3.4", path = "../compat/getrandom-0.3.4-entware" }
+getrandom-0_2_17 = { package = "getrandom", version = "0.2.17", path = "../compat/getrandom-0.2.17-entware" }

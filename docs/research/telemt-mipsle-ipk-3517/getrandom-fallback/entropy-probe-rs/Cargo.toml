@@ -1,0 +1,29 @@
+[package]
+name = "entropy-probe-rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Research-only target-arch probe for the Entware MIPS entropy fallback forks.
+# Built by getrandom-fallback/gate.sh against the assembled forks in
+# ../compat/getrandom-*-entware; never published anywhere.
+
+[dependencies]
+rand = "=0.10.2"
+getrandom_4 = { package = "getrandom", version = "0.4.3", path = "../compat/getrandom-0.4.3-entware" }
+getrandom_3 = { package = "getrandom", version = "0.3.4", path = "../compat/getrandom-0.3.4-entware" }
+getrandom_2 = { package = "getrandom", version = "0.2.17", path = "../compat/getrandom-0.2.17-entware" }
+
+# rand 0.10.2 resolves getrandom 0.4.3 from the registry by default; pin it to
+# the same forked source so ThreadRng exercises the identical backend the
+# telemt build uses.
+[patch.crates-io]
+getrandom-0_4_3 = { package = "getrandom", version = "0.4.3", path = "../compat/getrandom-0.4.3-entware" }
+
+[[bin]]
+name = "entropy-probe-rs"
+path = "src/main.rs"
+
+[[bin]]
+name = "entropy-failclosed-rs"
+path = "src/failclosed.rs"

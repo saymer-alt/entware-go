@@ -125,6 +125,13 @@ git apply --whitespace=nowarn "$PATCH_FILE"
 test -f src/compat.rs && grep -q portable-atomic Cargo.toml || { echo "PATCH_APPLY_INCOMPLETE"; exit 1; }
 echo "patch applied on $UPSTREAM_SHA"
 
+echo "===== 4.5) checksum-verified getrandom forks (ENOSYS-only MIPS /dev/urandom fallback) ====="
+# Proven root cause on the Ported 5.1.8 MT7621 kernel (4.9-ndm-5): getrandom(2)
+# returns ENOSYS while /dev/urandom works; rand 0.10.2 ThreadRng panics and the
+# daemon dies. This step wires the reviewed ENOSYS-only fallback forks into the
+# build; see docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/README.md.
+bash "$(pwd)/docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/assemble-forks.sh" "$EB"
+
 echo "===== 5) bounded TeleMT MIPSLE build (Entware ABI) ====="
 # glibc-2.34+ symbol backport shim: the C sources compile against distro 2.39
 # headers where _GNU_SOURCE redirects clock_gettime/nanosleep/fcntl/ioctl/stat

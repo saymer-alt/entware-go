@@ -1,0 +1,195 @@
+# Experimental MIPSLE IPK with the getrandom ENOSYS-only /dev/urandom fallback
+# (Core rebuild only). Isolated from the ARM64 release pipelines and from the
+# PR #44 workflow: pull_request/workflow_dispatch only, read-only permissions,
+# no releases, no feed, artifacts expire after 7 days.
+#
+# Proven blocker this rebuild addresses: the Ported KeeneticOS 5.1.8 MT7621
+# kernel (4.9-ndm-5) does not expose getrandom(2) while /dev/urandom works;
+# rand 0.10.2 ThreadRng panics and the daemon dies ~1.5 s after fork.
+# The Panel Lite IPK is intentionally NOT rebuilt (pure-Go binary with its own
+# entropy handling) — the pinned PR #44 artifact remains authoritative.
+name: TeleMT MIPSLE getrandom-fallback experimental IPK (no release)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - .github/workflows/telemt-mipsle-ipk-3517-getfb-experimental.yml
+      - docs/research/telemt-mipsle-ipk-3517/**
+      - tools/telemt_mipsle_ipk_preflight.py
+      - tools/tests/telemt_mipsle_ipk_preflight_tests.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-mipsle-ipk-3517-getfb-experimental
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_SHA: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+
+jobs:
+  boundary-guard:
+    name: "Guard: no ARM64 pipeline, stable output or PR #44 pins are touched"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out this branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Only research files may change
+        run: |
+          set -euo pipefail
+          git fetch -q origin gh-action-build
+          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight\.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|\.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental\.yml)'
+          changed=$(git diff --name-only origin/gh-action-build...HEAD)
+          echo "$changed"
+          if echo "$changed" | grep -qvE "$allowed"; then
+            echo "::error::Files outside the isolated research scope are modified"
+            exit 1
+          fi
+          if echo "$changed" | grep -qE '\.github/workflows/(telemt-arm64|telemt-mipsle-core-3517-poc|telemt-mipsle-compat-3517-check|telemt-mipsle-ipk-3517-rc4-experimental)'; then
+            echo "::error::Existing workflows must not be modified"
+            exit 1
+          fi
+          if git diff origin/gh-action-build...HEAD -- docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh | grep -q '^+'; then
+            echo "::error::PR #44 frozen patch and packaging script must not be modified"
+            exit 1
+          fi
+          echo "BOUNDARY_GUARD: PASS (research-scope-only changes)"
+
+      - name: Regression tests for the preflight tool (host-only)
+        run: |
+          set -euo pipefail
+          python3 -m unittest tools.tests.telemt_mipsle_ipk_preflight_tests -v
+
+  core-ipk-getfb:
+    name: "Core 3.5.17-2fb1 Entware build + entropy gate + IPK"
+    runs-on: ubuntu-24.04
+    needs: boundary-guard
+    timeout-minutes: 75
+    steps:
+      - name: Check out this research branch (patch + scripts + forks)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPSLE cross tools and qemu-user
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross \
+            binutils-mipsel-linux-gnu file qemu-user
+          command -v qemu-mipsel
+      - name: Install Rust nightly with rust-src
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustc +nightly -V
+      - name: Build Core with getrandom fallback forks (pinned sysroot, bounded)
+        run: bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
+        env:
+          CARGO_BUILD_JOBS: '2'
+      - name: Entropy fallback gate (host tests + qemu-user target runs, fail-closed)
+        run: bash docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh ~/entware-build
+      - name: Package telemt_3.5.17-2fb1_mipsel-3.4.ipk
+        run: |
+          set -euo pipefail
+          BIN=~/entware-build/upstream/target/mipsel-unknown-linux-gnu/release/telemt
+          ROOT=~/entware-build/data-root-getfb/opt/bin
+          mkdir -p "$ROOT"
+          install -m 0755 "$BIN" "$ROOT/telemt"
+          cat > ~/entware-build/control-getfb <<'CTRL'
+          Package: telemt
+          Version: 3.5.17-2fb1
+          Architecture: mipsel-3.4
+          Maintainer: entware-go experimental research <noreply@users.noreply.github.com>
+          Section: net
+          Depends: libc, libgcc, libpthread, librt
+          Description: TeleMT proxy core 3.5.17 (experimental MIPSLE Entware build with
+           the getrandom ENOSYS-only /dev/urandom fallback for the 4.9-ndm-5 kernel).
+           Separately named research rebuild; the frozen PR #44 artifact
+           (3.5.17-1) remains authoritative for pin-controlled tests.
+           Configuration is created by the application on first run; this package
+           ships no config, no init script and no autostart.
+          Source: https://github.com/telemt/telemt
+          CTRL
+          bash docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh \
+            ~/entware-build/control-getfb ~/entware-build/data-root-getfb \
+            telemt_3.5.17-2fb1_mipsel-3.4.ipk
+      - name: IPK preflight (PR #42 tool, core-getfb mode)
+        run: |
+          set -euo pipefail
+          python3 tools/telemt_mipsle_ipk_preflight.py --kind core-getfb \
+            --file telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          echo "IPK_PACKAGE_VALIDATION (core-getfb): PASS"
+          sha256sum telemt_3.5.17-2fb1_mipsel-3.4.ipk
+      - name: Record new artifact pins (SHA + ELF identity, no release)
+        run: |
+          set -euo pipefail
+          BIN=~/entware-build/upstream/target/mipsel-unknown-linux-gnu/release/telemt
+          echo "=== IPK ==="
+          sha256sum telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          stat -c 'size=%s bytes' telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          echo "=== ELF ==="
+          sha256sum "$BIN"
+          file "$BIN" | head -1
+          mipsel-linux-gnu-readelf -A "$BIN" | grep -E 'FP ABI|ISA:'
+          mipsel-linux-gnu-readelf -l "$BIN" | grep -oE 'interpreter: /opt/lib/ld\.so\.1' | head -1
+          mipsel-linux-gnu-readelf -V "$BIN" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+      - name: Upload experimental core IPK with fallback (7-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-core-mipsel-experimental-getfb
+          path: telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          retention-days: 7
+          if-no-files-found: error
+
+  mipsle-only-gate:
+    name: "Guard: the fallback IPK can never replace ARM64 or the frozen 3.5.17-1"
+    runs-on: ubuntu-24.04
+    needs: [core-ipk-getfb]
+    timeout-minutes: 5
+    steps:
+      - name: Download artifact and verify naming isolation
+        uses: actions/download-artifact@v4
+        with:
+          path: ipks
+          merge-multiple: true
+      - name: Filename and control architecture are mipsel-3.4 only, version 3.5.17-2fb1
+        run: |
+          set -euo pipefail
+          ls -la ipks/
+          test -f ipks/telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          python3 - <<'PY'
+          import io, tarfile
+          from pathlib import Path
+          name = "telemt_3.5.17-2fb1_mipsel-3.4.ipk"
+          blob = Path("ipks", name).read_bytes()
+          with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+              control = t.extractfile("./control.tar.gz") or t.extractfile("control.tar.gz")
+              with tarfile.open(fileobj=io.BytesIO(control.read()), mode="r:gz") as c:
+                  fields = {}
+                  for line in c.extractfile("./control").read().decode().splitlines():
+                      if ": " in line:
+                          k, v = line.split(": ", 1)
+                          fields.setdefault(k, v)
+          assert fields["Architecture"] == "mipsel-3.4", fields
+          assert fields["Package"] == "telemt", fields
+          assert fields["Version"] == "3.5.17-2fb1", fields
+          assert "aarch64" not in name and "arm64" not in name
+          print(f"{name}: Architecture={fields['Architecture']} Version={fields['Version']} OK")
+          PY
+          echo "MIPSLE_ONLY_GATE: PASS (no ARM64 replacement, frozen 3.5.17-1 untouched; no release/feed writes anywhere in this workflow)"
+      - name: Final status report
+        run: |
+          echo 'CORE_BUILD_GETFB: PASS'
+          echo 'CORE_ENTWARE_ABI: PASS (interp /opt/lib/ld.so.1, GLIBC<=2.27, 0 FPU instr)'
+          echo 'ENTROPY_FALLBACK_GATE: PASS (host 3x3 + qemu-user plain/fallback/fail-closed)'
+          echo 'IPK_PACKAGE_VALIDATION: PASS (core-getfb kind)'
+          echo 'QEMU_RUNTIME_REAL_MT7621: NOT_TESTED here (router-emulator research branch runs the single guest cycle)'
+          echo 'TELEGRAM_UPSTREAM: NOT_TESTED'
