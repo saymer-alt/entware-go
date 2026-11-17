@@ -100,3 +100,12 @@ STOP on unclassified failures. GitHub host PASS is not native QEMU PASS.
 - [Second QEMU run 44062158447](https://github.com/saymer-alt/entware-go/actions/runs/44062158447): real Ported MT7621 4.9 guest boots, Entware initialized, **21/22 steps PASS**, first downloaded lab IPK (step 22) fails `ssh_exit_nonzero_1`: `/opt/lab/` directory was created only later by the synthetic config step. This is guest scenario ordering, **not a TeleMT runtime result**. Original first-hop mirror reports a dropped connection, consistent with wget output path not existing.
 - Follow-up repair: explicit `mkdir -p /opt/lab` *before* wget, a cheap plan-only invariant, SHA-verified QEMU cache saved immediately after build (even if a later guest step fails). Unchanged source blobs verified before skipping redundant Rust host/full MIPSLE builds. Original 74/74 and 93/93 accepted proofs unchanged.
 - Native socket `stop/reload`, post-reboot no-autostart and removal **remain NOT_TESTED until a guest run reaches those steps**. No real device/release/feed changes.
+
+
+## Third true MT7621 run: daemon readiness blocked
+
+The [third run, 44066952376](https://github.com/saymer-alt/entware-go/actions/runs/44066952376) completed with **26 PASS out of 27 executed steps** (50 planned). Unlike earlier fixture problems, the actual Ported 5.1.8 guest downloaded and installed the isolated `telemt-ipc-lab` IPK, verified the ELF SHA, installed the synthetic loopback-only config, and rejected absent socket commands correctly. It then failed **step 27**, the combined daemon start/PID/socket/`/proc/exe` readiness check after 31.07 seconds (`ssh_exit_nonzero_1`).
+
+This does not identify which readiness condition failed. In particular, `telemt start` double-forks, so parent exit status alone cannot prove a live child or local IPC socket. **Neither `reload` nor `stop` ran; do not merge/ship or close Issue #51.** No raw stderr/console is preserved in the sanitized artifact.
+
+See [focused post-mortem and diagnostic contract](mt7621-start-failure-triage.md) for separate parent-dir, PID, executable and Unix-socket probes and a foreground-only synthetic diagnostic. This is the **third bounded guest attempt**; no fourth guest cycle has been queued. QEMU executable was cache-saved immediately after its SHA check, before launching the guest, and source/IPK rebuild CI was skipped on unchanged hashes.
