@@ -26,7 +26,7 @@ def assets(emulator_root):
     for p in lock["packages"]:
         name, digest = p["Filename"], p["SHA256sum"]
         url = MIPSLSF_ORIGIN + ("keenetic/" if p["feed"] == "keenetic" else "") + name
-        if (not re.fullmatch(r"[A-Za-z0-9._+-]+\.ipk", name)
+        if (not re.fullmatch(r"[A-Za-z0-9._+~-]+\.ipk", name)
                 or p["url"] != url or not re.fullmatch(r"[0-9a-f]{64}", digest)):
             raise ValueError("untrusted Entware asset")
         rows.append((name, url, digest))
