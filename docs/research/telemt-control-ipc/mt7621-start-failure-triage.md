@@ -141,3 +141,75 @@ These are **prospective categories, not evidence of which error actually occurre
 - [Host-only CI 44102897741](https://github.com/saymer-alt/entware-go/actions/runs/44102897741): **16/16 PASS**, native emulator parser + POSIX shell syntax, direct-child ownership, no PID-file signalling, strict startup preflight, classification precedence. All four workflows completed SUCCESS with `native-guest=SKIPPED`. This is **not** kernel4.9 IPC acceptance on the updated head.
 - The eleventh one-shot label has been **removed**. **No twelfth QEMU run approved or launched.** Stable TeleMT Core/Panel, frozen experimental IPC ELF/IPK and pinned emulator checkout remain untouched. Draft PR #58 and Issue #51 remain BLOCKED until the actual Unix IPC `reload/stop` plus reboot/rollback tests can pass.
 
+
+## Twelfth guest plan: comparative A/B/C foreground diagnosis (2026-11-17)
+
+Hypothesis set before the run (from source reading of upstream `66708d2` and
+the research patch):
+
+1. **H1 (leading):** the experimental child reaches `LocalControl::bind`
+   (last startup step before `wait_for_shutdown`) and that bind fails with an
+   io error. In daemonized mode stderr goes to `/dev/null`, so the child exits
+   orderly (RAII removes the PID file — consistent with runs 7/8/11: no panic
+   or permission keyword in the nonempty main log, sibling lock also gone).
+   In foreground mode the exact error text lands in the captured `.out` file.
+2. **H2:** the lab build itself regressed somewhere the accepted build did
+   not; the child then dies with or without `--control-socket`.
+3. **H3:** the child survives to `wait_for_shutdown` and is killed or
+   gracefully shut down by an external signal; the tracing log would then
+   contain `Received shutdown signal` / `Shutting down`.
+4. **H4:** the current lab environment is subtly broken and even the accepted
+   binary would now fail; the accepted binary is run in the same session as a
+   live control.
+
+Key source facts this diagnosis relies on (upstream `66708d2`):
+
+- The accepted 74/74 scenario *did* start the same guest daemonized with the
+  accepted Core (`TELEMT_STARTED`, `DAEMON_PROC_ALIVE`, `SOCKETS_LISTENING`,
+  `STABLE_AFTER_10S` all PASS), so double-fork, PID file, Tokio runtime and
+  tracing file logging work on kernel 4.9 with the accepted bytes.
+- `main.rs` double-forks before the runtime; `maestro::run_inner` acquires
+  the PID file before `run_telemt_core`; `LocalControl::bind` runs only after
+  bootstrap, listeners and the watcher; every error returns through `main`,
+  prints `Error: …` to stderr, and exits 1 (RAII cleanup).
+- `--control-socket` reaches the start path through both patched parsers
+  (`cli.rs` second loop and `daemon_commands.rs::parse_daemon_args`).
+- The accepted frozen Core IPK `telemt_3.5.17-2fb1_mipsel-3.4.ipk`
+  (outer SHA-256 `2c8a84fb…85d8d`, ELF `d4ba4381…b216f`) was re-verified out
+  of band against the same ABI audit the guest uses (softfloat, `/opt/lib/ld.so.1`).
+
+New static scenario steps (no new diagnostic exit codes 41–76 are consumed;
+every new step exits 0 and reports only sanitized markers):
+
+- `IPC_CORE_OPKG`: SHA-pinned accepted Core install from the same mirror.
+- `IPC_FGA_<d>_<status>` / `IPC_FGB_<status…>` / `IPC_FGC_<status…>`: bounded
+  12 s foreground runs of A (accepted Core), B (lab binary, no flag) and C
+  (lab binary, `--control-socket …/ctl-fg.sock`), strictly sequential, each a
+  verified direct shell child (`$!`), identity-checked via `/proc/$fgp/exe`
+  before a bounded TERM. `<d>` encodes 0 healthy, 1 control socket missing
+  (C), 2 listeners not LISTENing, 3 both, 9 early exit; `<status>` is the raw
+  `wait` status or `W` when TERM did not terminate within 10 s.
+- `IPC_CLS_<a>_<b>_<c>`: per-variant numeric content-classification masks of
+  the captured `.out`/`.log` files (1 banner, 2 Error:, 4 panic, 8 os error,
+  16 permission, 32 control-socket text, 64 tracing initialised, 128 graceful
+  shutdown, 256 shutdown signal, 512 address-in-use, 1024 missing file,
+  2048 output nonempty). Every grep is `-q`-quiet; no content leaves the guest.
+- `IPC_DLOG_<mask>`: the same milestone probing for the *detached* daemon's
+  own log right after the existing `IPC_START_RETURNED` step, so a repeat of
+  the run-7/8/11 failure is finally localised (died before tracing, died
+  after listeners, received a shutdown signal, panic, unsupported syscall…).
+
+Expected discriminations: A=0/B=0/C=9_1 with C-class mask bit 32 or 8 → H1
+(bind failure, exact Rust error classified); A=0/B=9_x → H2 (build
+regression, B's mask localises it); any `8`/`16` shutdown bits in logs → H3;
+A failing → H4 (environment re-check against the 74/74 evidence).
+
+Host-only validation before the run: emulator `load_scenario` accepts the 62
+step plan (`PINNED_IPC_GUEST_PLAN_PASS`), all SSH commands parse under POSIX
+`/bin/sh -n` (and busybox `ash -n` locally), 20/20 logic tests pass (the two
+`/bin/sh` execution tests run only on Linux CI), classification masks were
+exercised against synthetic captured files, and a non-quiet grep leak in the
+first draft of the classification step was caught and fixed (all greps now
+quiet; test `test_diagnosis_greps_are_quiet_and_never_emit_guest_content`).
+The one-shot `telemt-ipc-one-shot-qemu` label must still be applied
+deliberately; ordinary commits cannot start QEMU.

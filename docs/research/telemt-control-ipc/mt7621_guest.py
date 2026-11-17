@@ -7,6 +7,7 @@ not rebuilt or substituted. This is an offline disposable research run.
 """
 import argparse
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -18,6 +19,12 @@ from types import SimpleNamespace
 CORE_NAME = "telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk"
 CORE_SHA = "5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9"
 ELF_SHA = "0d3dcce3b9922d5dbffc748045168def7420c770ed6b4336e5e67d418c6f7e66"
+# Variant A reference: the already accepted Core binary from the 74/74 guest
+# suite. Its frozen bytes are re-verified here; nothing about them changes.
+CORE_IPK_NAME = "telemt_3.5.17-2fb1_mipsel-3.4.ipk"
+CORE_IPK_SHA = "2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d"
+CORE_ELF_SHA = "d4ba43815883dd1ce9aa57349602598127781e8966d51dab97616dbdb35b216f"
+CORE_BIN = "/opt/bin/telemt"
 EMU_SHA = "64a446deaacb0bca10d6053781ff1f7ad4a29552"
 MIRROR_HOST = "192.168.1.100"
 PID = "/opt/var/run/telemt-ipc-lab.pid"
@@ -25,6 +32,13 @@ CTL = "/opt/var/run/telemt-ipc-lab/ctl.sock"
 CONF = "/opt/etc/telemt-lab.toml"
 BIN = "/opt/bin/telemt-ipc-lab"
 LOG = "/opt/var/log/telemt-ipc-lab.log"
+# A/B/C foreground diagnosis: separate disposable PID/log/output paths, one
+# variant at a time, never two instances on the same ports simultaneously.
+FG_SOCK = "/opt/var/run/telemt-ipc-lab/ctl-fg.sock"
+# Listener presence inside /proc/net/tcp: 127.0.0.1:3443 and 127.0.0.1:9091
+# in LISTEN state, same expression family as the accepted 74/74 scenario.
+TCP_LISTEN3443 = "0100007F:0D73 +[0-9A-F]{8}:[0-9A-F]{4} +0A "
+TCP_LISTEN9091 = "0100007F:2383 +[0-9A-F]{8}:[0-9A-F]{4} +0A "
 
 
 def guest_ssh(command, marker, timeout=120):
@@ -32,6 +46,15 @@ def guest_ssh(command, marker, timeout=120):
     assert marker.isupper() and marker.replace("_", "").isalnum()
     return {"action": "ssh", "port": 8022, "send": command,
             "expect": marker, "timeout_sec": timeout}
+
+
+def guest_ssh_regex(command, pattern, timeout=120):
+    # The emulator's validator permits regex answer markers; the echoed
+    # command must not itself match the pattern (checked by load_scenario).
+    assert pattern.startswith("IPC_") and "\n" not in pattern
+    assert "\n" not in command and "\r" not in command
+    return {"action": "ssh", "port": 8022, "send": command,
+            "expect": pattern, "timeout_sec": timeout}
 
 
 def audit_lab_ipk(emulator_root, ipk):
@@ -58,6 +81,161 @@ def audit_lab_ipk(emulator_root, ipk):
         raise ValueError("Entware MIPSLE glibc softfloat ABI mismatch")
     return {"package": CORE_NAME, "ipk_sha256": CORE_SHA,
             "elf_sha256": ELF_SHA, "elf": info}
+
+
+def audit_core_ipk(emulator_root, ipk):
+    """Audit the immutable accepted Core IPK used as the variant A reference."""
+    sys.path.insert(0, str(emulator_root))
+    from lab.mt7621 import telemt_lab as audit
+    if not ipk.is_file() or ipk.stat().st_size > audit.MAX_IPK:
+        raise ValueError("missing/oversize accepted Core IPK")
+    raw = ipk.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != CORE_IPK_SHA:
+        raise ValueError("accepted Core IPK SHA-256 mismatch (fail closed)")
+    metadata, data = audit.ipk_parts(raw)
+    if metadata != {"Package": "telemt",
+                    "Version": "3.5.17-2fb1",
+                    "Architecture": "mipsel-3.4"}:
+        raise ValueError("unexpected accepted Core metadata")
+    if set(data) != {"opt/bin/telemt"}:
+        raise ValueError("accepted Core package would replace unrelated payload")
+    elf = data["opt/bin/telemt"]
+    if hashlib.sha256(elf).hexdigest() != CORE_ELF_SHA:
+        raise ValueError("accepted Core ELF SHA-256 mismatch (fail closed)")
+    info = audit.elf_mips_info(elf)
+    if (info["fp_abi"] != 3 or info["interp"] != "/opt/lib/ld.so.1"
+            or not info["dynamic"]):
+        raise ValueError("accepted Core Entware MIPSLE glibc softfloat ABI mismatch")
+    return {"package": CORE_IPK_NAME, "ipk_sha256": CORE_IPK_SHA,
+            "elf_sha256": CORE_ELF_SHA, "elf": info}
+
+
+def fg_probe_step(tag, binary, control_socket):
+    """One bounded foreground run of one variant (A, B or C).
+
+    The child is a direct shell child ($!); its identity is verified through
+    /proc/$fgp/exe before any TERM. Terminating only that verified direct
+    child never signals any PID read from a file. The step always exits 0 and
+    reports exactly one sanitized marker `IPC_FG<tag>_<d>_<status>`:
+      <d> 0 = healthy; 1 = control socket missing (C only); 2 = listeners
+          not both in LISTEN state; 3 = both missing; 9 = child exited before
+          the 12 s window (early exit).
+      <status> the raw `wait` exit status of the verified direct child, or
+          `W` when it did not terminate within the 10 s bounded TERM grace.
+    """
+    upper = tag.upper()
+    marker = f"IPC_FG{upper}_[0-9]_[0-9A-Z]+"
+    pid = f"/opt/var/run/abc-fg-{tag}.pid"
+    log = f"/opt/var/log/abc-fg-{tag}.log"
+    out = f"/opt/lab/abc-fg-{tag}.out"
+    ctl_arg = f" --control-socket {control_socket}" if control_socket else ""
+    sock_check = "" if control_socket is None else (
+        f"[ -S {control_socket} ] || d=$((d+1)); ")
+    command = (
+        f"/opt/bin/busybox rm -f {pid} {log} {out}; "
+        f"HOME=/opt/lab TMPDIR=/opt/lab {binary} start --foreground "
+        f"--log-file {log} --pid-file {pid}{ctl_arg} {CONF} >{out} 2>&1 "
+        "& fgp=$!; "
+        "/opt/bin/busybox sleep 12; "
+        "fg_exe=$(/opt/bin/busybox readlink /proc/$fgp/exe 2>/dev/null); "
+        f"if [ \"$fg_exe\" != '{binary}' ]; then "
+        "wait \"$fgp\"; frc=$?; "
+        f"printf 'IPC_%s\\n' \"FG{upper}_9_$frc\"; exit 0; fi; "
+        "lst=1; "
+        f"/opt/bin/busybox grep -Eq '{TCP_LISTEN3443}' /proc/net/tcp 2>/dev/null "
+        "|| lst=0; "
+        f"/opt/bin/busybox grep -Eq '{TCP_LISTEN9091}' /proc/net/tcp 2>/dev/null "
+        "|| lst=0; "
+        "d=0; [ \"$lst\" = 1 ] || d=$((d+2)); "
+        f"{sock_check}"
+        "kill -TERM \"$fgp\" 2>/dev/null; "
+        "i=0; while [ \"$i\" -lt 10 ] && [ -r /proc/$fgp/exe ]; do "
+        "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+        "if [ -r /proc/$fgp/exe ]; then "
+        "printf 'IPC_%s\\n' \"FG" + upper + "_${d}_W\"; exit 0; fi; "
+        "wait \"$fgp\"; frc=$?; "
+        "printf 'IPC_%s\\n' \"FG" + upper + "_${d}_$frc\"; exit 0"
+    )
+    return guest_ssh_regex(command, marker, 120)
+
+
+def classification_step():
+    """Classify each variant's captured foreground output by fixed markers.
+
+    Emits one sanitized numeric mask per variant: `IPC_CLS_<a>_<b>_<c>`.
+    Bits: 1 past tracing banner, 2 main returned an Error, 4 panic text,
+    8 raw os-error text, 16 permission text, 32 control-socket text,
+    64 tracing log initialised, 128 graceful shutdown logged,
+    256 shutdown signal logged, 512 address-in-use, 1024 missing-file text,
+    2048 foreground output nonempty. No raw log or config leaves the guest.
+    """
+    greps = [
+        (1, "-q 'Telemt MTProxy v'", "o"),
+        (2, "-q 'Error:'", "o"),
+        (4, "-Eiq 'panic|panicked'", "ol"),
+        (8, "-q 'os error'", "o"),
+        (16, "-Eiq 'permission denied|operation not permitted'", "ol"),
+        (32, "-q 'control socket'", "o"),
+        (64, "-q 'Log level:'", "l"),
+        (128, "-q 'Shutting down'", "l"),
+        (256, "-q 'Received shutdown signal'", "l"),
+        (512, "-Eiq 'address already in use'", "ol"),
+        (1024, "-Eiq 'no such file|not found'", "ol"),
+    ]
+    body = "[ -s \"$o\" ] && m=$((m+2048)); "
+    for bit, pattern, files in greps:
+        tests = []
+        if "o" in files:
+            tests.append(f"/opt/bin/busybox grep {pattern} \"$o\" 2>/dev/null")
+        if "l" in files:
+            tests.append(f"/opt/bin/busybox grep {pattern} \"$l\" 2>/dev/null")
+        if len(tests) == 1:
+            body += f"{tests[0]} && m=$((m+{bit})); "
+        else:
+            body += "{ " + " || ".join(tests) + f"; }} && m=$((m+{bit})); "
+    command = (
+        "cm() { m=0; "
+        "o=/opt/lab/abc-fg-$1.out; l=/opt/var/log/abc-fg-$1.log; "
+        "[ -f \"$o\" ] || o=/dev/null; [ -f \"$l\" ] || l=/dev/null; "
+        f"{body}"
+        "eval \"$2=$m\"; }; "
+        "cm a ma; cm b mb; cm c mc; "
+        "printf 'IPC_%s\\n' \"CLS_${ma}_${mb}_${mc}\"; exit 0"
+    )
+    return guest_ssh_regex(command, "IPC_CLS_[0-9]+_[0-9]+_[0-9]+", 120)
+
+
+def daemon_log_step():
+    """Sanitized milestone mask of the detached daemon's own log.
+
+    Emits `IPC_DLOG_<mask>` after the detached start attempt: 1 log nonempty,
+    2 tracing initialised, 4 buffer-budget stage, 8 shutdown signal logged,
+    16 graceful shutdown logged, 32 panic text, 64 no-listeners error,
+    128 address-in-use, 256 permission text, 512 unsupported-syscall text,
+    1024 SIGHUP reload observed. No raw content leaves the guest.
+    """
+    greps = [
+        (2, "-q 'Log level:'"),
+        (4, "-q 'Direct relay buffer budget initialized'"),
+        (8, "-q 'Received shutdown signal'"),
+        (16, "-q 'Shutting down'"),
+        (32, "-Eiq 'panic|panicked'"),
+        (64, "-q 'No listeners'"),
+        (128, "-Eiq 'address already in use'"),
+        (256, "-Eiq 'permission denied|operation not permitted'"),
+        (512, "-Eiq 'function not implemented|not supported|enosys'"),
+        (1024, "-q 'SIGHUP received'"),
+    ]
+    body = "[ -s \"$l\" ] && m=$((m+1)); "
+    for bit, pattern in greps:
+        body += f"/opt/bin/busybox grep {pattern} \"$l\" 2>/dev/null && " \
+                f"m=$((m+{bit})); "
+    command = (
+        f"m=0; l={LOG}; [ -f \"$l\" ] || l=/dev/null; "
+        f"{body}"
+        "printf 'IPC_%s\\n' \"DLOG_$m\"; exit 0"
+    )
+    return guest_ssh_regex(command, "IPC_DLOG_[0-9]+", 120)
 
 
 def synthetic_file_step(config, secret):
@@ -173,10 +351,35 @@ def scenario_for(emulator_root):
                   "[ \"$owner\" = /opt/var/run/telemt-ipc-lab ] || exit 44; "
                   "printf 'IPC_%s\\n' PARENT_OWNER_MODE",
                   "IPC_PARENT_OWNER_MODE"),
+        # Comparative diagnosis (task A/B/C): the same lab environment runs
+        # the accepted Core (A), the lab binary without the opt-in flag (B)
+        # and the lab binary with it (C), strictly one at a time in bounded
+        # foreground mode with separate disposable paths. Variant A re-proves
+        # the frozen accepted bytes; B isolates a candidate-build regression;
+        # C isolates the opt-in IPC integration. The detached readiness
+        # probes below then repeat the original daemonized contract.
+        guest_ssh("/opt/bin/busybox mkdir -p /opt/lab && "
+                  "/opt/bin/busybox wget -qO /opt/lab/core.ipk "
+                  "http://" + MIRROR_HOST + "/entware/" + CORE_IPK_NAME +
+                  " && printf '%s  %s\\n' '" + CORE_IPK_SHA +
+                  "' /opt/lab/core.ipk > /opt/lab/core.sha && "
+                  "/opt/bin/busybox sha256sum -c /opt/lab/core.sha >/dev/null && "
+                  "/opt/bin/opkg install /opt/lab/core.ipk "
+                  ">/opt/lab/core-opkg.log 2>&1 && "
+                  "/opt/bin/opkg status telemt | "
+                  "/opt/bin/busybox grep -q 'Version: 3.5.17-2fb1' && "
+                  "test -x " + CORE_BIN + " && "
+                  "printf 'IPC_%s\\n' CORE_OPKG",
+                  "IPC_CORE_OPKG", 300),
+        fg_probe_step("a", CORE_BIN, None),
+        fg_probe_step("b", BIN, None),
+        fg_probe_step("c", BIN, FG_SOCK),
+        classification_step(),
         guest_ssh(start_command() + " >/opt/lab/ipc-start.out 2>&1; "
                   "rc=$?; [ \"$rc\" = 0 ] || exit 45; "
                   "printf 'IPC_%s\\n' START_RETURNED",
                   "IPC_START_RETURNED", 120),
+        daemon_log_step(),
         # A detached child can fail after start(1) parent exits 0 and
         # release its PID via RAII. Do not accept mere readability as READY:
         # verify numeric PID, pinned live /proc/exe identity and stability
@@ -403,6 +606,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--emulator-root", required=True)
     ap.add_argument("--ipk-dir", required=True)
+    ap.add_argument("--core-ipk-dir", required=True,
+                    help="directory holding the frozen accepted Core IPK (variant A)")
     ap.add_argument("--workspace", help="fresh private workspace")
     ap.add_argument("--entware-cache", help="verified cache outside fresh private workspace")
     ap.add_argument("--nand-dir")
@@ -413,6 +618,8 @@ def main():
     root = Path(args.emulator_root).resolve()
     ipk = Path(args.ipk_dir) / CORE_NAME
     summary = audit_lab_ipk(root, ipk)
+    core_ipk = Path(args.core_ipk_dir) / CORE_IPK_NAME
+    core_summary = audit_core_ipk(root, core_ipk)
     plan = scenario_for(root)
     steps = plan["steps"]
     if len(steps) >= 74 or not any(
@@ -433,21 +640,37 @@ def main():
         raise ValueError("lab directory must exist before the IPK download")
     expected_readiness = [
         "IPC_PARENT_COMPONENTS_SAFE", "IPC_PARENT_OWNER_MODE",
-        "IPC_START_RETURNED", "IPC_PIDFILE_READY",
-        "IPC_CHILD_EXE_CONFIRMED", "IPC_CONTROL_SOCKET_READY",
-        "IPC_DAEMON_ALIVE",
+        "IPC_CORE_OPKG", "IPC_FGA_*", "IPC_FGB_*", "IPC_FGC_*",
+        "IPC_CLS_*", "IPC_START_RETURNED", "IPC_DLOG_*",
+        "IPC_PIDFILE_READY", "IPC_CHILD_EXE_CONFIRMED",
+        "IPC_CONTROL_SOCKET_READY", "IPC_DAEMON_ALIVE",
     ]
     labels = [s.get("expect") for s in steps]
-    if not all(labels.count(marker) == 1 for marker in expected_readiness):
+
+    def label_matches(marker):
+        return sum(1 for label in labels
+                   if label is not None and fnmatch.fnmatchcase(label, marker))
+
+    if not all(label_matches(marker) == 1 for marker in expected_readiness):
         raise ValueError("IPC startup readiness must have exactly one probe each")
-    positions = [labels.index(marker) for marker in expected_readiness]
-    if positions != list(range(positions[0], positions[0] + len(positions))):
-        raise ValueError("IPC startup probes are not contiguous and ordered")
+    exact_labels = [m for m in expected_readiness if "*" not in m]
+    positions = [labels.index(marker) for marker in exact_labels]
+    if positions != sorted(positions):
+        raise ValueError("IPC startup probes are out of order")
+    # Contiguity across the whole readiness family, regex members included.
+    first = min(labels.index(m) for m in exact_labels)
+    family = [i for i, label in enumerate(labels)
+              if label is not None and any(fnmatch.fnmatchcase(label, m)
+                                           for m in expected_readiness)]
+    if family != list(range(first, first + len(family))):
+        raise ValueError("IPC startup probes are not contiguous")
     if args.plan_only:
         print(json.dumps({"status": "PINNED_IPC_GUEST_PLAN_PASS",
                           "step_count": len(steps),
                           "ipk_sha256": summary["ipk_sha256"],
-                          "elf_sha256": summary["elf_sha256"]},
+                          "elf_sha256": summary["elf_sha256"],
+                          "core_ipk_sha256": core_summary["ipk_sha256"],
+                          "core_elf_sha256": core_summary["elf_sha256"]},
                          sort_keys=True))
         return 0
 
@@ -481,6 +704,7 @@ def main():
     build(str(image), str(mirror), workspace / "cache",
           args.credentials_file, arch="mipsel", lock_path=str(lock))
     shutil.copyfile(ipk, mirror / "entware" / CORE_NAME)
+    shutil.copyfile(core_ipk, mirror / "entware" / CORE_IPK_NAME)
     with Mirror(mirror) as port:
         return run(SimpleNamespace(
             scenario=str(scenario_file), emulator_root=str(root),

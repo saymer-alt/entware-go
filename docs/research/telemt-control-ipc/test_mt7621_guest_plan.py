@@ -19,7 +19,13 @@ import unittest
 EXPECTED = [
     "IPC_PARENT_COMPONENTS_SAFE",
     "IPC_PARENT_OWNER_MODE",
+    "IPC_CORE_OPKG",
+    "IPC_FGA_*",
+    "IPC_FGB_*",
+    "IPC_FGC_*",
+    "IPC_CLS_*",
     "IPC_START_RETURNED",
+    "IPC_DLOG_*",
     "IPC_PIDFILE_READY",
     "IPC_CHILD_EXE_CONFIRMED",
     "IPC_CONTROL_SOCKET_READY",
@@ -126,11 +132,27 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertEqual(len(parsed["steps"]), len(self.plan["steps"]))
         self.assertLess(len(parsed["steps"]), 74)
 
+    @staticmethod
+    def _label_position(labels, marker):
+        import fnmatch
+        if "*" in marker:
+            matches = [i for i, label in enumerate(labels)
+                       if label is not None and fnmatch.fnmatchcase(label, marker)]
+            assert len(matches) == 1, marker
+            return matches[0]
+        return labels.index(marker)
+
     def test_readiness_probes_are_isolated_and_before_ipc_operations(self):
+        import fnmatch
         labels = [step.get("expect") for step in self.plan["steps"]]
         for label in EXPECTED:
-            self.assertEqual(labels.count(label), 1, label)
-        positions = [labels.index(label) for label in EXPECTED]
+            if "*" in label:
+                matches = [x for x in labels
+                           if x is not None and fnmatch.fnmatchcase(x, label)]
+                self.assertEqual(len(matches), 1, label)
+            else:
+                self.assertEqual(labels.count(label), 1, label)
+        positions = [self._label_position(labels, label) for label in EXPECTED]
         self.assertEqual(positions, list(range(positions[0], positions[0] + len(positions))))
         self.assertLess(labels.index("IPC_ABSENT_REJECTED"), positions[0])
         self.assertNotIn("IPC_FINDUTILS_INSTALLED", labels)
@@ -138,6 +160,103 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertLess(labels.index("IPC_STOP_CLEAN"), labels.index("IPC_REBOOT_NO_AUTOSTART"))
         self.assertLess(labels.index("IPC_REBOOT_NO_AUTOSTART"),
                         labels.index("IPC_ROLLBACK_OK"))
+
+    def test_abc_foreground_comparison_is_bounded_isolated_and_ordered(self):
+        import fnmatch
+        labels = [step.get("expect") for step in self.plan["steps"]]
+        steps = {label: step for label, step in zip(labels, self.plan["steps"])
+                 if label is not None}
+        fg_a = steps["IPC_FGA_[0-9]_[0-9A-Z]+"]
+        fg_b = steps["IPC_FGB_[0-9]_[0-9A-Z]+"]
+        fg_c = steps["IPC_FGC_[0-9]_[0-9A-Z]+"]
+        cls = steps["IPC_CLS_[0-9]+_[0-9]+_[0-9]+"]
+        # A runs the frozen accepted binary; B the lab binary without the
+        # opt-in flag; C the lab binary with it. Exactly one opt-in socket.
+        self.assertIn(self.module.CORE_BIN + " start --foreground", fg_a["send"])
+        self.assertNotIn("--control-socket", fg_a["send"])
+        self.assertIn(self.module.BIN + " start --foreground", fg_b["send"])
+        self.assertNotIn("--control-socket", fg_b["send"])
+        self.assertIn(self.module.BIN + " start --foreground", fg_c["send"])
+        self.assertIn("--control-socket " + self.module.FG_SOCK, fg_c["send"])
+        # Bounded observation, direct-child ownership, verified identity
+        # before TERM, no PID-file signalling and no bulk kill tools.
+        for step in (fg_a, fg_b, fg_c):
+            command = step["send"]
+            self.assertIn("& fgp=$!;", command)
+            self.assertIn("/opt/bin/busybox sleep 12;", command)
+            self.assertIn("readlink /proc/$fgp/exe", command)
+            self.assertIn("kill -TERM \"$fgp\"", command)
+            self.assertIn("wait \"$fgp\"; frc=$?", command)
+            self.assertNotIn("kill -9 ", command)
+            self.assertNotIn("/opt/bin/busybox kill ", command)
+            self.assertNotIn("pkill ", command)
+            self.assertNotIn("cat " + self.module.PID, command)
+            self.assertNotIn("rm -rf", command)
+        # Variants run strictly one at a time: each SSH step is a separate
+        # bounded session and no step starts two instances concurrently.
+        positions = [self._label_position(labels, marker) for marker in EXPECTED]
+        self.assertEqual(positions, sorted(positions))
+        # Classification exports numeric masks only, never file contents.
+        self.assertIn('"CLS_${ma}_${mb}_${mc}"', cls["send"])
+        self.assertNotIn("cat ", cls["send"])
+
+    def test_accepted_core_reference_pins_are_frozen_and_read_only(self):
+        self.assertEqual(
+            self.module.CORE_IPK_NAME, "telemt_3.5.17-2fb1_mipsel-3.4.ipk")
+        self.assertEqual(
+            self.module.CORE_IPK_SHA,
+            "2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d")
+        self.assertEqual(
+            self.module.CORE_ELF_SHA,
+            "d4ba43815883dd1ce9aa57349602598127781e8966d51dab97616dbdb35b216f")
+        core_step = next(s for s in self.plan["steps"]
+                         if s.get("expect") == "IPC_CORE_OPKG")
+        command = core_step["send"]
+        self.assertIn("/entware/" + self.module.CORE_IPK_NAME, command)
+        self.assertIn(self.module.CORE_IPK_SHA, command)
+        self.assertIn("opkg install /opt/lab/core.ipk", command)
+        self.assertIn("test -x " + self.module.CORE_BIN, command)
+        workflow = (Path(__file__).resolve().parents[3] /
+                    ".github/workflows/telemt-control-ipc-mt7621-guest.yml").read_text()
+        self.assertIn("CORE_IPK_SHA: 2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d",
+                      workflow)
+        self.assertIn("telemt-core-mipsel-experimental-getfb", workflow)
+        self.assertLess(
+            workflow.index("Download frozen accepted Core IPK"),
+            workflow.index("One QEMU-system kernel-4.9 IPC cycle"))
+        self.assertLess(
+            workflow.index("PINNED_CORE_IPK: PASS"),
+            workflow.index("One QEMU-system kernel-4.9 IPC cycle"))
+
+    def test_daemon_log_milestones_are_sanitized_numbers(self):
+        step = next(s for s in self.plan["steps"]
+                    if s.get("expect") == "IPC_DLOG_[0-9]+")
+        command = step["send"]
+        self.assertIn('"DLOG_$m"', command)
+        self.assertIn("Log level:", command)
+        self.assertIn("Received shutdown signal", command)
+        self.assertIn("SIGHUP received", command)
+        self.assertNotIn("cat ", command)
+        self.assertNotIn("head -", command)
+        self.assertNotIn("tail -", command)
+
+    def test_diagnosis_greps_are_quiet_and_never_emit_guest_content(self):
+        # Any non-quiet grep would print matching guest log/config lines into
+        # the SSH answer and therefore into the sanitized report.
+        for marker in ("IPC_CLS_[0-9]+_[0-9]+_[0-9]+", "IPC_DLOG_[0-9]+",
+                       "IPC_FGA_[0-9]_[0-9A-Z]+", "IPC_FGB_[0-9]_[0-9A-Z]+",
+                       "IPC_FGC_[0-9]_[0-9A-Z]+"):
+            step = next(s for s in self.plan["steps"]
+                        if s.get("expect") == marker)
+            command = step["send"]
+            flags = re.findall(r"grep (-[A-Za-z]+ )", command)
+            self.assertTrue(flags, marker)
+            for flag in flags:
+                self.assertIn("q", flag, f"{marker}: {flag}")
+            self.assertNotIn("head -", command)
+            self.assertNotIn("tail -", command)
+            self.assertNotIn("wc -", command)
+            self.assertNotIn("sed ", command)
 
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]

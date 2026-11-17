@@ -29,6 +29,12 @@ env:
   EMULATOR_SHA: 64a446deaacb0bca10d6053781ff1f7ad4a29552
   IPC_NAME: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
   IPC_SHA: 5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9
+  # Frozen variant A reference: the already accepted Core 3.5.17-2fb1 build.
+  # Read-only download; the accepted IPK, ELF and all original pins are
+  # never modified or rebuilt by this workflow.
+  CORE_IPK_NAME: telemt_3.5.17-2fb1_mipsel-3.4.ipk
+  CORE_IPK_SHA: 2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d
+  CORE_ARTIFACT_RUN_ID: '44046020268'
 
 jobs:
   safety:
@@ -114,6 +120,22 @@ jobs:
           test -f "$RUNNER_TEMP/ipc-ipk/$IPC_NAME"
           printf '%s  %s\n' "$IPC_SHA" "$RUNNER_TEMP/ipc-ipk/$IPC_NAME" | sha256sum -c -
           echo 'PINNED_LAB_IPK: PASS'
+      - name: Download frozen accepted Core IPK (variant A reference, read-only)
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-core-mipsel-experimental-getfb
+          repository: saymer-alt/entware-go
+          run-id: ${{ env.CORE_ARTIFACT_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/core-ipk
+      - name: Fail closed on wrong/missing accepted Core IPK bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find "$RUNNER_TEMP/core-ipk" -maxdepth 1 -type f | wc -l)" -eq 1
+          test -f "$RUNNER_TEMP/core-ipk/$CORE_IPK_NAME"
+          printf '%s  %s\n' "$CORE_IPK_SHA" "$RUNNER_TEMP/core-ipk/$CORE_IPK_NAME" | sha256sum -c -
+          echo 'PINNED_CORE_IPK: PASS'
       - name: Install existing emulator runtime dependencies
         shell: bash
         run: |
@@ -128,7 +150,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 docs/research/telemt-control-ipc/mt7621_guest.py \
-            --emulator-root emulator --ipk-dir "$RUNNER_TEMP/ipc-ipk" --plan-only
+            --emulator-root emulator --ipk-dir "$RUNNER_TEMP/ipc-ipk" \
+            --core-ipk-dir "$RUNNER_TEMP/core-ipk" --plan-only
           echo 'LAB_IPK_AND_SCENARIO: PASS'
       - name: Cache exact patched QEMU-system-mipsel
         id: qemu-cache
@@ -225,6 +248,7 @@ jobs:
           set -euo pipefail
           python3 docs/research/telemt-control-ipc/mt7621_guest.py \
             --emulator-root emulator --ipk-dir "$RUNNER_TEMP/ipc-ipk" \
+            --core-ipk-dir "$RUNNER_TEMP/core-ipk" \
             --nand-dir "$RUNNER_TEMP/mt7621-nand" \
             --workspace "$RUNNER_TEMP/mt7621-ipc-workspace" \
             --credentials-file "$RUNNER_TEMP/mt7621-credentials.json" \
