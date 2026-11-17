@@ -20,6 +20,11 @@ SR="$EB/sysroot"
 L="$SR/usr/mipsel-linux-gnu/lib"
 QEMU="${QEMU_BIN:-qemu-mipsel}"
 TARGET=mipsel-unknown-linux-gnu
+# Run the native MIPSel entropy probes using the same compiler as Core.
+test -n "${RUST_NIGHTLY_PIN:?missing dated nightly archive}"
+test "$(rustc +"${RUST_BUILD_TOOLCHAIN:?missing verified nightly alias}" -V)" = "${RUSTC_PIN_VERSION:?missing rustc identity}" || {
+  echo '::error::Entropy probes would use a different compiler'; exit 1;
+}
 
 command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
 command -v cargo >/dev/null 2>&1 || { test -f "$HOME/.cargo/env" && . "$HOME/.cargo/env"; }
@@ -72,14 +77,14 @@ run_probe() { # <binary> <expected-final-marker>
 MODE1_RUSTFLAGS="-C target-cpu=mips32r2 -C target-feature=+soft-float -Aunexpected_cfgs"
 export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="$MODE1_RUSTFLAGS"
 cargo clean -p libc 2>/dev/null || true
-cargo +nightly -Z build-std=std,panic_abort build --release --target "$TARGET" --bins 2>&1 \
+cargo +"$RUST_BUILD_TOOLCHAIN" -Z build-std=std,panic_abort build --release --target "$TARGET" --bins 2>&1 \
   | grep -E '^error' && { echo "::error::probe plain build failed"; exit 1; }
 run_probe "$EB/entropy-probe-rs/target/$TARGET/release/entropy-probe-rs" "RS_PROBE_DONE"
 echo "QEMU_PROBE_PLAIN: PASS (getrandom path present on target arch)"
 
 export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUSTFLAGS="$MODE1_RUSTFLAGS --cfg getrandom_test_linux_fallback"
 cargo clean -p libc 2>/dev/null || true
-cargo +nightly -Z build-std=std,panic_abort build --release --target "$TARGET" --bins 2>&1 \
+cargo +"$RUST_BUILD_TOOLCHAIN" -Z build-std=std,panic_abort build --release --target "$TARGET" --bins 2>&1 \
   | grep -E '^error' && { echo "::error::probe fallback build failed"; exit 1; }
 FB="$EB/entropy-probe-rs/target/$TARGET/release/entropy-probe-rs"
 FC="$EB/entropy-probe-rs/target/$TARGET/release/entropy-failclosed-rs"
