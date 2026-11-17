@@ -10,6 +10,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -101,6 +102,19 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertTrue(self.module.start_command().startswith("HOME=/opt/lab"))
         self.assertIn("--control-socket " + self.module.CTL,
                       self.module.start_command())
+
+    def test_ssh_command_posix_shell_parse_without_execution(self):
+        labels = [step.get("expect") for step in self.plan["steps"]]
+        for step in self.plan["steps"][labels.index("IPC_IPK_PINNED"):]:
+            if step["action"] != "ssh":
+                continue
+            with self.subTest(marker=step["expect"]):
+                # -n parses but never executes any command, never opens
+                # sockets, and never starts the lab binary.
+                parsed = subprocess.run(
+                    ["/bin/sh", "-n", "-c", step["send"]],
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr[:300])
 
     def test_negative_parser_mutations_reject_late_echo_or_newlines(self):
         for change in ("newline", "echo_collision"):
