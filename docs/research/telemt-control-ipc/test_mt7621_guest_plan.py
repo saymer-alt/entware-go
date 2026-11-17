@@ -192,6 +192,21 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertNotIn("cat /proc/", command)
         self.assertNotIn("echo $e", command)
 
+    def test_pid_readiness_requires_stable_live_executable(self):
+        labels = [s.get("expect") for s in self.plan["steps"]]
+        probe = self.plan["steps"][labels.index("IPC_PIDFILE_READY")]["send"]
+        self.assertIn('case "$p" in', probe)
+        self.assertIn('/proc/$p/cmdline', probe)
+        self.assertIn('busybox readlink /proc/$p/exe', probe)
+        self.assertIn('/opt/bin/busybox sleep 2;', probe)
+        self.assertLess(probe.index("sleep 2;"),
+                        probe.index("printf 'IPC_%s\\n' PIDFILE_READY"))
+        self.assertGreaterEqual(probe.count("readlink /proc/$p/exe"), 2)
+        self.assertGreaterEqual(probe.count("busybox cat " + self.module.PID), 2)
+        exe = self.plan["steps"][labels.index("IPC_CHILD_EXE_CONFIRMED")]["send"]
+        self.assertTrue(exe.startswith("[ -r " + self.module.PID + " ] || exit 57;"))
+        self.assertIn("|| exit 57;", exe)
+
     def test_foreground_classifier_uses_only_pinned_disposable_config(self):
         step = next(s for s in self.plan["steps"]
                     if s.get("expect") == "IPC_PIDFILE_READY")

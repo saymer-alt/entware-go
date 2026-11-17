@@ -178,8 +178,10 @@ def scenario_for(emulator_root):
                   "printf 'IPC_%s\\n' START_RETURNED",
                   "IPC_START_RETURNED", 120),
         # A detached child can fail after start(1) parent exits 0 and
-        # release its PID via RAII. If there is no live pinned executable
-        # and no transient PID, diagnose one short, isolated foreground run.
+        # release its PID via RAII. Do not accept mere readability as READY:
+        # verify numeric PID, pinned live /proc/exe identity and stability
+        # across 2s in the same SSH session. Then, if not stable, attempt
+        # one short, isolated foreground run.
         # The subprocess is terminated by bounded BusyBox timeout; no PID
         # from a file is ever signalled. The foreground PID, socket and log
         # names differ from normal ones, on the same disposable guest.
@@ -191,16 +193,26 @@ def scenario_for(emulator_root):
         # applet; 70 unsupported kernel syscall.
         guest_ssh("i=0; seen=0; while [ \"$i\" -lt 30 ]; do "
                   "[ -e " + PID + " ] && seen=1; "
-                  "[ -r " + PID + " ] && break; "
-                  "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
                   "if [ -r " + PID + " ]; then "
-                  "printf 'IPC_%s\\n' PIDFILE_READY; exit 0; fi; "
+                  "p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
+                  "case \"$p\" in ''|*[!0-9]*) ;; *) "
+                  "if [ -r /proc/$p/cmdline ] && "
+                  "[ \"$(/opt/bin/busybox readlink /proc/$p/exe 2>/dev/null)\" = '" +
+                  BIN + "' ]; then "
+                  "/opt/bin/busybox sleep 2; "
+                  "if [ -r " + PID + " ] && "
+                  "[ \"$(/opt/bin/busybox cat " + PID + " 2>/dev/null)\" = \"$p\" ] && "
+                  "[ -r /proc/$p/cmdline ] && "
+                  "[ \"$(/opt/bin/busybox readlink /proc/$p/exe 2>/dev/null)\" = '" +
+                  BIN + "' ]; then "
+                  "printf 'IPC_%s\\n' PIDFILE_READY; exit 0; "
+                  "fi; fi;; esac; fi; "
+                  "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
                   "[ -S " + CTL + " ] && exit 55; "
                   "n=0; for d in /proc/[0-9]*; do "
                   "e=$(/opt/bin/busybox readlink \"$d/exe\" 2>/dev/null); "
                   "[ \"$e\" = '" + BIN + "' ] && n=$((n+1)); done; "
                   "[ \"$n\" = 0 ] || exit 56; "
-                  "[ \"$seen\" = 0 ] || exit 57; "
                   "if [ -s " + LOG + " ]; then "
                   "/opt/bin/busybox grep -Eqi 'panic|panicked' " + LOG +
                   " && exit 58; "
@@ -238,12 +250,14 @@ def scenario_for(emulator_root):
                   "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
                   "2>/dev/null && exit 70; "
                   "[ \"$frc\" = 0 ] && exit 63; "
+                  "[ \"$seen\" = 0 ] || exit 57; "
                   "[ -s " + LOG + " ] && exit 60; "
                   "[ -e " + PID + ".lock ] && exit 61; "
                   "[ \"$frc\" != 0 ] && exit 64; "
                   "exit 46",
                   "IPC_PIDFILE_READY", 120),
-        guest_ssh("p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
+        guest_ssh("[ -r " + PID + " ] || exit 57; "
+                  "p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null) || exit 57; "
                   "case \"$p\" in ''|*[!0-9]*) exit 47;; esac; "
                   "[ -r /proc/$p/cmdline ] || exit 48; "
                   "exe=$(/opt/bin/busybox readlink /proc/$p/exe 2>/dev/null); "
