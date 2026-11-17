@@ -31,9 +31,11 @@ class LegacySupervisorHostProof(unittest.TestCase):
     def setUpClass(cls):
         cls._binary_dir = tempfile.TemporaryDirectory()
         cls.binary = str(Path(cls._binary_dir.name) / "legacy-supervisor")
-        subprocess.run([shutil.which("cc") or "cc", "-std=c11", "-Wall",
-                        "-Wextra", "-Werror", "-O2", str(SOURCE), "-o", cls.binary],
-                       check=True, capture_output=True)
+        compiled = subprocess.run([shutil.which("cc") or "cc", "-std=c11", "-Wall",
+                                   "-Wextra", "-Werror", "-O2", str(SOURCE), "-o", cls.binary],
+                                  capture_output=True, text=True)
+        if compiled.returncode != 0:
+            raise AssertionError(f"host C compiler failed:\n{compiled.stderr}")
 
     @classmethod
     def tearDownClass(cls):
