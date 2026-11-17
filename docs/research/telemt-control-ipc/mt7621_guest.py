@@ -74,7 +74,7 @@ def synthetic_file_step(config, secret):
         "printf '%s' '" + b64_secret +
         "' | /opt/bin/busybox base64 -d > /opt/etc/telemt-lab.secret && "
         "/opt/bin/busybox chmod 600 " + CONF + " /opt/etc/telemt-lab.secret && "
-        "printf 'IPC_%s\n' SYNTHETIC_CONFIG",
+        "printf 'IPC_%s\\n' SYNTHETIC_CONFIG",
         "IPC_SYNTHETIC_CONFIG")
 
 
@@ -105,28 +105,28 @@ def scenario_for(emulator_root):
     steps.extend([
         guest_ssh("/opt/bin/busybox wget -qO /opt/lab/ipc.ipk "
                   "http://" + MIRROR_HOST + "/entware/" + CORE_NAME +
-                  " && printf '%s  %s\n' '" + CORE_SHA +
+                  " && printf '%s  %s\\n' '" + CORE_SHA +
                   "' /opt/lab/ipc.ipk > /opt/lab/ipc.sha && "
                   "/opt/bin/busybox sha256sum -c /opt/lab/ipc.sha >/dev/null && "
-                  "printf 'IPC_%s\n' IPK_PINNED", "IPC_IPK_PINNED", 300),
+                  "printf 'IPC_%s\\n' IPK_PINNED", "IPC_IPK_PINNED", 300),
         guest_ssh("/opt/bin/opkg install /opt/lab/ipc.ipk "
                   ">/opt/lab/ipc-opkg.log 2>&1 && "
                   "/opt/bin/opkg status telemt-ipc-lab | "
                   "/opt/bin/busybox grep -q 'Version: 3.5.17-1ipc1' && "
                   "test -x " + BIN + " && "
                   "test ! -e /opt/bin/telemt && "
-                  "printf 'IPC_%s\n' OPKG_SEPARATE",
+                  "printf 'IPC_%s\\n' OPKG_SEPARATE",
                   "IPC_OPKG_SEPARATE", 300),
-        guest_ssh("printf '%s  %s\n' '" + ELF_SHA + "' " + BIN +
+        guest_ssh("printf '%s  %s\\n' '" + ELF_SHA + "' " + BIN +
                   " > /opt/lab/ipc-elf.sha && "
                   "/opt/bin/busybox sha256sum -c /opt/lab/ipc-elf.sha >/dev/null "
-                  "&& printf 'IPC_%s\n' ELF_PINNED", "IPC_ELF_PINNED"),
+                  "&& printf 'IPC_%s\\n' ELF_PINNED", "IPC_ELF_PINNED"),
         synthetic_file_step(config, secret),
         guest_ssh("HOME=/opt/lab " + BIN +
                   " stop --control-socket " + CTL +
                   " >/opt/lab/ipc-absent.out 2>&1; rc=$?; "
                   "[ \"$rc\" -ne 0 ] && "
-                  "printf 'IPC_%s\n' ABSENT_REJECTED",
+                  "printf 'IPC_%s\\n' ABSENT_REJECTED",
                   "IPC_ABSENT_REJECTED"),
         guest_ssh(start_command() + " >/opt/lab/ipc-start.out 2>&1 || exit 1; "
                   "i=0; while [ \"$i\" -lt 30 ]; do "
@@ -135,7 +135,7 @@ def scenario_for(emulator_root):
                   "test -S " + CTL + " && "
                   "p=$(/opt/bin/busybox cat " + PID + "); "
                   "[ \"$(/opt/bin/busybox readlink /proc/$p/exe)\" = '" + BIN +
-                  "' ] && printf 'IPC_%s\n' DAEMON_ALIVE",
+                  "' ] && printf 'IPC_%s\\n' DAEMON_ALIVE",
                   "IPC_DAEMON_ALIVE", 150),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN + " reload --control-socket " + CTL +
@@ -144,7 +144,7 @@ def scenario_for(emulator_root):
                   "[ \"$(/opt/bin/busybox cat " + PID + ")\" = \"$p\" ] && "
                   "[ -r /proc/$p/cmdline ] && "
                   "/opt/bin/busybox grep -q 'SIGHUP received' " + LOG +
-                  " && printf 'IPC_%s\n' RELOAD_SAME_PID",
+                  " && printf 'IPC_%s\\n' RELOAD_SAME_PID",
                   "IPC_RELOAD_SAME_PID", 150),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "/opt/bin/busybox chmod 777 /opt/var/run/telemt-ipc-lab; "
@@ -152,20 +152,20 @@ def scenario_for(emulator_root):
                   " >/opt/lab/ipc-unsafe.out 2>&1; rc=$?; "
                   "/opt/bin/busybox chmod 700 /opt/var/run/telemt-ipc-lab; "
                   "[ \"$rc\" -ne 0 ] && [ -r /proc/$p/cmdline ] && "
-                  "printf 'IPC_%s\n' UNSAFE_PARENT_REJECTED",
+                  "printf 'IPC_%s\\n' UNSAFE_PARENT_REJECTED",
                   "IPC_UNSAFE_PARENT_REJECTED"),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN +
                   " reload --pid-file " + PID +
                   " >/opt/lab/ipc-pidfd.out 2>&1; rc=$?; "
                   "[ \"$rc\" -ne 0 ] && [ -r /proc/$p/cmdline ] && "
-                  "printf 'IPC_%s\n' NO_IMPLICIT_PIDFD_FALLBACK",
+                  "printf 'IPC_%s\\n' NO_IMPLICIT_PIDFD_FALLBACK",
                   "IPC_NO_IMPLICIT_PIDFD_FALLBACK"),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN +
                   " stop --control-socket >/opt/lab/ipc-empty.out 2>&1; rc=$?; "
                   "[ \"$rc\" -ne 0 ] && [ -r /proc/$p/cmdline ] && "
-                  "printf 'IPC_%s\n' EMPTY_PATH_REJECTED",
+                  "printf 'IPC_%s\\n' EMPTY_PATH_REJECTED",
                   "IPC_EMPTY_PATH_REJECTED"),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN + " stop --control-socket " + CTL +
@@ -180,12 +180,12 @@ def scenario_for(emulator_root):
                   "e=$(/opt/bin/busybox readlink \"$d/exe\" 2>/dev/null); "
                   "[ \"$e\" = '" + BIN + "' ] && n=$((n+1)); done; "
                   "[ \"$n\" = 0 ] && "
-                  "printf 'IPC_%s\n' STOP_CLEAN",
+                  "printf 'IPC_%s\\n' STOP_CLEAN",
                   "IPC_STOP_CLEAN", 150),
         guest_ssh("HOME=/opt/lab " + BIN + " stop --control-socket " + CTL +
                   " >/dev/null 2>&1; [ \"$?\" -ne 0 ] && "
                   "test ! -e " + CTL + " && "
-                  "printf 'IPC_%s\n' SECOND_STOP_REJECTED",
+                  "printf 'IPC_%s\\n' SECOND_STOP_REJECTED",
                   "IPC_SECOND_STOP_REJECTED"),
     ])
     # Reuse only the already accepted native KeeneticOS reboot bootstrap
@@ -205,19 +205,19 @@ def scenario_for(emulator_root):
                   "e=$(/opt/bin/busybox readlink \"$d/exe\" 2>/dev/null); "
                   "[ \"$e\" = '" + BIN + "' ] && n=$((n+1)); done; "
                   "[ \"$n\" = 0 ] && "
-                  "printf 'IPC_%s\n' REBOOT_NO_AUTOSTART",
+                  "printf 'IPC_%s\\n' REBOOT_NO_AUTOSTART",
                   "IPC_REBOOT_NO_AUTOSTART"),
         guest_ssh("HOME=/opt/lab " + BIN +
                   " reload --control-socket " + CTL +
                   " >/dev/null 2>&1; [ \"$?\" -ne 0 ] && "
-                  "printf 'IPC_%s\n' REBOOT_ABSENT_REJECTED",
+                  "printf 'IPC_%s\\n' REBOOT_ABSENT_REJECTED",
                   "IPC_REBOOT_ABSENT_REJECTED"),
         guest_ssh(start_command() + " >/opt/lab/ipc-restart.out 2>&1 || exit 1; "
                   "i=0; while [ \"$i\" -lt 30 ]; do "
                   "test -S " + CTL + " && test -r " + PID +
                   " && break; /opt/bin/busybox sleep 1; i=$((i+1)); done; "
                   "test -S " + CTL + " && "
-                  "printf 'IPC_%s\n' REBOOT_MANUAL_START",
+                  "printf 'IPC_%s\\n' REBOOT_MANUAL_START",
                   "IPC_REBOOT_MANUAL_START", 150),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN + " stop --control-socket " + CTL +
@@ -228,13 +228,13 @@ def scenario_for(emulator_root):
                   "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
                   "test ! -e " + CTL +
                   " && test ! -r /proc/$p/cmdline && "
-                  "printf 'IPC_%s\n' REBOOT_STOP_CLEAN",
+                  "printf 'IPC_%s\\n' REBOOT_STOP_CLEAN",
                   "IPC_REBOOT_STOP_CLEAN", 150),
         guest_ssh("/opt/bin/opkg remove telemt-ipc-lab "
                   ">/opt/lab/ipc-remove.out 2>&1 && "
                   "test ! -e " + BIN + " && "
                   "test ! -e " + CTL + " && "
-                  "printf 'IPC_%s\n' ROLLBACK_OK",
+                  "printf 'IPC_%s\\n' ROLLBACK_OK",
                   "IPC_ROLLBACK_OK", 150),
     ])
     return {"name": "Ported MT7621 native TeleMT in-daemon IPC acceptance "
@@ -260,6 +260,15 @@ def main():
     if len(steps) >= 74 or not any(
             s.get("expect") == "IPC_STOP_CLEAN" for s in steps):
         raise ValueError("narrow IPC scenario contract was violated")
+    # The emulator's real scenario validator must run *before* any QEMU,
+    # not only on execution. This catches literal newlines in guest shell
+    # commands and echo-unsafe markers at the cheap preflight boundary.
+    import tempfile
+    from lab.run import load_scenario
+    with tempfile.TemporaryDirectory(prefix="telemt-ipc-scenario-") as temp_dir:
+        candidate_path = Path(temp_dir) / "scenario.json"
+        candidate_path.write_text(json.dumps(plan), encoding="utf-8")
+        load_scenario(candidate_path)
     if args.plan_only:
         print(json.dumps({"status": "PINNED_IPC_GUEST_PLAN_PASS",
                           "step_count": len(steps),

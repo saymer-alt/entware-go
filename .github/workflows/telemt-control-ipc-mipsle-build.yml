@@ -6,9 +6,11 @@ name: TeleMT daemon IPC MIPSLE lab IPK (no release)
 on:
   pull_request:
     branches: [gh-action-build]
+    # Build only when the binary source changes. Guest workflow and its
+    # Python scenarios never rebuild the accepted lab ELF/IPK.
     paths:
-      - 'docs/research/telemt-control-ipc/**'
-      - '.github/workflows/telemt-control-ipc-mipsle-build.yml'
+      - 'docs/research/telemt-control-ipc/local_control.rs'
+      - 'docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch'
   workflow_dispatch:
 
 permissions:
@@ -48,7 +50,7 @@ jobs:
           git cat-file -e "$HEAD_SHA^{commit}"
           changed=$(git diff --name-only "$PR_BASE_SHA...$HEAD_SHA")
           echo "$changed"
-          allowed='^(docs/research/telemt-control-ipc/|\.github/workflows/telemt-control-ipc-(source|mipsle-build)\.yml$)'
+          allowed='^(docs/research/telemt-control-ipc/|\.github/workflows/telemt-control-ipc-(source|mipsle-build|mt7621-guest)\.yml$)'
           if echo "$changed" | grep -qvE "$allowed"; then
             echo "::error::Only the dedicated IPC research workflow and docs are allowed"
             exit 1
