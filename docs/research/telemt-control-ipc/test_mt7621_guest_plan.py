@@ -50,7 +50,7 @@ class ResearchPlanTests(unittest.TestCase):
         cls.plan = cls.module.scenario_for(cls.root)
         sys.path.insert(0, str(cls.root))
         from lab.run import load_scenario
-        cls.load_scenario = load_scenario
+        cls.load_scenario = staticmethod(load_scenario)
 
     def test_emulator_sha_is_immutable(self):
         self.assertEqual(
