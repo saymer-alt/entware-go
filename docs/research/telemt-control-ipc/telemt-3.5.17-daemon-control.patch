@@ -1,0 +1,537 @@
+diff --git a/src/daemon/mod.rs b/src/daemon/mod.rs
+--- a/src/daemon/mod.rs
++++ b/src/daemon/mod.rs
+@@ -14,6 +14,8 @@
+ 
+ // PID file ownership and process-control helpers.
+ mod pid_file;
++#[cfg(target_os = "linux")]
++pub(crate) mod local_control;
+ 
+ pub use pid_file::DaemonStatus;
+ #[allow(unused_imports)]
+@@ -29,6 +31,8 @@
+     pub daemonize: bool,
+     /// Path to PID file.
+     pub pid_file: Option<PathBuf>,
++    /// Explicit Linux-only local control socket. No implicit legacy fallback.
++    pub control_socket: Option<PathBuf>,
+     /// Require trusted, symlink-free PID and log parents. Disabled by default for compatibility.
+     pub strict_runtime_paths: bool,
+     /// User to run as after binding sockets.
+diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
+--- a/src/cli/daemon_commands.rs
++++ b/src/cli/daemon_commands.rs
+@@ -27,6 +27,17 @@
+             s if s.starts_with("--pid-file=") => {
+                 opts.pid_file = Some(PathBuf::from(s.trim_start_matches("--pid-file=")));
+             }
++            "--control-socket" => {
++                i += 1;
++                if i < args.len() {
++                    opts.control_socket = Some(PathBuf::from(&args[i]));
++                }
++            }
++            s if s.starts_with("--control-socket=") => {
++                opts.control_socket = Some(PathBuf::from(
++                    s.trim_start_matches("--control-socket="),
++                ));
++            }
+             "--run-as-user" => {
+                 i += 1;
+                 if i < args.len() {
+@@ -63,11 +74,34 @@
+ }
+ 
+ /// Sends SIGTERM and waits briefly for graceful PID-file cleanup.
++pub(super) fn stop(
++    pid_file: &Path,
++    strict_runtime_paths: bool,
++    control_socket: Option<&Path>,
++) -> i32 {
+-pub(super) fn stop(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
+     use nix::sys::signal::Signal;
+ 
+     println!("Stopping telemt daemon...");
+ 
++    if let Some(path) = control_socket {
++        #[cfg(target_os = "linux")]
++        return match daemon::local_control::send_command(path, b'S') {
++            Ok(()) => {
++                println!("Stop request accepted by local daemon (shutdown pending)");
++                0
++            }
++            Err(error) => {
++                eprintln!("Local stop rejected: {error}");
++                1
++            }
++        };
++        #[cfg(not(target_os = "linux"))]
++        {
++            eprintln!("Local daemon control is supported only on Linux");
++            return 1;
++        }
++    }
++
+     match daemon::signal_pid_file(pid_file, Signal::SIGTERM, strict_runtime_paths) {
+         Ok(()) => {
+             println!("Stop signal sent successfully");
+@@ -93,11 +127,34 @@
+ }
+ 
+ /// Sends SIGHUP to trigger configuration reload.
++pub(super) fn reload(
++    pid_file: &Path,
++    strict_runtime_paths: bool,
++    control_socket: Option<&Path>,
++) -> i32 {
+-pub(super) fn reload(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
+     use nix::sys::signal::Signal;
+ 
+     println!("Reloading telemt configuration...");
+ 
++    if let Some(path) = control_socket {
++        #[cfg(target_os = "linux")]
++        return match daemon::local_control::send_command(path, b'R') {
++            Ok(()) => {
++                println!("Local reload request accepted (completion not yet verified)");
++                0
++            }
++            Err(error) => {
++                eprintln!("Local reload rejected: {error}");
++                1
++            }
++        };
++        #[cfg(not(target_os = "linux"))]
++        {
++            eprintln!("Local daemon control is supported only on Linux");
++            return 1;
++        }
++    }
++
+     match daemon::signal_pid_file(pid_file, Signal::SIGHUP, strict_runtime_paths) {
+         Ok(()) => {
+             println!("Reload signal sent successfully");
+diff --git a/src/cli.rs b/src/cli.rs
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -186,6 +186,19 @@
+                     cmd.daemon_opts.pid_file = Some(cmd.pid_file.clone());
+                 }
+             }
++            #[cfg(unix)]
++            "--control-socket" => {
++                i += 1;
++                if i < args.len() {
++                    cmd.daemon_opts.control_socket = Some(PathBuf::from(&args[i]));
++                }
++            }
++            #[cfg(unix)]
++            s if s.starts_with("--control-socket=") => {
++                cmd.daemon_opts.control_socket = Some(PathBuf::from(
++                    s.trim_start_matches("--control-socket="),
++                ));
++            }
+             // Config path (positional, non-flag argument)
+             s if !s.starts_with('-') => {
+                 cmd.config_path = s.to_string();
+@@ -206,10 +219,12 @@
+         Subcommand::Stop => Some(daemon_commands::stop(
+             &cmd.pid_file,
+             cmd.daemon_opts.strict_runtime_paths,
++            cmd.daemon_opts.control_socket.as_deref(),
+         )),
+         Subcommand::Reload => Some(daemon_commands::reload(
+             &cmd.pid_file,
+             cmd.daemon_opts.strict_runtime_paths,
++            cmd.daemon_opts.control_socket.as_deref(),
+         )),
+         Subcommand::Status => Some(daemon_commands::status(
+             &cmd.pid_file,
+diff --git a/src/maestro/mod.rs b/src/maestro/mod.rs
+--- a/src/maestro/mod.rs
++++ b/src/maestro/mod.rs
+@@ -115,6 +115,7 @@
+     orchestrator::run_telemt_core(
+         user.is_some() || group.is_some(),
+         daemon_opts.strict_runtime_paths,
++        daemon_opts.control_socket.clone(),
+         || {
+             if (user.is_some() || group.is_some())
+                 && let Err(e) =
+@@ -130,7 +131,7 @@
+ 
+ #[cfg(not(unix))]
+ async fn run_inner() -> std::result::Result<(), Box<dyn std::error::Error>> {
++    orchestrator::run_telemt_core(false, false, None, || {}).await
+-    orchestrator::run_telemt_core(false, false, || {}).await
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/maestro/orchestrator.rs b/src/maestro/orchestrator.rs
+--- a/src/maestro/orchestrator.rs
++++ b/src/maestro/orchestrator.rs
+@@ -34,6 +34,7 @@
+ pub(super) async fn run_telemt_core(
+     privilege_drop_requested: bool,
+     strict_runtime_paths: bool,
++    control_socket_path: Option<std::path::PathBuf>,
+     drop_after_bind: impl FnOnce(),
+ ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+     let bootstrap::BootstrapState {
+@@ -463,6 +464,28 @@
+         process_started_at,
+         process_control_plane.clone(),
+     );
++
++    // Buffer STOP in-process even if it arrives just before the shutdown
++    // future begins polling. No external PID is ever signalled.
++    let (local_stop_tx, local_stop_rx) = tokio::sync::mpsc::channel(1);
++    #[cfg(target_os = "linux")]
++    let local_control = match control_socket_path.as_deref() {
++        Some(path) => Some(crate::daemon::local_control::LocalControl::bind(
++            path,
++            local_stop_tx,
++        )?),
++        None => None,
++    };
++    #[cfg(not(target_os = "linux"))]
++    {
++        drop(local_stop_tx);
++        if control_socket_path.is_some() {
++            return Err(std::io::Error::other(
++                "--control-socket is available only on Linux",
++            ).into());
++        }
++    }
++
+     shutdown::wait_for_shutdown(
+         process_started_at,
+         active_runtime,
+@@ -470,8 +493,14 @@
+         reload_supervisor,
+         conntrack_firewall,
+         process_control_plane,
++        local_stop_rx,
+     )
+     .await;
+ 
++    #[cfg(target_os = "linux")]
++    if let Some(control) = local_control {
++        control.close().await?;
++    }
++
+     Ok(())
+ }
+diff --git a/src/maestro/shutdown.rs b/src/maestro/shutdown.rs
+--- a/src/maestro/shutdown.rs
++++ b/src/maestro/shutdown.rs
+@@ -57,8 +57,12 @@
+     reload_supervisor: ReloadSupervisorHandle,
+     conntrack_firewall: Option<FirewallAuthority>,
+     process_control_plane: ProcessControlPlane,
++    mut local_stop_rx: tokio::sync::mpsc::Receiver<()>,
+ ) {
++    let signal = tokio::select! {
++        signal = wait_for_shutdown_signal() => signal,
++        Some(()) = local_stop_rx.recv() => ShutdownSignal::Terminate,
++    };
+-    let signal = wait_for_shutdown_signal().await;
+     perform_shutdown(
+         signal,
+         process_started_at,
+diff --git a/src/config/hot_reload/watcher.rs b/src/config/hot_reload/watcher.rs
+--- a/src/config/hot_reload/watcher.rs
++++ b/src/config/hot_reload/watcher.rs
+@@ -332,6 +332,13 @@
+     let (log_tx, log_rx) = watch::channel(initial_level);
+ 
+     let config_path = normalize_watch_path(&config_path);
++    // Register the signal receiver at watcher construction time, not later
++    // inside the task, so early local IPC RELOAD cannot miss SIGHUP.
++    #[cfg(unix)]
++    let mut sighup = {
++        use tokio::signal::unix::{SignalKind, signal};
++        signal(SignalKind::hangup()).expect("Failed to register SIGHUP handler")
++    };
+     let task = async move {
+         if let Some(activation) = activation.as_mut() {
+             loop {
+@@ -457,12 +464,6 @@
+             let _ = notify_tx.try_send(());
+         }
+ 
+-        #[cfg(unix)]
+-        let mut sighup = {
+-            use tokio::signal::unix::{SignalKind, signal};
+-            signal(SignalKind::hangup()).expect("Failed to register SIGHUP handler")
+-        };
+-
+         loop {
+             let mut force = false;
+             #[cfg(unix)]
+diff --git a/src/daemon/local_control.rs b/src/daemon/local_control.rs
+new file mode 100644
+--- /dev/null
++++ b/src/daemon/local_control.rs
+@@ -0,0 +1,260 @@
++//! Linux-only opt-in, process-owned control channel for TeleMT.
++//!
++//! Research patch for upstream TeleMT 3.5.17. It never signals a PID read
++//! from a pidfile, and does not change the default pidfd-based CLI path.
++use std::fs;
++use std::io;
++use std::os::fd::AsRawFd;
++use std::os::unix::ffi::OsStrExt;
++use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
++use std::path::{Component, Path, PathBuf};
++use std::time::Duration;
++
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio::net::{UnixListener, UnixStream};
++use tokio::sync::mpsc;
++use tokio::task::JoinHandle;
++use tokio_util::sync::CancellationToken;
++
++use crate::util::secure_fs::AnchoredPath;
++
++const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
++
++fn private_parent(path: &Path) -> io::Result<AnchoredPath> {
++    // All control sockets must live in an existing private directory.
++    // Require a stable, absolute, symlink-free path, including the ancestors.
++    if !path.is_absolute()
++        || path.components().any(|c| !matches!(c, Component::Normal(_) | Component::RootDir))
++        || path.as_os_str().as_bytes().len() >= 108
++    {
++        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid control socket path"));
++    }
++    let anchor = AnchoredPath::open_trusted_parent(path)?;
++    let parent_file = fs::File::from(anchor.parent().try_clone()?);
++    let metadata = parent_file.metadata()?;
++    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
++        return Err(io::Error::new(io::ErrorKind::PermissionDenied,
++            "control socket parent must be owned by this user and private"));
++    }
++    Ok(anchor)
++}
++
++fn peer_uid(fd: i32) -> io::Result<libc::uid_t> {
++    let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
++    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
++    // SAFETY: SO_PEERCRED writes exactly a kernel-owned ucred value.
++    let result = unsafe {
++        libc::getsockopt(
++            fd,
++            libc::SOL_SOCKET,
++            libc::SO_PEERCRED,
++            (&mut credentials as *mut libc::ucred).cast(),
++            &mut length,
++        )
++    };
++    if result != 0 {
++        return Err(io::Error::last_os_error());
++    }
++    if length as usize != std::mem::size_of::<libc::ucred>() {
++        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid peer credentials"));
++    }
++    Ok(credentials.uid)
++}
++
++/// Sends one bounded, opt-in command. Never sends a signal by PID.
++pub fn send_command(path: &Path, command: u8) -> io::Result<()> {
++    let _anchor = private_parent(path)?;
++    if !matches!(command, b'S' | b'R') {
++        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid control command"));
++    }
++    // CLI is invoked outside the long-running server's Tokio runtime.
++    let runtime = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()?;
++    runtime.block_on(async {
++        tokio::time::timeout(COMMAND_TIMEOUT, async {
++            let mut stream = UnixStream::connect(path).await?;
++            if peer_uid(stream.as_raw_fd())? != unsafe { libc::geteuid() } {
++                return Err(io::Error::new(io::ErrorKind::PermissionDenied,
++                    "control endpoint belongs to an unexpected user"));
++            }
++            stream.write_all(&[command]).await?;
++            let mut response = [0u8; 1];
++            stream.read_exact(&mut response).await?;
++            if response != [b'O'] {
++                return Err(io::Error::other("control operation was rejected"));
++            }
++            Ok(())
++        }).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut,
++            "local control request timed out"))?
++    })
++}
++
++pub struct LocalControl {
++    path: PathBuf,
++    anchor: AnchoredPath,
++    socket_device: u64,
++    socket_inode: u64,
++    cancelled: CancellationToken,
++    worker: JoinHandle<()>,
++}
++
++impl LocalControl {
++    /// Expose control only after the process has installed its runtime signal
++    /// watchers. Caller must retain this owner through graceful shutdown.
++    pub fn bind(path: &Path, stop_requests: mpsc::Sender<()>) -> io::Result<Self> {
++        let anchor = private_parent(path)?;
++        match fs::symlink_metadata(path) {
++            Ok(_) => return Err(io::Error::new(io::ErrorKind::AlreadyExists,
++                "control socket path already exists; refusing to remove it")),
++            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
++            _ => {}
++        }
++        let listener = UnixListener::bind(path)?;
++        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
++        let metadata = fs::symlink_metadata(path)?;
++        if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
++            return Err(io::Error::new(io::ErrorKind::PermissionDenied,
++                "control socket identity changed during bind"));
++        }
++        let cancelled = CancellationToken::new();
++        let cancellation = cancelled.clone();
++        let uid = unsafe { libc::geteuid() };
++        let worker = tokio::spawn(async move {
++            let mut stopping = false;
++            loop {
++                tokio::select! {
++                    _ = cancellation.cancelled() => break,
++                    accepted = listener.accept() => {
++                        let Ok((mut peer, _)) = accepted else { continue };
++                        let mut response = b'E';
++                        let mut request = [0u8; 1];
++                        let accepted = tokio::time::timeout(COMMAND_TIMEOUT, async {
++                            if peer_uid(peer.as_raw_fd())? != uid {
++                                return Err(io::Error::new(io::ErrorKind::PermissionDenied,
++                                    "unauthorized control client"));
++                            }
++                            peer.read_exact(&mut request).await?;
++                            Ok::<(), io::Error>(())
++                        }).await;
++                        if matches!(accepted, Ok(Ok(()))) {
++                            match request[0] {
++                                b'S' if !stopping => {
++                                    if stop_requests.try_send(()).is_ok() {
++                                        stopping = true;
++                                        response = b'O';
++                                    }
++                                }
++                                b'R' if !stopping => {
++                                    // Signal only the *current* live process/thread. There is
++                                    // no PID lookup and therefore no PID-reuse race. The
++                                    // config watcher registers SIGHUP before IPC is exposed.
++                                    if unsafe { libc::raise(libc::SIGHUP) } == 0 {
++                                        response = b'O';
++                                    }
++                                }
++                                _ => {}
++                            }
++                        }
++                        // MSG_NOSIGNAL avoids a disconnected local peer terminating the daemon.
++                        // One-byte response does not need a blocking writer.
++                        let _sent = unsafe {
++                            libc::send(
++                                peer.as_raw_fd(),
++                                (&response as *const u8).cast(),
++                                1,
++                                libc::MSG_NOSIGNAL | libc::MSG_DONTWAIT,
++                            )
++                        };
++                    }
++                }
++            }
++        });
++        Ok(Self {
++            path: path.to_path_buf(),
++            anchor,
++            socket_device: metadata.dev(),
++            socket_inode: metadata.ino(),
++            cancelled,
++            worker,
++        })
++    }
++
++    /// Refuse to unlink a replacement file, even on daemon shutdown.
++    pub async fn close(self) -> io::Result<()> {
++        self.cancelled.cancel();
++        let _ = self.worker.await;
++        let current = match fs::symlink_metadata(&self.path) {
++            Ok(current) => current,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
++            Err(error) => return Err(error),
++        };
++        if current.file_type().is_socket()
++            && current.dev() == self.socket_device
++            && current.ino() == self.socket_inode
++        {
++            nix::unistd::unlinkat(
++                self.anchor.parent(),
++                self.anchor.name(),
++                nix::unistd::UnlinkatFlags::NoRemoveDir,
++            ).map_err(|error| io::Error::from_raw_os_error(error as i32))?;
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn private_socket() -> (tempfile::TempDir, PathBuf) {
++        let root = tempfile::tempdir().unwrap();
++        let private = root.path().join("owned");
++        fs::create_dir(&private).unwrap();
++        fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
++        (root, private.join("control.sock"))
++    }
++
++    #[tokio::test]
++    async fn stop_command_reaches_process_owner_without_pidfile() {
++        let (_root, path) = private_socket();
++        let (tx, mut rx) = mpsc::channel(1);
++        let endpoint = LocalControl::bind(&path, tx).unwrap();
++        let client_path = path.clone();
++        let result = tokio::task::spawn_blocking(move || send_command(&client_path, b'S'))
++            .await.unwrap();
++        assert!(result.is_ok(), "local stop was not accepted: {result:?}");
++        assert_eq!(rx.recv().await, Some(()));
++        endpoint.close().await.unwrap();
++        assert!(!path.exists());
++    }
++
++    #[tokio::test]
++    async fn rejects_existing_socket_and_nonprivate_parent() {
++        let (_root, path) = private_socket();
++        let (tx, _rx) = mpsc::channel(1);
++        let endpoint = LocalControl::bind(&path, tx.clone()).unwrap();
++        assert!(LocalControl::bind(&path, tx.clone()).is_err());
++        endpoint.close().await.unwrap();
++        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o777)).unwrap();
++        assert!(LocalControl::bind(&path, tx).is_err());
++    }
++
++    #[tokio::test]
++    async fn does_not_unlink_replaced_path() {
++        let (_root, path) = private_socket();
++        let (tx, _rx) = mpsc::channel(1);
++        let endpoint = LocalControl::bind(&path, tx).unwrap();
++        fs::remove_file(&path).unwrap();
++        fs::write(&path, b"do-not-remove").unwrap();
++        endpoint.close().await.unwrap();
++        assert_eq!(fs::read(&path).unwrap(), b"do-not-remove");
++    }
++
++    #[test]
++    fn refuses_missing_or_untrusted_control_path() {
++        let (_root, path) = private_socket();
++        assert!(send_command(&path, b'S').is_err());
++        assert!(send_command(&path, b'X').is_err());
++    }
++}
