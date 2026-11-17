@@ -53,8 +53,11 @@ No fourth run automatically. The patched QEMU binary has now been independently 
 ## Implemented host-only diagnostic gates after the third guest attempt
 
 - Commit `9f91cbce`: the previous aggregated step #27 is split into **seven ordered checks**. The harness now reports specific sanitized SSH exit statuses rather than a generic exit 1. It does **not** start TeleMT during host-only validation.
-- Commit `c4fccd4a` plus the `d39e0249` host-test fix: `test_mt7621_guest_plan.py` runs six cheap Python tests on the exact pinned `router-emulator` parser; test ordering, synthetic credentials, echo safety, one-line SSH command constraint, code mapping, and no fallback `kill(pidfile)`. The tests also deliberately inject malformed newlines and echo-unsafe markers and demand rejection.
-- [Offline CI 44072003724](https://github.com/saymer-alt/entware-go/actions/runs/44072003724) **PASS (6/6 in 0.029 s)**. The `native-guest` job is **SKIPPED** because only explicit `workflow_dispatch` with `approve_guest_run=YES` can authorize another QEMU-system guest cycle.
+- Commit `c4fccd4a` plus the `d39e0249` host-test fix: `test_mt7621_guest_plan.py` runs seven cheap Python tests on the exact pinned `router-emulator` parser; test ordering, synthetic credentials, echo safety, one-line SSH command constraint, code mapping, and no fallback `kill(pidfile)`. The tests also deliberately inject malformed newlines and echo-unsafe markers and demand rejection.
+- [Offline CI 44072301488](https://github.com/saymer-alt/entware-go/actions/runs/44072301488) **PASS (7/7 in 0.038 s)**. The `native-guest` job is **SKIPPED** because only explicit `workflow_dispatch` with `approve_guest_run=YES` can authorize another QEMU-system guest cycle.
+
+
+- The seventh test parses the entire generated SSH command collection with `/bin/sh -n -c`: syntax is checked but **no guest command is executed**, and no shell starts TeleMT. This catches malformed quotes, `case`, `while`, and shell redirections before any future QEMU run.
 
 The new accepted exit-status mapping, visible as `RuntimeError: ssh_exit_nonzero_XX` in the sanitized guest report, is:
 
