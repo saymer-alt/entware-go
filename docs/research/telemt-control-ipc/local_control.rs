@@ -4,7 +4,7 @@
 //! from a pidfile, and does not change the default pidfd-based CLI path.
 use std::fs;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
