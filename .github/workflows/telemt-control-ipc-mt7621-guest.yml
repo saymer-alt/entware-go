@@ -99,7 +99,7 @@ jobs:
           echo 'LAB_IPK_AND_SCENARIO: PASS'
       - name: Cache exact patched QEMU-system-mipsel
         id: qemu-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ runner.temp }}/mt7621-qemu/qemu-system-mipsel
@@ -118,6 +118,14 @@ jobs:
           sha256sum -c "$RUNNER_TEMP/mt7621-qemu/qemu-mipsel.sha256"
           test -x "$RUNNER_TEMP/mt7621-qemu/qemu-system-mipsel"
           echo "QEMU_BIN=$RUNNER_TEMP/mt7621-qemu/qemu-system-mipsel" >> "$GITHUB_ENV"
+      - name: Save verified QEMU cache before any guest execution
+        if: steps.qemu-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}/mt7621-qemu/qemu-system-mipsel
+            ${{ runner.temp }}/mt7621-qemu/qemu-mipsel.sha256
+          key: ipc-mt7621-ubuntu24-v10.1.0-${{ hashFiles('emulator/qemu-patches/*.patch', 'emulator/lab/mt7621/build_qemu_mipsel.sh') }}
       - name: Fetch only hash-pinned public Ported 5.1.8 image assets
         shell: bash
         run: |

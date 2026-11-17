@@ -30,6 +30,8 @@ env:
 
 jobs:
   isolation:
+    outputs:
+      build_needed: ${{ steps.source-hashes.outputs.build_needed }}
     name: "Guard: only research candidate, no accepted artifacts/pins or release edits"
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -38,6 +40,20 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Fail closed on any source drift; accepted IPK is immutable
+        id: source-hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          module=$(git hash-object docs/research/telemt-control-ipc/local_control.rs)
+          patch=$(git hash-object docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch)
+          if [ "$module" = 'b0407a82be17bbd07993541d517416c545ba864e' ] && [ "$patch" = '0ef70b2d01971d710657c31d9bdf40f0a6817e9b' ]; then
+            echo 'build_needed=false' >> "$GITHUB_OUTPUT"
+            echo 'FROZEN_ELF_AND_IPK_REUSED: PASS (Actions 44050853817)'
+          else
+            echo "::error::Research IPC source changed: bump lab version and re-pin artifacts before a new build"
+            exit 1
+          fi
       - name: Enforce isolated PR scope before any expensive toolchain setup
         shell: bash
         env:
@@ -62,6 +78,7 @@ jobs:
   lab-package:
     name: "Native MIPSLE binary and separate telemt-ipc-lab Entware IPK"
     needs: isolation
+    if: needs.isolation.outputs.build_needed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:

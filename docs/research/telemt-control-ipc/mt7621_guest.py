@@ -103,7 +103,8 @@ def scenario_for(emulator_root):
 
     steps = list(prefix)
     steps.extend([
-        guest_ssh("/opt/bin/busybox wget -qO /opt/lab/ipc.ipk "
+        guest_ssh("/opt/bin/busybox mkdir -p /opt/lab && "
+                  "/opt/bin/busybox wget -qO /opt/lab/ipc.ipk "
                   "http://" + MIRROR_HOST + "/entware/" + CORE_NAME +
                   " && printf '%s  %s\\n' '" + CORE_SHA +
                   "' /opt/lab/ipc.ipk > /opt/lab/ipc.sha && "
@@ -269,6 +270,10 @@ def main():
         candidate_path = Path(temp_dir) / "scenario.json"
         candidate_path.write_text(json.dumps(plan), encoding="utf-8")
         load_scenario(candidate_path)
+    download_step = next(s for s in steps if s.get("expect") == "IPC_IPK_PINNED")
+    if not download_step["send"].startswith(
+            "/opt/bin/busybox mkdir -p /opt/lab && "):
+        raise ValueError("lab directory must exist before the IPK download")
     if args.plan_only:
         print(json.dumps({"status": "PINNED_IPC_GUEST_PLAN_PASS",
                           "step_count": len(steps),

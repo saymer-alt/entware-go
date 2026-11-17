@@ -1,6 +1,6 @@
 # TeleMT MT7621 / Linux 4.9: in-daemon local stop/reload candidate
 
-**STATUS: SOURCE-PATCH CANDIDATE — NOT BUILT FOR MIPSEL, NOT ACCEPTED.**
+**STATUS: NATIVE MIPSLE LAB IPK BUILT, ABI PASS; QEMU-SYSTEM IPC ACCEPTANCE NOT YET PASS.**
 Tracking: [Issue #51](https://github.com/saymer-alt/entware-go/issues/51).
 Existing host-only supervisor alternative: [Draft PR #57](https://github.com/saymer-alt/entware-go/pull/57).
 Pinned upstream TeleMT SHA: `66708d2866f3f3a4541c4fa67984d408e71a8af4`.
@@ -92,3 +92,11 @@ Exact original Core hashes and Panel hashes must remain untouched.
 rewriting security-critical Rust dependencies or bypassing safety guards.
 
 STOP on unclassified failures. GitHub host PASS is not native QEMU PASS.
+
+## Verified build and QEMU research, 2026-11-17
+
+- [Experimental lab build 44050853817](https://github.com/saymer-alt/entware-go/actions/runs/44050853817): MIPSel Entware/softfloat/GLIBC 2.27, getrandom fallback gates PASS. Package `telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk` has SHA-256 `5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9`; ELF `0d3dcce3b9922d5dbffc748045168def7420c770ed6b4336e5e67d418c6f7e66`. It installs only `/opt/bin/telemt-ipc-lab`, no autostart or replacement for the already accepted telemt.
+- [First QEMU run 44054630539](https://github.com/saymer-alt/entware-go/actions/runs/44054630539): guest **NOT_STARTED** because dynamically generated SSH command had a literal newline. Corrected and now validated by the emulator's real `load_scenario` before QEMU.
+- [Second QEMU run 44062158447](https://github.com/saymer-alt/entware-go/actions/runs/44062158447): real Ported MT7621 4.9 guest boots, Entware initialized, **21/22 steps PASS**, first downloaded lab IPK (step 22) fails `ssh_exit_nonzero_1`: `/opt/lab/` directory was created only later by the synthetic config step. This is guest scenario ordering, **not a TeleMT runtime result**. Original first-hop mirror reports a dropped connection, consistent with wget output path not existing.
+- Follow-up repair: explicit `mkdir -p /opt/lab` *before* wget, a cheap plan-only invariant, SHA-verified QEMU cache saved immediately after build (even if a later guest step fails). Unchanged source blobs verified before skipping redundant Rust host/full MIPSLE builds. Original 74/74 and 93/93 accepted proofs unchanged.
+- Native socket `stop/reload`, post-reboot no-autostart and removal **remain NOT_TESTED until a guest run reaches those steps**. No real device/release/feed changes.
