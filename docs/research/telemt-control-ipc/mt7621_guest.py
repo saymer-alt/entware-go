@@ -129,15 +129,57 @@ def scenario_for(emulator_root):
                   "[ \"$rc\" -ne 0 ] && "
                   "printf 'IPC_%s\\n' ABSENT_REJECTED",
                   "IPC_ABSENT_REJECTED"),
-        guest_ssh(start_command() + " >/opt/lab/ipc-start.out 2>&1 || exit 1; "
-                  "i=0; while [ \"$i\" -lt 30 ]; do "
-                  "test -S " + CTL + " && test -r " + PID +
-                  " && break; /opt/bin/busybox sleep 1; i=$((i+1)); done; "
-                  "test -S " + CTL + " && "
-                  "p=$(/opt/bin/busybox cat " + PID + "); "
+        # Probe the exact parent trust conditions from local_control::private_parent.
+        # Distinct nonzero SSH codes are preserved in the sanitized JSON report:
+        # 41 symlink ancestor, 42 missing/non-directory, 43 parent mode,
+        # 44 parent UID, 45 start(1) CLI rejected, 46 no PID file,
+        # 47 malformed PID, 48 dead child, 49 wrong executable,
+        # 50 no Unix control socket, 51 final consistency failed.
+        guest_ssh("for d in /opt /opt/var /opt/var/run "
+                  "/opt/var/run/telemt-ipc-lab; do "
+                  "[ ! -L \"$d\" ] || exit 41; "
+                  "[ -d \"$d\" ] || exit 42; done; "
+                  "printf 'IPC_%s\\n' PARENT_COMPONENTS_SAFE",
+                  "IPC_PARENT_COMPONENTS_SAFE"),
+        guest_ssh("uid=$(/opt/bin/busybox id -u); "
+                  "mode=$(/opt/bin/busybox stat -c %a "
+                  "/opt/var/run/telemt-ipc-lab) || exit 43; "
+                  "[ \"$mode\" = 700 ] || exit 43; "
+                  "owner=$(/opt/bin/busybox stat -c %u "
+                  "/opt/var/run/telemt-ipc-lab) || exit 44; "
+                  "[ \"$owner\" = \"$uid\" ] || exit 44; "
+                  "printf 'IPC_%s\\n' PARENT_OWNER_MODE",
+                  "IPC_PARENT_OWNER_MODE"),
+        guest_ssh(start_command() + " >/opt/lab/ipc-start.out 2>&1; "
+                  "rc=$?; [ \"$rc\" = 0 ] || exit 45; "
+                  "printf 'IPC_%s\\n' START_RETURNED",
+                  "IPC_START_RETURNED", 120),
+        guest_ssh("i=0; while [ \"$i\" -lt 30 ]; do "
+                  "[ -r " + PID + " ] && break; "
+                  "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+                  "[ -r " + PID + " ] || exit 46; "
+                  "printf 'IPC_%s\\n' PIDFILE_READY",
+                  "IPC_PIDFILE_READY", 120),
+        guest_ssh("p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
+                  "case \"$p\" in ''|*[!0-9]*) exit 47;; esac; "
+                  "[ -r /proc/$p/cmdline ] || exit 48; "
+                  "exe=$(/opt/bin/busybox readlink /proc/$p/exe 2>/dev/null); "
+                  "[ \"$exe\" = '" + BIN + "' ] || exit 49; "
+                  "printf 'IPC_%s\\n' CHILD_EXE_CONFIRMED",
+                  "IPC_CHILD_EXE_CONFIRMED"),
+        guest_ssh("i=0; while [ \"$i\" -lt 30 ]; do "
+                  "[ -S " + CTL + " ] && break; "
+                  "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+                  "[ -S " + CTL + " ] || exit 50; "
+                  "printf 'IPC_%s\\n' CONTROL_SOCKET_READY",
+                  "IPC_CONTROL_SOCKET_READY", 120),
+        guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
+                  "[ -r /proc/$p/cmdline ] && "
                   "[ \"$(/opt/bin/busybox readlink /proc/$p/exe)\" = '" + BIN +
-                  "' ] && printf 'IPC_%s\\n' DAEMON_ALIVE",
-                  "IPC_DAEMON_ALIVE", 150),
+                  "' ] && [ -S " + CTL + " ] || exit 51; "
+                  "printf 'IPC_%s\\n' DAEMON_ALIVE",
+                  "IPC_DAEMON_ALIVE"),
+
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + "); "
                   "HOME=/opt/lab " + BIN + " reload --control-socket " + CTL +
                   " >/opt/lab/ipc-reload.out 2>&1 || exit 1; "
@@ -274,6 +316,18 @@ def main():
     if not download_step["send"].startswith(
             "/opt/bin/busybox mkdir -p /opt/lab && "):
         raise ValueError("lab directory must exist before the IPK download")
+    expected_readiness = [
+        "IPC_PARENT_COMPONENTS_SAFE", "IPC_PARENT_OWNER_MODE",
+        "IPC_START_RETURNED", "IPC_PIDFILE_READY",
+        "IPC_CHILD_EXE_CONFIRMED", "IPC_CONTROL_SOCKET_READY",
+        "IPC_DAEMON_ALIVE",
+    ]
+    labels = [s.get("expect") for s in steps]
+    if not all(labels.count(marker) == 1 for marker in expected_readiness):
+        raise ValueError("IPC startup readiness must have exactly one probe each")
+    positions = [labels.index(marker) for marker in expected_readiness]
+    if positions != list(range(positions[0], positions[0] + len(positions))):
+        raise ValueError("IPC startup probes are not contiguous and ordered")
     if args.plan_only:
         print(json.dumps({"status": "PINNED_IPC_GUEST_PLAN_PASS",
                           "step_count": len(steps),
