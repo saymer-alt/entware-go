@@ -3,16 +3,24 @@
 Research-only source fix for the proven TeleMT Core blocker on KeeneticOS Ported
 5.1.8 MT7621 (MIPS32r2 LE, Entware `mipselsf-k3.4`, glibc 2.27 softfloat).
 
-## Proven root cause (2026-11-16)
+## Proven root cause (2026-11-17 guest probe supersedes early diagnosis)
 
-The Ported kernel `Linux version 4.9-ndm-5` does not expose `getrandom(2)`
-(syscall returns ENOSYS) while the `/dev/urandom` driver itself works
-(`random: crng init done` in the boot log). `rand 0.10.2`'s `ThreadRng`
-panics at `rngs/thread.rs:163` (`could not initialize ThreadRng: Function not
-implemented (os error 89)`) in both a tokio worker and `main`, ~1.5 s after the
-daemon fork, killing the child. In daemon mode stderr goes to `/dev/null`, so
-only a `start --foreground` probe could capture it (router-emulator Draft PR
-#93, round 2 diagnostic cycle).
+The Ported kernel `Linux version 4.9-ndm-5` **does implement `getrandom(2)`**:
+MIPS o32 syscall **4353** returned 32 bytes both via generic libc `syscall()`
+and a raw assembly syscall in a real QEMU-system guest. The incompatibility
+is **Entware glibc 2.27's `getrandom()` symbol**, compiled against older
+kernel headers: it returns `ENOSYS` (errno 89) **without issuing the syscall**.
+`rand 0.10.2` uses this libc entry point, so `ThreadRng` panics at
+`rngs/thread.rs:163` (`could not initialize ThreadRng: Function not
+implemented (os error 89)`) in a tokio worker and `main`, killing the daemon
+child shortly after forking. In daemon mode stderr goes to `/dev/null`; the
+original `start --foreground` probe captured this (router-emulator PR #93).
+
+The real guest kernel/libc split and corrected Core service acceptance are
+recorded in [router-emulator PR #95](https://github.com/saymer-alt/router-emulator/pull/95)
+and its `getfb-verification.md` (74/74 guest steps PASS). The fallback
+triggers on the **glibc symbol's ENOSYS** and uses the readiness-guarded
+`/dev/urandom` path; this is not a kernel-syscall emulation or a weak PRNG.
 
 Upstream `getrandom` provides a reviewed `/dev/urandom` fallback
 (`linux_android_with_fallback` + `use_file` with a `/dev/random` poll readiness

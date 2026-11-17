@@ -3,9 +3,10 @@
 # PR #44 workflow: pull_request/workflow_dispatch only, read-only permissions,
 # no releases, no feed, artifacts expire after 7 days.
 #
-# Proven blocker this rebuild addresses: the Ported KeeneticOS 5.1.8 MT7621
-# kernel (4.9-ndm-5) does not expose getrandom(2) while /dev/urandom works;
-# rand 0.10.2 ThreadRng panics and the daemon dies ~1.5 s after fork.
+# Proven blocker: on Ported KeeneticOS 5.1.8 MT7621 Entware glibc 2.27
+# exports an ENOSYS getrandom() stub even though the guest kernel implements
+# getrandom(2) (MIPS o32 syscall 4353). rand 0.10.2 ThreadRng panics;
+# the reviewed /dev/urandom fallback fixes this without changing kernel ABI.
 # The Panel Lite IPK is intentionally NOT rebuilt (pure-Go binary with its own
 # entropy handling) — the pinned PR #44 artifact remains authoritative.
 name: TeleMT MIPSLE getrandom-fallback experimental IPK (no release)
