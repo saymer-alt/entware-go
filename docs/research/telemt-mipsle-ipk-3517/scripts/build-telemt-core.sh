@@ -17,6 +17,7 @@ set -euo pipefail
 UPSTREAM_SHA=66708d2866f3f3a4541c4fa67984d408e71a8af4
 # script is expected to be invoked from the repository root (CI default)
 PATCH_FILE="$(pwd)/${PATCH_FILE:-docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch}"
+RESEARCH_DIR="$(pwd)/docs/research/telemt-mipsle-ipk-3517"
 EB="${EB:-$HOME/entware-build}"
 SR="$EB/sysroot"
 L="$SR/usr/mipsel-linux-gnu/lib"
@@ -124,6 +125,20 @@ git apply --check --whitespace=nowarn "$PATCH_FILE"
 git apply --whitespace=nowarn "$PATCH_FILE"
 test -f src/compat.rs && grep -q portable-atomic Cargo.toml || { echo "PATCH_APPLY_INCOMPLETE"; exit 1; }
 echo "patch applied on $UPSTREAM_SHA"
+
+echo "===== 4.5) getrandom forks (ENOSYS-only MIPS /dev/urandom fallback), opt-in ====="
+# Proven root cause on the Ported 5.1.8 MT7621 kernel (4.9-ndm-5): the Entware
+# glibc 2.27 getrandom() symbol is an ENOSYS stub while the kernel implements
+# getrandom(2); rand 0.10.2 ThreadRng panics and the daemon dies. This step
+# wires the reviewed ENOSYS-only fallback forks into the build ONLY when
+# TELEMT_GETFB=1 (the getfb workflow sets it); the default path keeps the
+# frozen PR #44 3.5.17-1 build byte-identical. See
+# docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/README.md.
+if [ "${TELEMT_GETFB:-0}" = "1" ]; then
+  bash "$RESEARCH_DIR/getrandom-fallback/assemble-forks.sh" "$EB"
+else
+  echo "TELEMT_GETFB not set - frozen PR #44 build path (no forks)"
+fi
 
 echo "===== 5) bounded TeleMT MIPSLE build (Entware ABI) ====="
 # glibc-2.34+ symbol backport shim: the C sources compile against distro 2.39

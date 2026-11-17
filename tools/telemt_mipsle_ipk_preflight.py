@@ -160,6 +160,9 @@ def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
         "old-panel": ("telemt-panel", "0.6.2-1", "telemt-panel"),
         "lite-rc4": ("telemt-panel-lite", "1.0.0~rc.4-1", "telemt-panel"),
         "core": ("telemt", "3.5.17-1", "telemt"),
+        # getrandom-ENOSYS-only /dev/urandom fallback rebuild (research-only,
+        # separate workflow; see docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/)
+        "core-getfb": ("telemt", "3.5.17-2fb1", "telemt"),
     }
     pkg, version, program = expected[kind]
     is_ipk = not blob.startswith(b"\x7fELF")
@@ -191,7 +194,7 @@ def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
     info = elf_info(binary)
     if kind == "lite-rc4" and (info["interpreter"] or info["dynamic_segment"]):
         raise AuditError("expected self-contained pure-Go Lite binary, got dynamic ELF")
-    if kind == "core":
+    if kind in ("core", "core-getfb"):
         if not info["dynamic_segment"]:
             raise AuditError("expected dynamically linked TeleMT core, got static ELF")
         if info["interpreter"] != ENTWARE_INTERP:
@@ -200,7 +203,7 @@ def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
             raise AuditError("Core MIPS FP ABI is not Entware softfloat (PT_MIPS_ABIFLAGS=3 required)")
     output["checks"]["elf"] = info
     output["checks"]["arch"] = "PASS: ELF32 MIPS little-endian"
-    if kind == "core":
+    if kind in ("core", "core-getfb"):
         output["checks"]["entware_abi"] = f"PASS: dynamic, MIPS softfloat fp_abi=3, interpreter {ENTWARE_INTERP} (glibc versions separately gated via readelf -V)"
     output["checks"]["packaging"] = "PASS: control and payload" if is_ipk else "NOT_TESTED: raw ELF"
     return output
@@ -208,7 +211,8 @@ def audit(path: Path, kind: str, require_legacy_hash: bool = True) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kind", required=True, choices=("old-panel", "lite-rc4", "core"))
+    parser.add_argument("--kind", required=True,
+                        choices=("old-panel", "lite-rc4", "core", "core-getfb"))
     parser.add_argument("--file", required=True, type=Path)
     parser.add_argument("--skip-legacy-hash", action="store_true",
                         help="Only for synthetic fixtures; do not use to approve real archived packages")

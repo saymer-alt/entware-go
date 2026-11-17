@@ -1,0 +1,203 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index b85fdf6..ae8d210 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -131,3 +131,6 @@ check-cfg = [
+     "cfg(getrandom_test_netbsd_fallback)",
+     'cfg(target_os, values("cygwin"))',
+ ]
++
++[[test]]
++name = "mips_fallback_integration"
+diff --git a/src/backends.rs b/src/backends.rs
+index 991d413..e8d4f8d 100644
+--- a/src/backends.rs
++++ b/src/backends.rs
+@@ -119,6 +119,18 @@ cfg_if! {
+         mod linux_android_with_fallback;
+         mod sanitizer;
+         pub use linux_android_with_fallback::*;
++    } else if #[cfg(all(
++        target_os = "linux",
++        target_arch = "mips",
++        target_env = "gnu",
++    ))] {
++        // Research-only Entware/MIPS32r2 softfloat (MT7621-class, kernel
++        // 4.9-ndm-5): getrandom(2) is ENOSYS while /dev/urandom works.
++        // Routed ONLY here; all other platforms keep their stock backend.
++        mod use_file;
++        mod linux_mips_with_fallback;
++        mod sanitizer;
++        pub use linux_mips_with_fallback::*;
+     } else if #[cfg(any(
+         target_os = "android",
+         target_os = "linux",
+diff --git a/src/backends/linux_mips_with_fallback.rs b/src/backends/linux_mips_with_fallback.rs
+new file mode 100644
+index 0000000..1a20d8b
+--- /dev/null
++++ b/src/backends/linux_mips_with_fallback.rs
+@@ -0,0 +1,131 @@
++//! Implementation for Linux / MIPS (o32) with `/dev/urandom` fallback.
++//!
++//! Research-only Entware/MIPS32r2 softfloat fork of upstream
++//! `linux_android_with_fallback.rs` (getrandom, MIT OR Apache-2.0), selected
++//! ONLY for `all(target_os = "linux", target_arch = "mips", target_env = "gnu")`
++//! by `backends.rs`. Platform fact (proven 2026-11-16 on KeeneticOS Ported
++//! 5.1.8 MT7621, kernel 4.9-ndm-5): getrandom(2) returns ENOSYS while the
++//! /dev/urandom driver itself works. Deltas from upstream:
++//!   1. fallback on ENOSYS only (upstream additionally falls back on EPERM for
++//!      seccomp-blocked getrandom; deliberately not adopted here so any other
++//!      failure surfaces as a hard error),
++//!   2. this module is routed only for Linux/MIPS/gnu; no other platform's
++//!      backend selection is changed.
++//! The readiness barrier, EINTR/partial handling and fail-closed semantics are
++//! upstream's own code, unchanged.
++use super::{sanitizer, use_file};
++use crate::Error;
++use core::{
++    ffi::c_void,
++    mem::{transmute, MaybeUninit},
++    ptr::NonNull,
++    sync::atomic::{AtomicPtr, Ordering},
++};
++use use_file::util_libc;
++
++pub use crate::util::{inner_u32, inner_u64};
++
++type GetRandomFn = unsafe extern "C" fn(*mut c_void, libc::size_t, libc::c_uint) -> libc::ssize_t;
++
++/// Sentinel value which indicates that `libc::getrandom` either not available,
++/// or not supported by kernel.
++const NOT_AVAILABLE: NonNull<c_void> = unsafe { NonNull::new_unchecked(usize::MAX as *mut c_void) };
++
++static GETRANDOM_FN: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
++
++#[cold]
++#[inline(never)]
++fn init() -> NonNull<c_void> {
++    // Use static linking to `libc::getrandom` on MUSL targets and `dlsym` everywhere else
++    #[cfg(not(target_env = "musl"))]
++    let raw_ptr = {
++        static NAME: &[u8] = b"getrandom\0";
++        let name_ptr = NAME.as_ptr().cast::<libc::c_char>();
++        unsafe { libc::dlsym(libc::RTLD_DEFAULT, name_ptr) }
++    };
++    #[cfg(target_env = "musl")]
++    let raw_ptr = {
++        let fptr: GetRandomFn = libc::getrandom;
++        unsafe { transmute::<GetRandomFn, *mut c_void>(fptr) }
++    };
++
++    let res_ptr = match NonNull::new(raw_ptr) {
++        Some(fptr) => {
++            let getrandom_fn = unsafe { transmute::<NonNull<c_void>, GetRandomFn>(fptr) };
++            let dangling_ptr = NonNull::dangling().as_ptr();
++            // Check that `getrandom` syscall is supported by kernel
++            let res = unsafe { getrandom_fn(dangling_ptr, 0, 0) };
++            if cfg!(getrandom_test_linux_fallback) {
++                NOT_AVAILABLE
++            } else if res.is_negative() {
++                match util_libc::last_os_error().raw_os_error() {
++                    Some(libc::ENOSYS) => NOT_AVAILABLE, // No kernel support
++                    // ENOSYS-only per the research assignment: any other error keeps the
++                    // getrandom function so the real call surfaces the failure (fail closed).
++                    _ => fptr,
++                }
++            } else {
++                fptr
++            }
++        }
++        None => NOT_AVAILABLE,
++    };
++
++    #[cfg(getrandom_test_linux_without_fallback)]
++    if res_ptr == NOT_AVAILABLE {
++        panic!("Fallback is triggered with enabled `getrandom_test_linux_without_fallback`")
++    }
++
++    GETRANDOM_FN.store(res_ptr.as_ptr(), Ordering::Release);
++    res_ptr
++}
++
++// Prevent inlining of the fallback implementation
++#[inline(never)]
++fn use_file_fallback(dest: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
++    use_file::fill_inner(dest)
++}
++
++#[inline]
++pub fn fill_inner(dest: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
++    // Despite being only a single atomic variable, we still cannot always use
++    // Ordering::Relaxed, as we need to make sure a successful call to `init`
++    // is "ordered before" any data read through the returned pointer (which
++    // occurs when the function is called). Our implementation mirrors that of
++    // the one in libstd, meaning that the use of non-Relaxed operations is
++    // probably unnecessary.
++    let raw_ptr = GETRANDOM_FN.load(Ordering::Acquire);
++    let fptr = match NonNull::new(raw_ptr) {
++        Some(p) => p,
++        None => init(),
++    };
++
++    if fptr == NOT_AVAILABLE {
++        use_file_fallback(dest)
++    } else {
++        // note: `transmute` is currently the only way to convert a pointer into a function reference
++        let getrandom_fn = unsafe { transmute::<NonNull<c_void>, GetRandomFn>(fptr) };
++        util_libc::sys_fill_exact(dest, |buf| unsafe {
++            let ret = getrandom_fn(buf.as_mut_ptr().cast(), buf.len(), 0);
++            sanitizer::unpoison_linux_getrandom_result(buf, ret);
++            ret
++        })
++    }
++}
++
++#[cfg(test)]
++mod mips_fallback_tests {
++    use super::fill_inner;
++
++    /// Entropy source must yield distinct consecutive buffers both on the
++    /// getrandom(2) path and (with `--cfg getrandom_test_linux_fallback`)
++    /// on the /dev/urandom fallback path with its readiness barrier.
++    #[test]
++    fn entropy_source_returns_distinct_buffers() {
++        let mut a = [0u8; 32];
++        let mut b = [0u8; 32];
++        fill_inner(&mut a).expect("entropy source failed");
++        fill_inner(&mut b).expect("entropy source failed");
++        assert_ne!(a, b, "entropy source produced identical consecutive buffers");
++    }
++}
+diff --git a/tests/mips_fallback_integration.rs b/tests/mips_fallback_integration.rs
+new file mode 100644
+index 0000000..31ea832
+--- /dev/null
++++ b/tests/mips_fallback_integration.rs
+@@ -0,0 +1,26 @@
++//! Research-only integration probes for the MIPS /dev/urandom fallback fork.
++//! The `getrandom_test_linux_fallback` cfg (upstream's own test hook) forces
++//! the fallback path regardless of getrandom(2) availability.
++
++#[test]
++fn entropy_fill_returns_distinct_bytes() {
++    let mut a = [0u8; 32];
++    let mut b = [0u8; 32];
++    getrandom::fill(&mut a).expect("entropy source failed");
++    getrandom::fill(&mut b).expect("entropy source failed");
++    assert_ne!(a, b, "entropy source produced identical consecutive buffers");
++}
++
++/// Exercised inside a mount namespace whose /dev is an empty tmpfs:
++/// the crate must fail closed (return an error), never fabricate success.
++#[test]
++fn missing_entropy_device_fails_closed() {
++    if std::path::Path::new("/dev/urandom").exists() {
++        return; // skip outside the fail-closed namespace
++    }
++    let mut a = [0u8; 32];
++    assert!(
++        getrandom::fill(&mut a).is_err(),
++        "entropy fill must NOT succeed without an entropy device"
++    );
++}

@@ -130,6 +130,45 @@ class CoreModeTests(unittest.TestCase):
             pf.audit(self._write(blob), "core")
 
 
+class CoreGetFbModeTests(unittest.TestCase):
+    """core-getfb: the getrandom-fallback rebuild pins its own IPK version."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write(self, blob: bytes) -> Path:
+        p = self.dir / "fixture.ipk"
+        p.write_bytes(blob)
+        return p
+
+    GETFB_CONTROL = {"Package": "telemt", "Version": "3.5.17-2fb1", "Architecture": "mipsel-3.4"}
+
+    def test_core_getfb_ipk_pass(self) -> None:
+        blob = make_ipk(self.GETFB_CONTROL,
+                        {"opt/bin/telemt": tiny_elf(dynamic=True, interp="/opt/lib/ld.so.1")})
+        out = pf.audit(self._write(blob), "core-getfb")
+        self.assertEqual(out["checks"]["ipk_control"]["Version"], "3.5.17-2fb1")
+        self.assertIn("entware_abi", out["checks"])
+
+    def test_core_getfb_rejects_the_frozen_3517_1_control(self) -> None:
+        # the frozen PR #44 artifact keeps version 3.5.17-1; the fallback kind
+        # must never accept it (separately named experimental IPKs)
+        blob = make_ipk(CORE_CONTROL,
+                        {"opt/bin/telemt": tiny_elf(dynamic=True, interp="/opt/lib/ld.so.1")})
+        with self.assertRaises(pf.AuditError):
+            pf.audit(self._write(blob), "core-getfb")
+
+    def test_core_kind_still_pins_3517_1(self) -> None:
+        blob = make_ipk(self.GETFB_CONTROL,
+                        {"opt/bin/telemt": tiny_elf(dynamic=True, interp="/opt/lib/ld.so.1")})
+        with self.assertRaises(pf.AuditError):
+            pf.audit(self._write(blob), "core")
+
+
 class PanelModeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
