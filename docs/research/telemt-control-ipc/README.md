@@ -1,6 +1,9 @@
 # TeleMT MT7621 / Linux 4.9: in-daemon local stop/reload candidate
 
-**STATUS: NATIVE MIPSLE LAB IPK BUILT, ABI PASS; QEMU-SYSTEM IPC ACCEPTANCE NOT YET PASS.**
+**STATUS (17.11.2026): MIPSel experimental IPK 3.5.17-1ipc2 built reproducibly; native QEMU MT7621 Linux 4.9 acceptance 63/63 PASS (run 44154378735); physical KN-1010 NOT_TESTED.**
+
+**Physical hardware pilot:** [KN1010-HARDWARE-PILOT.md](KN1010-HARDWARE-PILOT.md) — SHA256-pinned experimental IPK, read-only preflight, isolated localhost fixture and safe teardown. Research package only; do not replace live TeleMT or publish a feed.
+
 Tracking: [Issue #51](https://github.com/saymer-alt/entware-go/issues/51).
 Existing host-only supervisor alternative: [Draft PR #57](https://github.com/saymer-alt/entware-go/pull/57).
 Pinned upstream TeleMT SHA: `66708d2866f3f3a4541c4fa67984d408e71a8af4`.
