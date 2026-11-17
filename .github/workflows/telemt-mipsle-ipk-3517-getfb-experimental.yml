@@ -34,6 +34,9 @@ concurrency:
 
 env:
   UPSTREAM_SHA: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+  # Fail closed if a date-pinned archive resolves to a different compiler.
+  RUST_NIGHTLY_PIN: nightly-2026-11-16
+  RUSTC_PIN_VERSION: 'rustc 1.102.0-nightly (5f4effd57 2026-11-13)'
 
 jobs:
   boundary-guard:
@@ -105,11 +108,18 @@ jobs:
             gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross \
             binutils-mipsel-linux-gnu file qemu-user
           command -v qemu-mipsel
-      - name: Install Rust nightly with rust-src
+      - name: Install exact dated Rust nightly and check compiler revision
         run: |
           set -euo pipefail
-          rustup toolchain install nightly --profile minimal --component rust-src
-          rustc +nightly -V
+          rustup toolchain install "$RUST_NIGHTLY_PIN" --profile minimal --component rust-src
+          actual=$(rustc +"$RUST_NIGHTLY_PIN" -V)
+          echo "PINNED_RUSTC=$actual"
+          if [ "$actual" != "$RUSTC_PIN_VERSION" ]; then
+            echo "::error::Dated nightly maps to an unexpected compiler: $actual"
+            exit 1
+          fi
+          rustc +"$RUST_NIGHTLY_PIN" -vV
+          echo 'RUST_NIGHTLY_IDENTITY: PASS'
       - name: Build Core with getrandom fallback forks (pinned sysroot, bounded)
         run: bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
         env:
@@ -164,6 +174,15 @@ jobs:
           mipsel-linux-gnu-readelf -A "$BIN" | grep -E 'FP ABI|ISA:'
           mipsel-linux-gnu-readelf -l "$BIN" | grep -oE 'interpreter: /opt/lib/ld\.so\.1' | head -1
           mipsel-linux-gnu-readelf -V "$BIN" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+      - name: Reproduce the two exact hashes accepted by the real MT7621 guest
+        run: |
+          set -euo pipefail
+          BIN="$HOME/entware-build/upstream/target/mipsel-unknown-linux-gnu/release/telemt"
+          IPK=telemt_3.5.17-2fb1_mipsel-3.4.ipk
+          printf '%s  %s\n' 'd4ba43815883dd1ce9aa57349602598127781e8966d51dab97616dbdb35b216f' "$BIN" '2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d' "$IPK" > "$RUNNER_TEMP/getfb-accepted.sha256"
+          sha256sum -c "$RUNNER_TEMP/getfb-accepted.sha256"
+          echo 'MT7621_GUEST_ACCEPTED_BYTES_REPRODUCED: PASS'
+
       - name: Upload experimental core IPK with fallback (7-day retention)
         uses: actions/upload-artifact@v4
         with:

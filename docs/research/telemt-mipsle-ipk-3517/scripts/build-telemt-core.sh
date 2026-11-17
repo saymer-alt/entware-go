@@ -266,7 +266,17 @@ export CARGO_BUILD_JOBS=2
 # libc's build script does not declare rerun-if-env-changed for the time-bits
 # env var; force a rerun so time32 ABI actually takes effect.
 cargo clean -p libc
-if ! timeout 1700 cargo +nightly -Z build-std=std,panic_abort \
+# Legacy 3.5.17-1 still uses the original floating +nightly path.
+# Only opt-in getfb builds require the reproducible dated toolchain.
+RUST_NIGHTLY_TOOLCHAIN=nightly
+if [ "${TELEMT_GETFB:-0}" = "1" ]; then
+  RUST_NIGHTLY_TOOLCHAIN="${RUST_NIGHTLY_PIN:?getfb requires a dated Rust nightly}"
+  test "$(rustc +"$RUST_NIGHTLY_TOOLCHAIN" -V)" = "${RUSTC_PIN_VERSION:?missing pinned rustc identity}" || {
+    echo '::error::Wrong rustc revision for the accepted MIPSel Core'; exit 1;
+  }
+fi
+echo "TELEMT_CORE_RUST_TOOLCHAIN=$RUST_NIGHTLY_TOOLCHAIN"
+if ! timeout 1700 cargo +"$RUST_NIGHTLY_TOOLCHAIN" -Z build-std=std,panic_abort \
     build --release --locked --target "$TARGET" --bin telemt; then
   echo "::error::TELEMT_3517_ENTWARE_BUILD_BLOCKED (record first error, stop)"
   exit 1

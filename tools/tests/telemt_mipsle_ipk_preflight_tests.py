@@ -230,5 +230,31 @@ class TelemtLockSnapshotTests(unittest.TestCase):
 
 
 
+class TelemtNightlyPinTests(unittest.TestCase):
+    """The getfb build is pinned, while the original 3.5.17-1 stays unchanged."""
+
+    def test_workflow_requires_original_compiler_and_guest_pins(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental.yml').read_text()
+        self.assertIn('RUST_NIGHTLY_PIN: nightly-2026-11-16', workflow)
+        self.assertIn('5f4effd57', workflow)
+        self.assertIn('d4ba43815883dd1ce9aa57349602598127781e8966d51dab97616dbdb35b216f', workflow)
+        self.assertIn('2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d', workflow)
+        self.assertIn('sha256sum -c "$RUNNER_TEMP/getfb-accepted.sha256"', workflow)
+
+    def test_legacy_stays_floating_and_getfb_is_pinned(self):
+        root = Path(__file__).resolve().parents[2]
+        script = (root / 'docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh').read_text()
+        self.assertIn('RUST_NIGHTLY_TOOLCHAIN=nightly', script)
+        self.assertIn('if [ "${TELEMT_GETFB:-0}" = "1" ]; then', script)
+        self.assertIn('cargo +"$RUST_NIGHTLY_TOOLCHAIN" -Z build-std=std,panic_abort', script)
+
+    def test_entropy_build_uses_same_pin(self):
+        root = Path(__file__).resolve().parents[2]
+        script = (root / 'docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh').read_text()
+        self.assertIn('rustc +"${RUST_NIGHTLY_PIN:?missing nightly pin}" -V', script)
+        self.assertEqual(script.count('cargo +"$RUST_NIGHTLY_PIN" -Z build-std=std,panic_abort'), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
