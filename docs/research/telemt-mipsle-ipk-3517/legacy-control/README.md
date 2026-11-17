@@ -59,9 +59,9 @@ but **supervisor + real TeleMT has NOT been tested**.
 
 `python3 -m unittest discover -s docs/research/telemt-mipsle-ipk-3517/legacy-control -p test_legacy_supervisor.py -v`
 
-Locally on Linux x86_64: **4/4 PASS** (C compile with `-Werror`,
+Host research test suite: **6 cases** (C compile with `-Werror`,
 synthetic child reload/stop/exited, absent endpoint, insecure parent, preexisting
-endpoint, early child exit). The same host proof is invoked from the already-allowlisted
+endpoint, early child exit, client disconnect, and socket replacement). The same host proof is invoked from the already-allowlisted
 `tools/tests/telemt_mipsle_ipk_preflight_tests.py` by the existing getfb research
 workflow, without expanding either MIPSel boundary guard. These are **HOST MOCK PASS**, not MIPSel, ABI,
 QEMU-system, or actual TeleMT acceptance.
@@ -93,3 +93,16 @@ QEMU-system, or actual TeleMT acceptance.
 then (only if justified) prepare an isolated native MIPSel source/ABI build and
 a dedicated bounded QEMU guest cycle. Do **not** reuse Core 74/74 or Panel 93/93
 as evidence of this prototype's target-platform compatibility.
+
+## Architecture decision checkpoint (2026-11-17)
+
+**Preferred production direction: daemon-owned, opt-in Unix control socket
+inside TeleMT.** This C supervisor remains a comparison / failure-mode fixture,
+not a production proposal. See [decision.md](decision.md) for options, explicit
+security boundaries, acceptance tests, rollback and cost.
+
+The previous CI of PR #57 failed during host proof compilation under strict
+GCC `-Werror` due to ignoring a `write()` return. This revision uses
+`send(MSG_NOSIGNAL)` with a handled return, so a disconnected local client
+cannot terminate the supervisor via SIGPIPE. Fresh CI must confirm compiler
+acceptance; do not infer success from the global publication safety job alone.

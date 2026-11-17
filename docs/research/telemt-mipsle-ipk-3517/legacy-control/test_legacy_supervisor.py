@@ -1,5 +1,7 @@
 """Host-only, disposable experiments; no TeleMT or router binaries touched."""
 import os
+import socket
+import stat
 from pathlib import Path
 import shutil
 import subprocess
@@ -115,3 +117,26 @@ class LegacySupervisorHostProof(unittest.TestCase):
         self.assertEqual(self.child.wait(timeout=5), 0)
         self.assertFalse(Path(self.sock).exists())
         self.assertEqual(self.invoke("reload"), 1)
+
+    def test_early_disconnect_cannot_kill_supervisor(self):
+        self.start()
+        self.assertTrue(stat.S_ISSOCK(os.stat(self.sock).st_mode))
+        self.assertEqual(stat.S_IMODE(os.stat(self.sock).st_mode) & 0o077, 0)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+            peer.connect(self.sock)
+            peer.sendall(b"P")
+            peer.shutdown(socket.SHUT_RDWR)
+        time.sleep(0.2)
+        self.assertIsNone(self.child.poll(), "peer disconnect must not terminate owner")
+        self.assertEqual(self.invoke("status"), 0)
+        self.assertEqual(self.invoke("stop"), 0)
+        self.assertEqual(self.child.wait(timeout=5), 0)
+
+    def test_replaced_socket_path_is_not_unlinked_on_exit(self):
+        self.start()
+        os.unlink(self.sock)
+        Path(self.sock).write_text("replacement-must-survive")
+        self.child.terminate()
+        self.wait_path("terminated")
+        self.assertEqual(self.child.wait(timeout=5), 0)
+        self.assertEqual(Path(self.sock).read_text(), "replacement-must-survive")

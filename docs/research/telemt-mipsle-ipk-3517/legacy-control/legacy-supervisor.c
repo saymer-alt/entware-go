@@ -88,18 +88,23 @@ static int serve(const char *path, char **program) {
         listen(listener, 4) != 0) {
         close(listener); return 1;
     }
+    /* Install handlers before fork, avoiding an unhandled termination
+     * window where the direct child could become orphaned. */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa)); sa.sa_handler = on_terminate;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGTERM, &sa, NULL) != 0 ||
+        sigaction(SIGINT, &sa, NULL) != 0) {
+        close(listener); /* Leave uncertain socket path fail-closed. */
+        return 1;
+    }
     pid_t child = fork();
-    if (child < 0) { close(listener); unlink(path); return 1; }
+    if (child < 0) { close(listener); return 1; }
     if (child == 0) {
         close(listener);
         execvp(program[0], program);
         _exit(127);
     }
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa)); sa.sa_handler = on_terminate;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
     int shutdown_sent = 0, status = 1;
     for (;;) {
         int done = child_exited(child);
@@ -131,7 +136,11 @@ static int serve(const char *path, char **program) {
                 }
             }
         }
-        (void)write(peer, &reply, 1);
+        /* The client may disconnect after sending a command; never let a
+         * SIGPIPE from the response kill the owner or orphan its child. */
+        if (send(peer, &reply, 1, MSG_NOSIGNAL) != 1) {
+            /* A lost acknowledgement does not grant retry authority. */
+        }
         close(peer);
     }
     /* WNOWAIT above never reaps; no PID reuse was possible during signals. */
