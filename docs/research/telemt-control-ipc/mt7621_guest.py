@@ -193,6 +193,10 @@ def scenario_for(emulator_root):
         # 64 other failure; 65 panic; 66 permission/bind; 67 config;
         # 68 missing file; 70 unsupported syscall; 71 unexpected child
         # executable; 72 direct-child TERM failed or it did not exit.
+        # 73 common fatal signal-like exit status, 74 launcher 126/127,
+        # 75 unclassified foreground stderr/stdout, 76 unclassified
+        # foreground file log. Old main daemon's routine logging must
+        # NOT mask a foreground diagnostic's own result.
         guest_ssh("i=0; seen=0; while [ \"$i\" -lt 30 ]; do "
                   "[ -e " + PID + " ] && seen=1; "
                   "if [ -r " + PID + " ]; then "
@@ -259,6 +263,10 @@ def scenario_for(emulator_root):
                   "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
                   "2>/dev/null && exit 70; "
                   "[ \"$frc\" = 0 ] && exit 63; "
+                  "case \"$frc\" in 132|134|137|139) exit 73;; "
+                  "126|127) exit 74;; esac; "
+                  "[ -s /opt/lab/ipc-fg.out ] && exit 75; "
+                  "[ -s /opt/var/log/telemt-ipc-fg.log ] && exit 76; "
                   "[ \"$seen\" = 0 ] || exit 57; "
                   "[ -s " + LOG + " ] && exit 60; "
                   "[ -e " + PID + ".lock ] && exit 61; "

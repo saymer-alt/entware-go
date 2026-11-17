@@ -57,6 +57,10 @@ FAIL_CODES = {
     70: "foreground Linux syscall unsupported",
     71: "direct foreground child executable identity mismatch",
     72: "direct foreground child TERM failed or did not exit",
+    73: "foreground exited with fatal signal-like status",
+    74: "foreground launcher/exec status 126 or 127",
+    75: "foreground stdout/stderr nonempty without known diagnostic marker",
+    76: "foreground log nonempty without known diagnostic marker",
 }
 
 
@@ -138,8 +142,8 @@ class ResearchPlanTests(unittest.TestCase):
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]
                          if isinstance(s.get("send"), str))
-        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[0-8]|7[0-2])\b", text)
-        # Group 41..68 and 70..72 belongs to startup diagnostics (legacy 69 removed).
+        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[0-8]|7[0-6])\b", text)
+        # Group 41..68 and 70..76 covers startup diagnostics (legacy 69 removed).
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
         # One code may guard multiple conditions within its error category.
         self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
@@ -212,7 +216,7 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertIn("seen=0;", command)
         self.assertIn("readlink", command)
         self.assertIn("grep -Eqi", command)
-        for code in (46, *range(55, 69), 70, 71, 72):
+        for code in (46, *range(55, 69), *range(70, 77)):
             self.assertIn(f"exit {code}", command)
         self.assertNotIn("exit 69", command)
         self.assertTrue(command.endswith("exit 46"))
@@ -249,6 +253,25 @@ class ResearchPlanTests(unittest.TestCase):
         exe = self.plan["steps"][labels.index("IPC_CHILD_EXE_CONFIRMED")]["send"]
         self.assertTrue(exe.startswith("[ -r " + self.module.PID + " ] || exit 57;"))
         self.assertIn("|| exit 57;", exe)
+
+    def test_foreground_evidence_precedes_generic_main_log(self):
+        step = next(s for s in self.plan["steps"]
+                    if s.get("expect") == "IPC_PIDFILE_READY")
+        command = step["send"]
+        self.assertIn('case "$frc" in 132|134|137|139) exit 73;', command)
+        self.assertIn('126|127) exit 74;', command)
+        self.assertIn('[ -s /opt/lab/ipc-fg.out ] && exit 75;', command)
+        self.assertIn('[ -s /opt/var/log/telemt-ipc-fg.log ] && exit 76;', command)
+        self.assertLess(command.index("exit 73"),
+                        command.index("[ -s " + self.module.LOG + " ] && exit 60"))
+        self.assertLess(command.index("exit 75"),
+                        command.index("[ -s " + self.module.LOG + " ] && exit 60"))
+        self.assertLess(command.index("exit 76"),
+                        command.index("[ -s " + self.module.LOG + " ] && exit 60"))
+        # No log lines or process arguments are ever emitted to SSH.
+        self.assertNotIn("cat /opt/lab/ipc-fg.out", command)
+        self.assertNotIn("cat /opt/var/log/telemt-ipc-fg.log", command)
+        self.assertNotIn("tr '\\0'", command)
 
     def test_foreground_classifier_uses_only_pinned_disposable_config(self):
         step = next(s for s in self.plan["steps"]
