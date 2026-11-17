@@ -40,6 +40,13 @@ FAIL_CODES = {
     52: "BusyBox find applet unavailable",
     53: "BusyBox find -perm invocation failed",
     54: "BusyBox find -user invocation failed",
+    55: "Unix socket exists without readable PID file",
+    56: "pinned daemon executable alive without PID file",
+    57: "PID file appeared transiently, then disappeared",
+    58: "on-guest daemon log has panic marker; content not exported",
+    59: "on-guest daemon log has permission or bind marker; content not exported",
+    60: "other nonempty on-guest daemon log; content not exported",
+    61: "sibling PID lock persists without PID file or readable log",
 }
 
 
@@ -86,8 +93,8 @@ class ResearchPlanTests(unittest.TestCase):
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]
                          if isinstance(s.get("send"), str))
-        all_codes = re.findall(r"\bexit (4[1-9]|5[0-4])\b", text)
-        # Group 41..54 exclusively belongs to the new startup stages.
+        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[01])\b", text)
+        # Group 41..61 exclusively belongs to the new startup stages.
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
         # One code may guard multiple conditions within its error category.
         self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
@@ -152,6 +159,20 @@ class ResearchPlanTests(unittest.TestCase):
             os.chmod(private, 0o700)
             wrong_uid = 1 if os.getuid() == 0 else 0
             self.assertFalse(matched(["-user", str(wrong_uid)]))
+
+    def test_missing_pid_classifier_sanitized_and_fail_closed(self):
+        step = next(s for s in self.plan["steps"]
+                    if s.get("expect") == "IPC_PIDFILE_READY")
+        command = step["send"]
+        self.assertIn("seen=0;", command)
+        self.assertIn("readlink", command)
+        self.assertIn("grep -Eqi", command)
+        for code in (46, 55, 56, 57, 58, 59, 60, 61):
+            self.assertIn(f"exit {code}", command)
+        self.assertTrue(command.endswith("exit 46"))
+        self.assertNotIn("cat " + self.module.LOG, command)
+        self.assertNotIn("cat /proc/", command)
+        self.assertNotIn("echo $e", command)
 
     def test_ssh_command_posix_shell_parse_without_execution(self):
         labels = [step.get("expect") for step in self.plan["steps"]]

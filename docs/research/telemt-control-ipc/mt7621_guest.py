@@ -177,11 +177,33 @@ def scenario_for(emulator_root):
                   "rc=$?; [ \"$rc\" = 0 ] || exit 45; "
                   "printf 'IPC_%s\\n' START_RETURNED",
                   "IPC_START_RETURNED", 120),
-        guest_ssh("i=0; while [ \"$i\" -lt 30 ]; do "
+        # A clean start(1) CLI return can conceal a detached child crash
+        # and PID RAII removal. This step emits ONLY a sanitized SSH code,
+        # never the guest's stdout, config, process cmdline, or log content.
+        # 55 socket w/o PID, 56 live pinned binary w/o PID, 57 transient PID,
+        # 58 on-guest panic text, 59 permission/bind signature, 60 other log,
+        # 61 persisted sibling lock without PID, 46 no further evidence.
+        guest_ssh("i=0; seen=0; while [ \"$i\" -lt 30 ]; do "
+                  "[ -e " + PID + " ] && seen=1; "
                   "[ -r " + PID + " ] && break; "
                   "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
-                  "[ -r " + PID + " ] || exit 46; "
-                  "printf 'IPC_%s\\n' PIDFILE_READY",
+                  "if [ -r " + PID + " ]; then "
+                  "printf 'IPC_%s\\n' PIDFILE_READY; exit 0; fi; "
+                  "[ -S " + CTL + " ] && exit 55; "
+                  "n=0; for d in /proc/[0-9]*; do "
+                  "e=$(/opt/bin/busybox readlink \"$d/exe\" 2>/dev/null); "
+                  "[ \"$e\" = '" + BIN + "' ] && n=$((n+1)); done; "
+                  "[ \"$n\" = 0 ] || exit 56; "
+                  "[ \"$seen\" = 0 ] || exit 57; "
+                  "if [ -s " + LOG + " ]; then "
+                  "/opt/bin/busybox grep -Eqi 'panic|panicked' " + LOG +
+                  " && exit 58; "
+                  "/opt/bin/busybox grep -Eqi "
+                  "'permission denied|operation not permitted|failed to bind|address already in use' " +
+                  LOG + " && exit 59; "
+                  "exit 60; fi; "
+                  "[ -e " + PID + ".lock ] && exit 61; "
+                  "exit 46",
                   "IPC_PIDFILE_READY", 120),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
                   "case \"$p\" in ''|*[!0-9]*) exit 47;; esac; "
