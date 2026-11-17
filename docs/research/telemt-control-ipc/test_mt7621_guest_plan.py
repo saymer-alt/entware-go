@@ -8,6 +8,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -102,6 +103,33 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertTrue(self.module.start_command().startswith("HOME=/opt/lab"))
         self.assertIn("--control-socket " + self.module.CTL,
                       self.module.start_command())
+
+    def test_findutils_in_exact_emulator_lock(self):
+        lock_path = self.root / "lab/entware-mipselsf.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        found = [p for p in lock["packages"] if p["Package"] == "findutils"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["Architecture"], "mipsel-3.4")
+        self.assertRegex(found[0]["SHA256sum"], r"^[a-f0-9]{64}$")
+        step = next(x for x in self.plan["steps"]
+                    if x.get("expect") == "IPC_PARENT_OWNER_MODE")
+        self.assertIn("test -x /opt/bin/find", step["send"])
+        self.assertIn("-printf %m", step["send"])
+        self.assertIn("-printf %U", step["send"])
+        self.assertNotIn("busybox stat", step["send"])
+
+    def test_gnu_findutils_mode_and_numeric_uid_from_private_dir(self):
+        # The host test checks GNU find syntax and semantics only. It does
+        # not claim that the remote mipsel executable has run.
+        with tempfile.TemporaryDirectory(prefix="ipc-mode-") as root:
+            private = Path(root) / "private"
+            private.mkdir(mode=0o700)
+            os.chmod(private, 0o700)
+            observed = subprocess.run(
+                ["find", str(private), "-maxdepth", "0",
+                 "-printf", "%m:%U"],
+                capture_output=True, text=True, check=True)
+            self.assertEqual(observed.stdout, f"700:{os.getuid()}")
 
     def test_ssh_command_posix_shell_parse_without_execution(self):
         labels = [step.get("expect") for step in self.plan["steps"]]

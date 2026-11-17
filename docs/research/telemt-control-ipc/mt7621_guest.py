@@ -141,12 +141,16 @@ def scenario_for(emulator_root):
                   "[ -d \"$d\" ] || exit 42; done; "
                   "printf 'IPC_%s\\n' PARENT_COMPONENTS_SAFE",
                   "IPC_PARENT_COMPONENTS_SAFE"),
-        guest_ssh("uid=$(/opt/bin/busybox id -u); "
-                  "mode=$(/opt/bin/busybox stat -c %a "
-                  "/opt/var/run/telemt-ipc-lab) || exit 43; "
+        # In pinned Entware mipsel-3.4, BusyBox STAT applet is not built.
+        # GNU findutils *is* in the immutable mipsel lock and provides
+        # exact numeric mode (%m) and numeric owner UID (%U), no shell parsing.
+        guest_ssh("test -x /opt/bin/find || exit 43; "
+                  "uid=$(/opt/bin/busybox id -u) || exit 44; "
+                  "mode=$(/opt/bin/find /opt/var/run/telemt-ipc-lab "
+                  "-maxdepth 0 -printf %m) || exit 43; "
                   "[ \"$mode\" = 700 ] || exit 43; "
-                  "owner=$(/opt/bin/busybox stat -c %u "
-                  "/opt/var/run/telemt-ipc-lab) || exit 44; "
+                  "owner=$(/opt/bin/find /opt/var/run/telemt-ipc-lab "
+                  "-maxdepth 0 -printf %U) || exit 44; "
                   "[ \"$owner\" = \"$uid\" ] || exit 44; "
                   "printf 'IPC_%s\\n' PARENT_OWNER_MODE",
                   "IPC_PARENT_OWNER_MODE"),
