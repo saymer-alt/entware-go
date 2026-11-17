@@ -237,6 +237,9 @@ class TelemtNightlyPinTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / '.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental.yml').read_text()
         self.assertIn('RUST_NIGHTLY_PIN: nightly-2026-11-16', workflow)
+        self.assertIn('RUST_BUILD_TOOLCHAIN: nightly', workflow)
+        self.assertIn('cp -a "$archive" "$original"', workflow)
+        self.assertIn('RESTORED_RUST_SYSROOT', workflow)
         self.assertIn('5f4effd57', workflow)
         self.assertIn('d4ba43815883dd1ce9aa57349602598127781e8966d51dab97616dbdb35b216f', workflow)
         self.assertIn('2c8a84fb93535303eeb4bb8a0a5057370f4e625b1cdf0e102f04e33e28c85d8d', workflow)
@@ -247,13 +250,14 @@ class TelemtNightlyPinTests(unittest.TestCase):
         script = (root / 'docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh').read_text()
         self.assertIn('RUST_NIGHTLY_TOOLCHAIN=nightly', script)
         self.assertIn('if [ "${TELEMT_GETFB:-0}" = "1" ]; then', script)
+        self.assertIn('RUST_NIGHTLY_TOOLCHAIN="${RUST_BUILD_TOOLCHAIN:?getfb needs a verified nightly alias}"', script)
         self.assertIn('cargo +"$RUST_NIGHTLY_TOOLCHAIN" -Z build-std=std,panic_abort', script)
 
     def test_entropy_build_uses_same_pin(self):
         root = Path(__file__).resolve().parents[2]
         script = (root / 'docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh').read_text()
-        self.assertIn('rustc +"${RUST_NIGHTLY_PIN:?missing nightly pin}" -V', script)
-        self.assertEqual(script.count('cargo +"$RUST_NIGHTLY_PIN" -Z build-std=std,panic_abort'), 2)
+        self.assertIn('rustc +"${RUST_BUILD_TOOLCHAIN:?missing verified nightly alias}" -V', script)
+        self.assertEqual(script.count('cargo +"$RUST_BUILD_TOOLCHAIN" -Z build-std=std,panic_abort'), 2)
 
 
 if __name__ == "__main__":

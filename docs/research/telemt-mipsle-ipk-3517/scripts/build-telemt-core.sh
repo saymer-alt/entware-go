@@ -270,7 +270,8 @@ cargo clean -p libc
 # Only opt-in getfb builds require the reproducible dated toolchain.
 RUST_NIGHTLY_TOOLCHAIN=nightly
 if [ "${TELEMT_GETFB:-0}" = "1" ]; then
-  RUST_NIGHTLY_TOOLCHAIN="${RUST_NIGHTLY_PIN:?getfb requires a dated Rust nightly}"
+  test -n "${RUST_NIGHTLY_PIN:?getfb requires a dated Rust nightly archive}"
+  RUST_NIGHTLY_TOOLCHAIN="${RUST_BUILD_TOOLCHAIN:?getfb needs a verified nightly alias}"
   test "$(rustc +"$RUST_NIGHTLY_TOOLCHAIN" -V)" = "${RUSTC_PIN_VERSION:?missing pinned rustc identity}" || {
     echo '::error::Wrong rustc revision for the accepted MIPSel Core'; exit 1;
   }

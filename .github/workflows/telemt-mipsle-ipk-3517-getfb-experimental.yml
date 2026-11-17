@@ -36,6 +36,8 @@ env:
   UPSTREAM_SHA: 66708d2866f3f3a4541c4fa67984d408e71a8af4
   # Fail closed if a date-pinned archive resolves to a different compiler.
   RUST_NIGHTLY_PIN: nightly-2026-11-16
+  # Restore the original toolchain/sysroot path seen in the accepted ELF build.
+  RUST_BUILD_TOOLCHAIN: nightly
   RUSTC_PIN_VERSION: 'rustc 1.102.0-nightly (5f4effd57 2026-11-13)'
 
 jobs:
@@ -119,7 +121,29 @@ jobs:
             exit 1
           fi
           rustc +"$RUST_NIGHTLY_PIN" -vV
-          echo 'RUST_NIGHTLY_IDENTITY: PASS'
+          # Cargo -Z build-std records the absolute sysroot source path. The
+          # accepted 74/74 guest Core had sources under toolchains/nightly-...;
+          # a dated toolchain path can change the ELF with identical rustc.
+          # Copy pinned compiler bytes to the *original* toolchain directory.
+          host=$(rustc +"$RUST_NIGHTLY_PIN" -vV | sed -n 's/^host: //p')
+          test -n "$host"
+          archive="$HOME/.rustup/toolchains/$RUST_NIGHTLY_PIN-$host"
+          original="$HOME/.rustup/toolchains/nightly-$host"
+          test -d "$archive"
+          if [ -e "$original" ] || [ -L "$original" ]; then
+            rustup toolchain uninstall nightly
+          fi
+          cp -a "$archive" "$original"
+          actual_alias=$(rustc +"$RUST_BUILD_TOOLCHAIN" -V)
+          test "$actual_alias" = "$RUSTC_PIN_VERSION" || {
+            echo "::error::Pinned nightly alias compiler identity mismatch"; exit 1;
+          }
+          sysroot=$(rustc +"$RUST_BUILD_TOOLCHAIN" --print sysroot)
+          echo "RESTORED_RUST_SYSROOT=$sysroot"
+          test "$sysroot" = "$original" || {
+            echo "::error::Cargo must build-std using the original nightly sysroot path"; exit 1;
+          }
+          echo 'RUST_NIGHTLY_IDENTITY_AND_SYSROOT: PASS'
       - name: Build Core with getrandom fallback forks (pinned sysroot, bounded)
         run: bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
         env:
