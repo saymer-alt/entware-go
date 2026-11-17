@@ -367,3 +367,36 @@ control socket, `reload` (same PID + SIGHUP marker), unsafe-parent rejection,
 no implicit pidfd fallback, empty-path rejection, IPC `stop` cleanliness,
 second `stop` rejection, native reboot with no autostart, manual restart and
 opkg rollback.
+
+## Fifteenth guest result: the entire IPC acceptance chain PASSED (2026-11-17)
+
+[Run 44146539784](https://github.com/saymer-alt/entware-go/actions/runs/44146539784),
+head `ea888a8`, sanitized report: **58 of 59 executed steps PASS**, run stopped
+at the first after-reboot assertion. The real Ported 5.1.8 MT7621 kernel-4.9
+guest proved, with the `1ipc2` mount-boundary candidate:
+
+- `IPC_ANCESTORS_TRUSTED`: the diagnose-only preflight measured the expected
+  platform signature (root violating the ordinary rule while
+  `/proc/mounts` shows it read-only; every component below the root trusted)
+  with **no repair attempt** — the exact facts behind the root cause;
+- `IPC_FGA_HEALTHY`, `IPC_FGB_HEALTHY`, `IPC_FGC_HEALTHY`: all three bounded
+  foreground variants healthy, **including C with the control socket** —
+  the mount-boundary fix works on the real guest;
+- detached daemon readiness: `IPC_START_RETURNED`, `IPC_PIDFILE_READY`
+  (stable numeric PID + pinned `/proc/exe` + 2 s stability),
+  `IPC_CHILD_EXE_CONFIRMED`, `IPC_CONTROL_SOCKET_READY`, `IPC_DAEMON_ALIVE`;
+- **native in-daemon IPC on kernel 4.9**: `IPC_RELOAD_SAME_PID`
+  (same PID after reload), `IPC_UNSAFE_PARENT_REJECTED`,
+  `IPC_NO_IMPLICIT_PIDFD_FALLBACK`, `IPC_EMPTY_PATH_REJECTED`,
+  `IPC_STOP_CLEAN` (no orphan, no socket), `IPC_SECOND_STOP_REJECTED`;
+- native reboot completed (`Activated system reboot` … `MARK42`, `/opt ext4`).
+
+The only FAIL (`IPC_REBOOT_NO_AUTOSTART`, `ssh_exit_nonzero_1`) is a **harness
+defect, not a TeleMT result**: the reboot block still grepped for the stale
+`Version: 3.5.17-1ipc1` while the installed candidate is `3.5.17-1ipc2`, so
+`opkg status | grep` deterministically returned 1. Commit `c4c374a` replaces
+the last version reference and adds a host guard test that fails the suite on
+any stale lab version in the scenario. `IPC_REBOOT_ABSENT_REJECTED`,
+`IPC_REBOOT_MANUAL_START`, `IPC_REBOOT_STOP_CLEAN` and `IPC_ROLLBACK_OK` are
+therefore NOT_TESTED on the guest; the scenario is ready for one explicit
+one-shot re-run when authorized (the four-run session budget was consumed).
