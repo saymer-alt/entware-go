@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/telemt-control-ipc-mt7621-guest.yml'
       - 'docs/research/telemt-control-ipc/mt7621_guest.py'
+      - 'docs/research/telemt-control-ipc/test_mt7621_guest_plan.py'
   # The native-guest job is never executed by PR events. GitHub's PR paths
   # filter matches the entire accumulated PR diff, so documentation-only
   # commits otherwise waste an extra full QEMU cycle. An explicit opt-in
@@ -66,7 +67,23 @@ jobs:
             echo "::error::Research boundary violation"; exit 1
           fi
           python3 -m py_compile docs/research/telemt-control-ipc/mt7621_guest.py
+          python3 -m py_compile docs/research/telemt-control-ipc/test_mt7621_guest_plan.py
           echo 'GUEST_RESEARCH_ISOLATION: PASS'
+      - name: Fetch SHA-pinned public emulator fixture for cheap offline tests
+        uses: actions/checkout@v4
+        with:
+          repository: saymer-alt/router-emulator
+          ref: 64a446deaacb0bca10d6053781ff1f7ad4a29552
+          persist-credentials: false
+          path: emulator
+      - name: Validate plan with native emulator parser, no QEMU or IPK execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C emulator rev-parse HEAD)" = "$EMULATOR_SHA"
+          python3 docs/research/telemt-control-ipc/test_mt7621_guest_plan.py \
+            --emulator-root emulator
+          echo 'IPC_HOST_ONLY_GUEST_CONTRACT: PASS'
 
   native-guest:
     needs: safety
