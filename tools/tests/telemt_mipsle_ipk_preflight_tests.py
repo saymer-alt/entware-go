@@ -2,7 +2,7 @@
 """Unit tests for tools/telemt_mipsle_ipk_preflight.py using synthetic fixtures.
 
 Fixtures are minimal hand-built archives/ELFs; no real binaries, no network,
-nothing is executed. Run: python3 -m unittest discover tools/tests
+no product binaries are executed. Run: python3 -m unittest discover tools/tests
 """
 from __future__ import annotations
 
@@ -258,6 +258,24 @@ class TelemtNightlyPinTests(unittest.TestCase):
         script = (root / 'docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh').read_text()
         self.assertIn('rustc +"${RUST_BUILD_TOOLCHAIN:?missing verified nightly alias}" -V', script)
         self.assertEqual(script.count('cargo +"$RUST_BUILD_TOOLCHAIN" -Z build-std=std,panic_abort'), 2)
+
+
+
+class TelemtLegacySupervisorResearchGate(unittest.TestCase):
+    """Invoke host-only C proof from the existing allowlisted MIPSel test suite."""
+
+    def test_legacy_control_host_proof(self):
+        import subprocess
+        root = Path(__file__).resolve().parents[2]
+        tests_dir = root / "docs/research/telemt-mipsle-ipk-3517/legacy-control"
+        self.assertTrue((tests_dir / "legacy-supervisor.c").is_file())
+        self.assertTrue((tests_dir / "test_legacy_supervisor.py").is_file())
+        run = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", str(tests_dir),
+             "-p", "test_legacy_supervisor.py", "-v"],
+            cwd=root, capture_output=True, text=True, timeout=40,
+        )
+        self.assertEqual(run.returncode, 0, run.stdout + "\n" + run.stderr)
 
 
 if __name__ == "__main__":
