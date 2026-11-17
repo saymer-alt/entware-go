@@ -125,3 +125,70 @@ test ! -e /opt/var/run/telemt-ipc-kn1010/ctl.sock && echo SOCKET_CLEAN
 Для обратной связи достаточно: модель/прошивка/ядро, `opkg print-architecture`, режим и тип корневого FS, IPK SHA256 совпал/нет, `start` PASS/FAIL, socket/PID PASS/FAIL, `reload` PASS/FAIL, `stop` PASS/FAIL, `opkg remove` PASS/FAIL. **Не присылать реальные конфиги и секреты.**
 
 Завершение этого pilot не означает готовность production-сервиса, Panel Lite, Telegram upstream и auto-start. PR #58 остаётся Draft, Issue #51 закрывать только после подтверждения на физическом устройстве.
+
+
+## 7. Panel Lite RC4: отдельная совместная проверка на localhost
+
+**Статус:** Panel Lite RC4 + **обычный Core** ранее 93/93 PASS в QEMU ([router-emulator PR #96](https://github.com/saymer-alt/router-emulator/pull/96)); **IPC-версия Core + Panel Lite вместе** на момент написания НЕ ПРОВЕРЕНЫ в QEMU. `service_manager = "none"` позволяет проверить веб-интерфейс и API-доступ к Core, но **не** проверяет кнопки управления Core в панели.
+
+Готовый экспериментальный Panel IPK: [workflow 43624729371, artifact `telemt-panel-lite-mipsel-experimental`](https://github.com/saymer-alt/entware-go/actions/runs/43624729371). Срок хранения до 21.11.2026. Имя внутри ZIP: `telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk`.
+
+```text
+Panel IPK SHA256 0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68
+Panel ELF SHA256 380cb5112b58538eafec9ae9fab27fb22c994fd36ce3130c541c5e11b29a40c8
+```
+
+Проверить свободный localhost-порт 18082. **Не устанавливать Panel Lite, если уже работает `/opt/bin/telemt-panel` или установлен действующий `telemt-panel-lite` — сначала определить совместимость/конфликт пакетов.** После передачи IPK на KN-1010 и сверки SHA:
+
+```sh
+cd /opt/tmp || exit 1
+sha256sum telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+/opt/bin/opkg install ./telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+/opt/bin/telemt-panel version
+```
+
+Использовать заранее запущенный синтетический IPC-Core из разделов 4–5, чей API прослушивает `127.0.0.1:19091`. Создать **отдельный** panel-config (не трогать штатный `/opt/etc/telemt-panel/config.toml`):
+
+```sh
+umask 077
+h=$(printf '%s\n' 'lab-test-change-afterwards' | /opt/bin/telemt-panel hash-password) || exit 1
+mkdir -p /opt/var/lib/telemt-panel-ipc-kn1010
+cat > /opt/etc/telemt-panel-ipc-kn1010.toml <<TOML
+listen = "127.0.0.1:18082"
+data_dir = "/opt/var/lib/telemt-panel-ipc-kn1010"
+
+[tls]
+mode = "http"
+
+[telemt]
+url = "http://127.0.0.1:19091"
+auth_header = ""
+
+[auth]
+username = "labadmin"
+password_hash = "$h"
+
+[store]
+driver = "memory"
+
+[host]
+service_manager = "none"
+TOML
+chmod 600 /opt/etc/telemt-panel-ipc-kn1010.toml
+```
+
+В отдельной SSH-сессии запустить **в foreground**, чтобы штатное завершение было через Ctrl+C:
+
+```sh
+HOME=/opt /opt/bin/telemt-panel -config /opt/etc/telemt-panel-ipc-kn1010.toml
+```
+
+Для открытия GUI на ПК использовать SSH port forwarding до `127.0.0.1:18082` роутера, а не открывать его на WAN:
+
+```sh
+ssh -L 18082:127.0.0.1:18082 USER@ROUTER
+```
+
+Открыть `http://127.0.0.1:18082`, войти `labadmin` с **тестовым** паролем `lab-test-change-afterwards`, проверить авторизацию, `/api/health`, статус Core `reachable:true` и версию `3.5.17`. Затем выполнить IPC `reload` Core, убедиться, что соединение панели сохраняется; выполнить IPC `stop`, убедиться, что панель показывает недоступность Core; запустить Core вручную заново и проверить `reachable:true`. Это **не тест внешнего Telegram upstream** и не тест API управления демоном из панели.
+
+В конце завершить панель через Ctrl+C, подтвердить отсутствие запущенного `telemt-panel`, затем при отсутствии других зависимостей `opkg remove telemt-panel-lite` и IPC-пакет по разделу 6. Не удалять чужие файлы, не менять init scripts и веб-панель рабочего роутера.
