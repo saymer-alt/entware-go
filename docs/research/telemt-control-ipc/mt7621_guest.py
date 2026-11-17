@@ -111,48 +111,59 @@ def audit_core_ipk(emulator_root, ipk):
 
 
 def trust_preflight_step():
-    """Verify every control-socket ancestor against the exact Rust rule.
+    """Measure every control-socket ancestor; diagnose only, never repair.
 
-    `validate_trusted_directory` (upstream secure_fs, called by the research
-    patch's private_parent) requires every walked ancestor to be a directory
-    owned by root or the effective UID and not group/world-writable unless
-    the sticky bit compensates. Run 13 proved this check is what still kills
-    variant C after the 0755 normalization of /opt subdirs, so the only
-    unnormalized component left is the firmware root "/". This step applies
-    the identical rule with quiet BusyBox find, attempts a 0755 repair for
-    repairable components, re-verifies, and exports the first unrepairable
-    violator through a dedicated exit code (110 root, 111 /opt, 112
-    /opt/var, 113 /opt/var/run, 114 private dir). Healthy exits 0 with an
-    explicit marker. No content is exported.
+    Run 14 proved the Ported KeeneticOS root "/" violates the ordinary
+    trusted-directory rule and that the run-14 repair attempt (chown/chmod)
+    could not clear it, so this step records the original environment facts
+    and exports the first contradiction through a dedicated exit code
+    without modifying anything:
+
+      110 the root violates the ordinary rule (non-root owner, or
+          group/world writable without sticky) AND the root filesystem is
+          not mounted read-only per /proc/mounts. The patched binary fails
+          closed in this case, so the run must not continue;
+      111 /opt, 112 /opt/var, 113 /opt/var/run violate the ordinary rule
+          (real Entware ships these as root 0755);
+      114 the private socket parent is not root-owned 0700;
+      115 no BusyBox find applet.
+
+    A read-only root that violates the ordinary rule is the expected
+    KeeneticOS signature and exits 0 together with all trusted components
+    below it. No chmod, no chown, no content export.
     """
     bb = "/opt/bin/busybox"
-    ancestors = [
-        (110, "/", "755"),
-        (111, "/opt", "755"),
-        (112, "/opt/var", "755"),
-        (113, "/opt/var/run", "755"),
-        (114, "/opt/var/run/telemt-ipc-lab", "700"),
-    ]
-    parts = []
-    for code, path, repair in ancestors:
-        owner = (f"{bb} find {path} -maxdepth 0 -type d -user 0 -print "
-                 f"2>/dev/null")
-        writable = (f"{bb} find {path} -maxdepth 0 -type d "
-                    f"\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null")
-        sticky = (f"{bb} find {path} -maxdepth 0 -type d -perm -01000 "
-                  f"-print 2>/dev/null")
-        repair_cmd = (f"{bb} chown 0:0 {path} 2>/dev/null; "
-                      f"{bb} chmod {repair} {path} 2>/dev/null; ")
-        parts.append(
-            f"[ \"$({owner})\" = {path} ] || {{ {repair_cmd}"
-            f"[ \"$({owner})\" = {path} ] || exit {code}; }}; "
-            f"[ -n \"$({writable})\" ] && [ -z \"$({sticky})\" ] && "
-            f"{{ {repair_cmd}"
-            f"[ -n \"$({writable})\" ] && [ -z \"$({sticky})\" ] && "
-            f"exit {code}; }}; ")
     command = (
         f"{bb} --list | {bb} grep -qx find || exit 115; "
-        "".join(parts) +
+        "ro=0; "
+        "/opt/bin/busybox grep -EqE "
+        "'^[^ ]+ / [^ ]+ ro([, ]|$)' /proc/mounts 2>/dev/null && ro=1; "
+        f'w=$({bb} find / -maxdepth 0 -type d '
+        '\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null); '
+        f'o=$({bb} find / -maxdepth 0 -type d -user 0 -print 2>/dev/null); '
+        'if [ "$o" != / ] || { [ -n "$w" ] && [ "$ro" != 1 ]; }; '
+        "then exit 110; fi; "
+        f'o=$({bb} find /opt -maxdepth 0 -type d -user 0 -print 2>/dev/null); '
+        '[ "$o" = /opt ] || exit 111; '
+        f'w=$({bb} find /opt -maxdepth 0 -type d '
+        '\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null); '
+        '[ -n "$w" ] && exit 111; '
+        f'o=$({bb} find /opt/var -maxdepth 0 -type d -user 0 -print 2>/dev/null); '
+        '[ "$o" = /opt/var ] || exit 112; '
+        f'w=$({bb} find /opt/var -maxdepth 0 -type d '
+        '\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null); '
+        '[ -n "$w" ] && exit 112; '
+        f'o=$({bb} find /opt/var/run -maxdepth 0 -type d -user 0 -print 2>/dev/null); '
+        '[ "$o" = /opt/var/run ] || exit 113; '
+        f'w=$({bb} find /opt/var/run -maxdepth 0 -type d '
+        '\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null); '
+        '[ -n "$w" ] && exit 113; '
+        f'm=$({bb} find /opt/var/run/telemt-ipc-lab -maxdepth 0 '
+        '-type d -perm 700 -print 2>/dev/null); '
+        '[ "$m" = /opt/var/run/telemt-ipc-lab ] || exit 114; '
+        f'o=$({bb} find /opt/var/run/telemt-ipc-lab -maxdepth 0 '
+        '-type d -user 0 -print 2>/dev/null); '
+        '[ "$o" = /opt/var/run/telemt-ipc-lab ] || exit 114; '
         "printf 'IPC_%s\\n' ANCESTORS_TRUSTED")
     return guest_ssh(command, "IPC_ANCESTORS_TRUSTED", 120)
 
@@ -371,10 +382,8 @@ def synthetic_file_step(config, secret):
     b64_config = base64.b64encode(config).decode("ascii")
     b64_secret = base64.b64encode(secret).decode("ascii")
     return guest_ssh(
-        "/opt/bin/busybox mkdir -p /opt/lab /opt/var/run/telemt-ipc-lab "
-        "/opt/var/log /opt/etc && "
-        "/opt/bin/busybox chmod 755 /opt/lab /opt/var /opt/var/run "
-        "/opt/var/log /opt/etc && "
+        "/opt/bin/busybox mkdir -m 755 -p /opt/lab "
+        "/opt/var/run/telemt-ipc-lab /opt/var/log /opt/etc && "
         "/opt/bin/busybox chmod 700 /opt/var/run/telemt-ipc-lab && "
         "printf '%s' '" + b64_config +
         "' | /opt/bin/busybox base64 -d > " + CONF + " && "

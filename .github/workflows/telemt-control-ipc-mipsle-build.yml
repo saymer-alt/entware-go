@@ -25,8 +25,8 @@ env:
   RUST_NIGHTLY_PIN: nightly-2026-11-16
   RUST_BUILD_TOOLCHAIN: nightly
   RUSTC_PIN_VERSION: 'rustc 1.102.0-nightly (5f4effd57 2026-11-13)'
-  LAB_IPK: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
-  LAB_VERSION: 3.5.17-1ipc1
+  LAB_IPK: telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk
+  LAB_VERSION: 3.5.17-1ipc2
 
 jobs:
   isolation:
@@ -47,11 +47,11 @@ jobs:
           set -euo pipefail
           module=$(git hash-object docs/research/telemt-control-ipc/local_control.rs)
           patch=$(git hash-object docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch)
-          if [ "$module" = 'b0407a82be17bbd07993541d517416c545ba864e' ] && [ "$patch" = '0ef70b2d01971d710657c31d9bdf40f0a6817e9b' ]; then
-            echo 'build_needed=false' >> "$GITHUB_OUTPUT"
-            echo 'FROZEN_ELF_AND_IPK_REUSED: PASS (Actions 44050853817)'
+          if [ "$module" = '950a60416868a6a1d54e17abbe4b4242367fcc2e' ] && [ "$patch" = '4d61949995b93184acac66c111b5d8c538c6bb68' ]; then
+            echo 'build_needed=true' >> "$GITHUB_OUTPUT"
+            echo 'IPC2_MOUNT_BOUNDARY_CANDIDATE: fresh 1ipc2 build required; the 1ipc1 ELF/IPK and its SHA pins stay frozen and unused'
           else
-            echo "::error::Research IPC source changed: bump lab version and re-pin artifacts before a new build"
+            echo "::error::Research IPC source drifted from the pinned 1ipc2 candidate; re-pin local_control.rs and the daemon-control patch first"
             exit 1
           fi
       - name: Enforce isolated PR scope before any expensive toolchain setup
@@ -155,7 +155,7 @@ jobs:
           install -m 0755 "$BIN" "$ROOT/telemt-ipc-lab"
           cat > "$RUNNER_TEMP/ipc-lab-control" <<'CTRL'
           Package: telemt-ipc-lab
-          Version: 3.5.17-1ipc1
+          Version: 3.5.17-1ipc2
           Architecture: mipsel-3.4
           Maintainer: entware-go isolated laboratory research <noreply@users.noreply.github.com>
           Section: net
@@ -173,7 +173,7 @@ jobs:
           from pathlib import Path
           name = os.environ["LAB_IPK"]
           outer = Path(name).read_bytes()
-          assert name == "telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk"
+          assert name == "telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk"
           with tarfile.open(fileobj=io.BytesIO(outer), mode="r:gz") as opkg:
               names = set(opkg.getnames())
               assert "./control.tar.gz" in names and "./data.tar.gz" in names, names
@@ -182,7 +182,7 @@ jobs:
           with tarfile.open(fileobj=io.BytesIO(control_bytes), mode="r:gz") as control:
               meta = control.extractfile("./control").read().decode()
               assert "Package: telemt-ipc-lab\n" in meta
-              assert "Version: 3.5.17-1ipc1\n" in meta
+              assert "Version: 3.5.17-1ipc2\n" in meta
               assert "Architecture: mipsel-3.4\n" in meta
           with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
               paths = {item.name.lstrip("./") for item in data.getmembers() if item.isfile()}
@@ -199,7 +199,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: telemt-ipc-lab-mipsel-3.4
-          path: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
+          path: telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk
           retention-days: 7
           if-no-files-found: error
       - name: Honest evidence boundary

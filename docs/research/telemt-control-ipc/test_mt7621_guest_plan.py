@@ -255,28 +255,27 @@ class ResearchPlanTests(unittest.TestCase):
             workflow.index("PINNED_CORE_IPK: PASS"),
             workflow.index("One QEMU-system kernel-4.9 IPC cycle"))
 
-    def test_trust_preflight_matches_the_rust_rule_and_repairs_only(self):
+    def test_trust_preflight_records_original_facts_and_never_repairs(self):
         step = next(s for s in self.plan["steps"]
                     if s.get("expect") == "IPC_ANCESTORS_TRUSTED")
         command = step["send"]
-        # Exactly the validate_trusted_directory rule per ancestor, with one
-        # dedicated export code per component and a chown/chmod repair in
-        # between the two checks.
-        for code, path in ((110, "/"), (111, "/opt"), (112, "/opt/var"),
-                           (113, "/opt/var/run"),
-                           (114, "/opt/var/run/telemt-ipc-lab")):
-            self.assertIn(f"exit {code}; ", command, path)
-            self.assertIn(f'-user 0 -print 2>/dev/null)" = {path} ]',
-                          command, path)
+        # Diagnosis only: no chown/chmod repair may hide the original
+        # environment; the read-only root signature comes from /proc/mounts.
+        self.assertNotIn("chown", command)
+        self.assertNotIn("chmod", command)
+        self.assertIn("/proc/mounts", command)
+        self.assertIn("ro=0;", command)
+        self.assertIn("ro([, ]|$)", command)
+        # The fail-closed contract: a writable violating root stops the run.
+        self.assertIn("exit 110; fi;", command)
+        for code in (111, 112, 113, 114, 115):
+            self.assertIn(f"exit {code}", command, code)
+        # Exact trusted-directory rule per component, quiet outputs only.
         self.assertIn("\( -perm -0020 -o -perm -0002 \)", command)
-        self.assertIn("-perm -01000", command)
-        self.assertIn("chown 0:0", command)
-        self.assertIn("chmod 700 /opt/var/run/telemt-ipc-lab", command)
-        self.assertIn("chmod 755 / ", command)
-        # Quiet greps only; no content, no bulk kill, no PID-file signals.
+        self.assertIn("-perm 700 -print", command)
+        self.assertIn("-user 0 -print", command)
         self.assertNotIn("cat ", command)
         self.assertNotIn("kill ", command)
-        self.assertNotIn("pkill ", command)
         flags = re.findall(r"grep (-[A-Za-z]+ )", command)
         for flag in flags:
             self.assertIn("q", flag, flag)

@@ -1,28 +1,45 @@
-diff --git a/src/daemon/mod.rs b/src/daemon/mod.rs
---- a/src/daemon/mod.rs
-+++ b/src/daemon/mod.rs
-@@ -14,6 +14,8 @@
- 
- // PID file ownership and process-control helpers.
- mod pid_file;
-+#[cfg(target_os = "linux")]
-+pub(crate) mod local_control;
- 
- pub use pid_file::DaemonStatus;
- #[allow(unused_imports)]
-@@ -29,6 +31,8 @@
-     pub daemonize: bool,
-     /// Path to PID file.
-     pub pid_file: Option<PathBuf>,
-+    /// Explicit Linux-only local control socket. No implicit legacy fallback.
-+    pub control_socket: Option<PathBuf>,
-     /// Require trusted, symlink-free PID and log parents. Disabled by default for compatibility.
-     pub strict_runtime_paths: bool,
-     /// User to run as after binding sockets.
+diff --git a/src/cli.rs b/src/cli.rs
+index fc4a662..42d9c00 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -186,6 +186,19 @@ pub fn parse_command(args: &[String]) -> ParsedCommand {
+                     cmd.daemon_opts.pid_file = Some(cmd.pid_file.clone());
+                 }
+             }
++            #[cfg(unix)]
++            "--control-socket" => {
++                i += 1;
++                cmd.daemon_opts.control_socket = Some(PathBuf::from(
++                    args.get(i).map(String::as_str).unwrap_or(""),
++                ));
++            }
++            #[cfg(unix)]
++            s if s.starts_with("--control-socket=") => {
++                cmd.daemon_opts.control_socket = Some(PathBuf::from(
++                    s.trim_start_matches("--control-socket="),
++                ));
++            }
+             // Config path (positional, non-flag argument)
+             s if !s.starts_with('-') => {
+                 cmd.config_path = s.to_string();
+@@ -206,10 +219,12 @@ pub fn execute_subcommand(cmd: &ParsedCommand) -> Option<i32> {
+         Subcommand::Stop => Some(daemon_commands::stop(
+             &cmd.pid_file,
+             cmd.daemon_opts.strict_runtime_paths,
++            cmd.daemon_opts.control_socket.as_deref(),
+         )),
+         Subcommand::Reload => Some(daemon_commands::reload(
+             &cmd.pid_file,
+             cmd.daemon_opts.strict_runtime_paths,
++            cmd.daemon_opts.control_socket.as_deref(),
+         )),
+         Subcommand::Status => Some(daemon_commands::status(
+             &cmd.pid_file,
 diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
+index eb95023..b04d06a 100644
 --- a/src/cli/daemon_commands.rs
 +++ b/src/cli/daemon_commands.rs
-@@ -27,6 +27,17 @@
+@@ -27,6 +27,17 @@ pub fn parse_daemon_args(args: &[String]) -> DaemonOptions {
              s if s.starts_with("--pid-file=") => {
                  opts.pid_file = Some(PathBuf::from(s.trim_start_matches("--pid-file=")));
              }
@@ -40,16 +57,16 @@ diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
              "--run-as-user" => {
                  i += 1;
                  if i < args.len() {
-@@ -63,11 +74,34 @@
+@@ -63,11 +74,34 @@ pub fn parse_daemon_args(args: &[String]) -> DaemonOptions {
  }
  
  /// Sends SIGTERM and waits briefly for graceful PID-file cleanup.
+-pub(super) fn stop(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
 +pub(super) fn stop(
 +    pid_file: &Path,
 +    strict_runtime_paths: bool,
 +    control_socket: Option<&Path>,
 +) -> i32 {
--pub(super) fn stop(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
      use nix::sys::signal::Signal;
  
      println!("Stopping telemt daemon...");
@@ -76,16 +93,16 @@ diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
      match daemon::signal_pid_file(pid_file, Signal::SIGTERM, strict_runtime_paths) {
          Ok(()) => {
              println!("Stop signal sent successfully");
-@@ -93,11 +127,34 @@
+@@ -93,11 +127,34 @@ pub(super) fn stop(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
  }
  
  /// Sends SIGHUP to trigger configuration reload.
+-pub(super) fn reload(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
 +pub(super) fn reload(
 +    pid_file: &Path,
 +    strict_runtime_paths: bool,
 +    control_socket: Option<&Path>,
 +) -> i32 {
--pub(super) fn reload(pid_file: &Path, strict_runtime_paths: bool) -> i32 {
      use nix::sys::signal::Signal;
  
      println!("Reloading telemt configuration...");
@@ -112,138 +129,11 @@ diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
      match daemon::signal_pid_file(pid_file, Signal::SIGHUP, strict_runtime_paths) {
          Ok(()) => {
              println!("Reload signal sent successfully");
-diff --git a/src/cli.rs b/src/cli.rs
---- a/src/cli.rs
-+++ b/src/cli.rs
-@@ -186,6 +186,19 @@
-                     cmd.daemon_opts.pid_file = Some(cmd.pid_file.clone());
-                 }
-             }
-+            #[cfg(unix)]
-+            "--control-socket" => {
-+                i += 1;
-+                cmd.daemon_opts.control_socket = Some(PathBuf::from(
-+                    args.get(i).map(String::as_str).unwrap_or(""),
-+                ));
-+            }
-+            #[cfg(unix)]
-+            s if s.starts_with("--control-socket=") => {
-+                cmd.daemon_opts.control_socket = Some(PathBuf::from(
-+                    s.trim_start_matches("--control-socket="),
-+                ));
-+            }
-             // Config path (positional, non-flag argument)
-             s if !s.starts_with('-') => {
-                 cmd.config_path = s.to_string();
-@@ -206,10 +219,12 @@
-         Subcommand::Stop => Some(daemon_commands::stop(
-             &cmd.pid_file,
-             cmd.daemon_opts.strict_runtime_paths,
-+            cmd.daemon_opts.control_socket.as_deref(),
-         )),
-         Subcommand::Reload => Some(daemon_commands::reload(
-             &cmd.pid_file,
-             cmd.daemon_opts.strict_runtime_paths,
-+            cmd.daemon_opts.control_socket.as_deref(),
-         )),
-         Subcommand::Status => Some(daemon_commands::status(
-             &cmd.pid_file,
-diff --git a/src/maestro/mod.rs b/src/maestro/mod.rs
---- a/src/maestro/mod.rs
-+++ b/src/maestro/mod.rs
-@@ -115,6 +115,7 @@
-     orchestrator::run_telemt_core(
-         user.is_some() || group.is_some(),
-         daemon_opts.strict_runtime_paths,
-+        daemon_opts.control_socket.clone(),
-         || {
-             if (user.is_some() || group.is_some())
-                 && let Err(e) =
-@@ -130,7 +131,7 @@
- 
- #[cfg(not(unix))]
- async fn run_inner() -> std::result::Result<(), Box<dyn std::error::Error>> {
-+    orchestrator::run_telemt_core(false, false, None, || {}).await
--    orchestrator::run_telemt_core(false, false, || {}).await
- }
- 
- #[cfg(test)]
-diff --git a/src/maestro/orchestrator.rs b/src/maestro/orchestrator.rs
---- a/src/maestro/orchestrator.rs
-+++ b/src/maestro/orchestrator.rs
-@@ -34,6 +34,7 @@
- pub(super) async fn run_telemt_core(
-     privilege_drop_requested: bool,
-     strict_runtime_paths: bool,
-+    control_socket_path: Option<std::path::PathBuf>,
-     drop_after_bind: impl FnOnce(),
- ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-     let bootstrap::BootstrapState {
-@@ -463,6 +464,28 @@
-         process_started_at,
-         process_control_plane.clone(),
-     );
-+
-+    // Buffer STOP in-process even if it arrives just before the shutdown
-+    // future begins polling. No external PID is ever signalled.
-+    let (local_stop_tx, local_stop_rx) = tokio::sync::mpsc::channel(1);
-+    #[cfg(target_os = "linux")]
-+    let local_control = match control_socket_path.as_deref() {
-+        Some(path) => Some(crate::daemon::local_control::LocalControl::bind(
-+            path,
-+            local_stop_tx,
-+        )?),
-+        None => None,
-+    };
-+    #[cfg(not(target_os = "linux"))]
-+    {
-+        drop(local_stop_tx);
-+        if control_socket_path.is_some() {
-+            return Err(std::io::Error::other(
-+                "--control-socket is available only on Linux",
-+            ).into());
-+        }
-+    }
-+
-     shutdown::wait_for_shutdown(
-         process_started_at,
-         active_runtime,
-@@ -470,8 +493,14 @@
-         reload_supervisor,
-         conntrack_firewall,
-         process_control_plane,
-+        local_stop_rx,
-     )
-     .await;
- 
-+    #[cfg(target_os = "linux")]
-+    if let Some(control) = local_control {
-+        control.close().await?;
-+    }
-+
-     Ok(())
- }
-diff --git a/src/maestro/shutdown.rs b/src/maestro/shutdown.rs
---- a/src/maestro/shutdown.rs
-+++ b/src/maestro/shutdown.rs
-@@ -57,8 +57,12 @@
-     reload_supervisor: ReloadSupervisorHandle,
-     conntrack_firewall: Option<FirewallAuthority>,
-     process_control_plane: ProcessControlPlane,
-+    mut local_stop_rx: tokio::sync::mpsc::Receiver<()>,
- ) {
-+    let signal = tokio::select! {
-+        signal = wait_for_shutdown_signal() => signal,
-+        Some(()) = local_stop_rx.recv() => ShutdownSignal::Terminate,
-+    };
--    let signal = wait_for_shutdown_signal().await;
-     perform_shutdown(
-         signal,
-         process_started_at,
 diff --git a/src/config/hot_reload/watcher.rs b/src/config/hot_reload/watcher.rs
+index bfcdd19..84aa7f4 100644
 --- a/src/config/hot_reload/watcher.rs
 +++ b/src/config/hot_reload/watcher.rs
-@@ -332,6 +332,13 @@
+@@ -332,6 +332,13 @@ pub fn spawn_config_watcher(
      let (log_tx, log_rx) = watch::channel(initial_level);
  
      let config_path = normalize_watch_path(&config_path);
@@ -257,7 +147,7 @@ diff --git a/src/config/hot_reload/watcher.rs b/src/config/hot_reload/watcher.rs
      let task = async move {
          if let Some(activation) = activation.as_mut() {
              loop {
-@@ -457,12 +464,6 @@
+@@ -457,12 +464,6 @@ pub fn spawn_config_watcher(
              let _ = notify_tx.try_send(());
          }
  
@@ -272,9 +162,10 @@ diff --git a/src/config/hot_reload/watcher.rs b/src/config/hot_reload/watcher.rs
              #[cfg(unix)]
 diff --git a/src/daemon/local_control.rs b/src/daemon/local_control.rs
 new file mode 100644
+index 0000000..950a604
 --- /dev/null
 +++ b/src/daemon/local_control.rs
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,305 @@
 +//! Linux-only opt-in, process-owned control channel for TeleMT.
 +//!
 +//! Research patch for upstream TeleMT 3.5.17. It never signals a PID read
@@ -311,7 +202,15 @@ new file mode 100644
 +            "invalid control socket path",
 +        ));
 +    }
-+    let anchor = AnchoredPath::open_trusted_parent(path)?;
++    // KeeneticOS firmware roots are mounted read-only and do not satisfy the
++    // ordinary per-component owner/mode rule even though the root entry is a
++    // kernel-owned mount boundary that cannot be renamed, replaced or removed
++    // through any parent, and every supported socket path crosses a mount
++    // point such as /opt. The boundary constructor keeps the unchanged trust
++    // validation for every component below the root, accepts a read-only root
++    // as the sole exception, and still fails closed when a writable root
++    // violates the ordinary rule.
++    let anchor = AnchoredPath::open_trusted_parent_below_root(path)?;
 +    let parent_file = fs::File::from(anchor.parent().try_clone()?);
 +    let metadata = parent_file.metadata()?;
 +    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
@@ -572,3 +471,329 @@ new file mode 100644
 +        assert!(send_command(path, b'S').is_err());
 +    }
 +}
+diff --git a/src/daemon/mod.rs b/src/daemon/mod.rs
+index 3a0da2a..7976ee2 100644
+--- a/src/daemon/mod.rs
++++ b/src/daemon/mod.rs
+@@ -14,6 +14,8 @@ use tracing::info;
+ 
+ // PID file ownership and process-control helpers.
+ mod pid_file;
++#[cfg(target_os = "linux")]
++pub(crate) mod local_control;
+ 
+ pub use pid_file::DaemonStatus;
+ #[allow(unused_imports)]
+@@ -29,6 +31,8 @@ pub struct DaemonOptions {
+     pub daemonize: bool,
+     /// Path to PID file.
+     pub pid_file: Option<PathBuf>,
++    /// Explicit Linux-only local control socket. No implicit legacy fallback.
++    pub control_socket: Option<PathBuf>,
+     /// Require trusted, symlink-free PID and log parents. Disabled by default for compatibility.
+     pub strict_runtime_paths: bool,
+     /// User to run as after binding sockets.
+diff --git a/src/maestro/mod.rs b/src/maestro/mod.rs
+index 22c8d28..2117ebc 100644
+--- a/src/maestro/mod.rs
++++ b/src/maestro/mod.rs
+@@ -115,6 +115,7 @@ async fn run_inner(
+     orchestrator::run_telemt_core(
+         user.is_some() || group.is_some(),
+         daemon_opts.strict_runtime_paths,
++        daemon_opts.control_socket.clone(),
+         || {
+             if (user.is_some() || group.is_some())
+                 && let Err(e) =
+@@ -130,7 +131,7 @@ async fn run_inner(
+ 
+ #[cfg(not(unix))]
+ async fn run_inner() -> std::result::Result<(), Box<dyn std::error::Error>> {
+-    orchestrator::run_telemt_core(false, false, || {}).await
++    orchestrator::run_telemt_core(false, false, None, || {}).await
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/maestro/orchestrator.rs b/src/maestro/orchestrator.rs
+index 881e9cf..c219cdd 100644
+--- a/src/maestro/orchestrator.rs
++++ b/src/maestro/orchestrator.rs
+@@ -34,6 +34,7 @@ use super::{
+ pub(super) async fn run_telemt_core(
+     privilege_drop_requested: bool,
+     strict_runtime_paths: bool,
++    control_socket_path: Option<std::path::PathBuf>,
+     drop_after_bind: impl FnOnce(),
+ ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+     let bootstrap::BootstrapState {
+@@ -463,6 +464,28 @@ pub(super) async fn run_telemt_core(
+         process_started_at,
+         process_control_plane.clone(),
+     );
++
++    // Buffer STOP in-process even if it arrives just before the shutdown
++    // future begins polling. No external PID is ever signalled.
++    let (local_stop_tx, local_stop_rx) = tokio::sync::mpsc::channel(1);
++    #[cfg(target_os = "linux")]
++    let local_control = match control_socket_path.as_deref() {
++        Some(path) => Some(crate::daemon::local_control::LocalControl::bind(
++            path,
++            local_stop_tx,
++        )?),
++        None => None,
++    };
++    #[cfg(not(target_os = "linux"))]
++    {
++        drop(local_stop_tx);
++        if control_socket_path.is_some() {
++            return Err(std::io::Error::other(
++                "--control-socket is available only on Linux",
++            ).into());
++        }
++    }
++
+     shutdown::wait_for_shutdown(
+         process_started_at,
+         active_runtime,
+@@ -470,8 +493,14 @@ pub(super) async fn run_telemt_core(
+         reload_supervisor,
+         conntrack_firewall,
+         process_control_plane,
++        local_stop_rx,
+     )
+     .await;
+ 
++    #[cfg(target_os = "linux")]
++    if let Some(control) = local_control {
++        control.close().await?;
++    }
++
+     Ok(())
+ }
+diff --git a/src/maestro/shutdown.rs b/src/maestro/shutdown.rs
+index 6264d7d..69a3e25 100644
+--- a/src/maestro/shutdown.rs
++++ b/src/maestro/shutdown.rs
+@@ -57,8 +57,12 @@ pub(crate) async fn wait_for_shutdown(
+     reload_supervisor: ReloadSupervisorHandle,
+     conntrack_firewall: Option<FirewallAuthority>,
+     process_control_plane: ProcessControlPlane,
++    mut local_stop_rx: tokio::sync::mpsc::Receiver<()>,
+ ) {
+-    let signal = wait_for_shutdown_signal().await;
++    let signal = tokio::select! {
++        signal = wait_for_shutdown_signal() => signal,
++        Some(()) = local_stop_rx.recv() => ShutdownSignal::Terminate,
++    };
+     perform_shutdown(
+         signal,
+         process_started_at,
+diff --git a/src/util/secure_fs/path.rs b/src/util/secure_fs/path.rs
+index 6f031aa..bc01edf 100644
+--- a/src/util/secure_fs/path.rs
++++ b/src/util/secure_fs/path.rs
+@@ -12,6 +12,17 @@ const DIRECTORY_FLAGS: OFlag = OFlag::O_RDONLY
+     .union(OFlag::O_NOFOLLOW)
+     .union(OFlag::O_CLOEXEC);
+ 
++/// Trust policy applied to the filesystem root component of a walk.
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum RootTrust {
++    /// The ordinary rule applies to the root as well.
++    Strict,
++    /// The root is a kernel-owned mount boundary: accept it when it satisfies
++    /// the ordinary rule or when the filesystem backing it is mounted
++    /// read-only. Components below the root always keep the ordinary rule.
++    MountBoundary,
++}
++
+ /// An immutable parent-directory descriptor paired with one final path component.
+ pub(crate) struct AnchoredPath {
+     parent: OwnedFd,
+@@ -41,6 +52,29 @@ impl AnchoredPath {
+         Ok(Self { parent, name })
+     }
+ 
++    /// Opens a trusted parent chain while treating the filesystem root as a
++    /// kernel-owned mount boundary.
++    ///
++    /// Firmware roots such as KeeneticOS are mounted read-only and do not
++    /// satisfy the ordinary per-component owner/mode rule, even though the
++    /// root entry itself cannot be renamed, replaced or removed through any
++    /// parent (it has none) and controlled absolute paths always cross a
++    /// mount point such as `/opt`. The root component is therefore accepted
++    /// when it satisfies the ordinary rule or when the filesystem backing it
++    /// is mounted read-only; everything below the root keeps the unchanged
++    /// validation, and a writable root that fails the ordinary rule still
++    /// fails closed.
++    pub(crate) fn open_trusted_parent_below_root(path: &Path) -> io::Result<Self> {
++        let name = path
++            .file_name()
++            .filter(|name| !name.is_empty())
++            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
++            .to_os_string();
++        let parent_path = path.parent().unwrap_or_else(|| Path::new("."));
++        let parent = open_dir_components(parent_path, None, true, RootTrust::MountBoundary)?;
++        Ok(Self { parent, name })
++    }
++
+     /// Creates missing parents and opens a chain protected from untrusted renames.
+     pub(crate) fn open_trusted_parent_or_create(path: &Path, mode: u32) -> io::Result<Self> {
+         let name = path
+@@ -102,21 +136,21 @@ impl AnchoredPath {
+ 
+ /// Opens a directory by walking every component with `O_NOFOLLOW`.
+ pub(crate) fn open_dir_nofollow(path: &Path) -> io::Result<OwnedFd> {
+-    open_dir_components(path, None, false)
++    open_dir_components(path, None, false, RootTrust::Strict)
+ }
+ 
+ fn open_or_create_dir_nofollow(path: &Path, mode: u32) -> io::Result<OwnedFd> {
+-    open_dir_components(path, Some(mode), false)
++    open_dir_components(path, Some(mode), false, RootTrust::Strict)
+ }
+ 
+-/// Opens a directory after securely creating any missing components.
++/// Opens or creates a directory chain protected from untrusted entry replacement.
+ pub(crate) fn open_dir_nofollow_or_create(path: &Path, mode: u32) -> io::Result<OwnedFd> {
+     open_or_create_dir_nofollow(path, mode)
+ }
+ 
+ /// Opens or creates a directory chain protected from untrusted entry replacement.
+ pub(crate) fn open_trusted_dir_nofollow_or_create(path: &Path, mode: u32) -> io::Result<OwnedFd> {
+-    open_dir_components(path, Some(mode), true)
++    open_dir_components(path, Some(mode), true, RootTrust::Strict)
+ }
+ 
+ /// Follows parent-directory symlinks without imposing ownership or permission policy.
+@@ -138,13 +172,14 @@ pub(crate) fn open_compatible_dir(path: &Path, create_mode: Option<u32>) -> io::
+ 
+ /// Opens a directory only when its entire path is owned by root or the effective user.
+ fn open_trusted_dir_nofollow(path: &Path) -> io::Result<OwnedFd> {
+-    open_dir_components(path, None, true)
++    open_dir_components(path, None, true, RootTrust::Strict)
+ }
+ 
+ fn open_dir_components(
+     path: &Path,
+     create_mode: Option<u32>,
+     require_trusted: bool,
++    root_trust: RootTrust,
+ ) -> io::Result<OwnedFd> {
+     let mut names = Vec::new();
+     for component in path.components() {
+@@ -167,7 +202,17 @@ fn open_dir_components(
+     };
+     let mut current = open(start, DIRECTORY_FLAGS, Mode::empty()).map_err(errno_to_io)?;
+     if require_trusted {
+-        validate_trusted_directory(&current, !names.is_empty())?;
++        let trusted = validate_trusted_directory(&current, !names.is_empty());
++        if trusted.is_err() {
++            let boundary_root = start == Path::new("/")
++                && root_trust == RootTrust::MountBoundary
++                && root_filesystem_readonly().unwrap_or(false);
++            if !boundary_root {
++                return Err(trusted.err().unwrap_or_else(|| {
++                    io::Error::new(io::ErrorKind::PermissionDenied, "untrusted root")
++                }));
++            }
++        }
+     }
+     let component_count = names.len();
+     for (index, name) in names.into_iter().enumerate() {
+@@ -221,3 +266,18 @@ pub(crate) fn chdir_nofollow_or_create(path: &Path, mode: u32) -> io::Result<()>
+ pub(super) fn errno_to_io(error: nix::errno::Errno) -> io::Error {
+     io::Error::from_raw_os_error(error as i32)
+ }
++
++/// Returns true only when the filesystem backing the namespace root is
++/// mounted read-only. Any failure to determine this reports the error so the
++/// caller can treat an unknown state as not-read-only (fail closed).
++pub(super) fn root_filesystem_readonly() -> io::Result<bool> {
++    let mut vfs: libc::statvfs = unsafe { std::mem::zeroed() };
++    let path = b"/\0";
++    // SAFETY: statvfs fills exactly one record for a NUL-terminated path
++    // owned by this call.
++    let result = unsafe { libc::statvfs(path.as_ptr().cast(), &mut vfs) };
++    if result != 0 {
++        return Err(io::Error::last_os_error());
++    }
++    Ok(vfs.f_flag & libc::ST_RDONLY != 0)
++}
+diff --git a/src/util/secure_fs/tests.rs b/src/util/secure_fs/tests.rs
+index 9276344..4fc6d9b 100644
+--- a/src/util/secure_fs/tests.rs
++++ b/src/util/secure_fs/tests.rs
+@@ -98,6 +98,72 @@ fn trusted_parent_rejects_group_writable_directory() {
+     assert!(AnchoredPath::open_trusted_parent(&directory.path().join("listener.sock")).is_err());
+ }
+ 
++#[test]
++fn below_root_still_rejects_group_writable_directory() {
++    let current = std::env::current_dir().unwrap();
++    let directory = tempfile::Builder::new()
++        .prefix("telemt-insecure-parent-below-root-")
++        .tempdir_in(current)
++        .unwrap();
++    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o770)).unwrap();
++
++    assert!(
++        AnchoredPath::open_trusted_parent_below_root(&directory.path().join("listener.sock"))
++            .is_err()
++    );
++}
++
++#[test]
++fn below_root_rejects_intermediate_symlink() {
++    let directory = tempfile::tempdir().unwrap();
++    let real = directory.path().join("real");
++    let link = directory.path().join("link");
++    std::fs::create_dir(&real).unwrap();
++    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
++    symlink(&real, &link).unwrap();
++
++    assert!(
++        AnchoredPath::open_trusted_parent_below_root(&link.join("listener.sock")).is_err()
++    );
++}
++
++#[test]
++fn below_root_agrees_with_ordinary_trusted_parent_on_plain_hosts() {
++    use std::os::unix::fs::MetadataExt;
++
++    // On hosts whose root satisfies the ordinary rule the boundary variant
++    // must resolve the exact same directory inode; on read-only-root hosts
++    // this test still verifies the boundary variant opens the chain.
++    let current = std::env::current_dir().unwrap();
++    let directory = tempfile::Builder::new()
++        .prefix("telemt-boundary-parent-")
++        .tempdir_in(current)
++        .unwrap();
++    let private = directory.path().join("private");
++    std::fs::create_dir(&private).unwrap();
++    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
++    let path = private.join("listener.sock");
++
++    fn inode_of(anchor: &AnchoredPath) -> (u64, u64) {
++        let metadata = std::fs::File::from(anchor.parent().try_clone().unwrap())
++            .metadata()
++            .unwrap();
++        (metadata.dev(), metadata.ino())
++    }
++    let boundary = inode_of(&AnchoredPath::open_trusted_parent_below_root(&path).unwrap());
++    if let Ok(ordinary) = AnchoredPath::open_trusted_parent(&path) {
++        assert_eq!(inode_of(&ordinary), boundary);
++    }
++}
++
++#[test]
++fn root_readonly_probe_answers_without_error() {
++    // Fails closed on statvfs errors; the value itself is host-dependent
++    // (false on ordinary writable host roots, true on read-only firmware
++    // roots such as KeeneticOS).
++    super::path::root_filesystem_readonly().unwrap();
++}
++
+ #[test]
+ fn anchored_replace_survives_parent_path_substitution() {
+     let directory = tempfile::tempdir().unwrap();

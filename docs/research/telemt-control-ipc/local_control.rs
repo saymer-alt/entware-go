@@ -34,7 +34,15 @@ fn private_parent(path: &Path) -> io::Result<AnchoredPath> {
             "invalid control socket path",
         ));
     }
-    let anchor = AnchoredPath::open_trusted_parent(path)?;
+    // KeeneticOS firmware roots are mounted read-only and do not satisfy the
+    // ordinary per-component owner/mode rule even though the root entry is a
+    // kernel-owned mount boundary that cannot be renamed, replaced or removed
+    // through any parent, and every supported socket path crosses a mount
+    // point such as /opt. The boundary constructor keeps the unchanged trust
+    // validation for every component below the root, accepts a read-only root
+    // as the sole exception, and still fails closed when a writable root
+    // violates the ordinary rule.
+    let anchor = AnchoredPath::open_trusted_parent_below_root(path)?;
     let parent_file = fs::File::from(anchor.parent().try_clone()?);
     let metadata = parent_file.metadata()?;
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
