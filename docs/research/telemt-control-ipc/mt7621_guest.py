@@ -16,9 +16,9 @@ import shutil
 import sys
 from types import SimpleNamespace
 
-CORE_NAME = "telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk"
-CORE_SHA = "5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9"
-ELF_SHA = "0d3dcce3b9922d5dbffc748045168def7420c770ed6b4336e5e67d418c6f7e66"
+CORE_NAME = "telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk"
+CORE_SHA = "fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa"
+ELF_SHA = "a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506"
 # Variant A reference: the already accepted Core binary from the 74/74 guest
 # suite. Its frozen bytes are re-verified here; nothing about them changes.
 CORE_IPK_NAME = "telemt_3.5.17-2fb1_mipsel-3.4.ipk"
@@ -67,7 +67,7 @@ def audit_lab_ipk(emulator_root, ipk):
         raise ValueError("MIPSLE IPC IPK SHA-256 mismatch (fail closed)")
     metadata, data = audit.ipk_parts(raw)
     if metadata != {"Package": "telemt-ipc-lab",
-                    "Version": "3.5.17-1ipc1",
+                    "Version": "3.5.17-1ipc2",
                     "Architecture": "mipsel-3.4"}:
         raise ValueError("unexpected lab control metadata")
     if set(data) != {"opt/bin/telemt-ipc-lab"}:
@@ -441,7 +441,7 @@ def scenario_for(emulator_root):
         guest_ssh("/opt/bin/opkg install /opt/lab/ipc.ipk "
                   ">/opt/lab/ipc-opkg.log 2>&1 && "
                   "/opt/bin/opkg status telemt-ipc-lab | "
-                  "/opt/bin/busybox grep -q 'Version: 3.5.17-1ipc1' && "
+                  "/opt/bin/busybox grep -q 'Version: 3.5.17-1ipc2' && "
                   "test -x " + BIN + " && "
                   "test ! -e /opt/bin/telemt && "
                   "printf 'IPC_%s\\n' OPKG_SEPARATE",

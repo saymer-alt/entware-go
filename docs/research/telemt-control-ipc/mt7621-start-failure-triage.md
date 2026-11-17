@@ -324,3 +324,46 @@ redirection vector into `/opt/...`. The patch will anchor the trust walk
 below the root: validate every component from the first mount point downward
 (unchanged rule), skip only the root's own validation, and document why.
 Private-parent 0700 + same-UID + no-symlink requirements are unchanged.
+
+## Fix candidate 1ipc2: mount-boundary root trust (2026-11-17)
+
+Per the review guidance the fix is a **targeted exception for the root only**,
+never a blanket disabling of the trust rule, and it is verified host-first:
+
+- New opt-in constructor `AnchoredPath::open_trusted_parent_below_root`
+  (research patch to `src/util/secure_fs/path.rs`): the walk keeps the
+  unchanged `O_NOFOLLOW`, owner and mode validation for **every** component
+  below the root. The root component alone is accepted when it satisfies the
+  ordinary rule **or** when `statvfs("/")` reports `ST_RDONLY`; a writable
+  root that violates the ordinary rule, and any statvfs failure, still fail
+  closed. `open_trusted_parent` and all other callers are byte-identical.
+- `local_control::private_parent` switches to the boundary constructor with
+  the platform rationale documented in code; the 0700 same-UID private
+  parent, stale-socket refusal, `MSG_NOSIGNAL`, `SO_PEERCRED` and
+  no-PID-signalling rules are untouched.
+- Host verification before any QEMU: patched tree `cargo check --locked
+  --tests` PASS, `daemon::local_control::tests` 5/5 PASS, secure_fs suite
+  11/11 PASS (4 new tests: boundary constructor agrees with the ordinary
+  rule on plain hosts, still rejects symlinks and group-writable dirs below
+  the root, and the statvfs probe answers), `rustfmt --check` clean on both
+  patched files; CI source gate repeated all of it on ubuntu (`44139876704`).
+- Lab version bumped to `3.5.17-1ipc2`; frozen 1ipc1 ELF/IPK pins stay frozen
+  and unused. New candidate from run `44139876820`, verified out-of-band:
+  IPK SHA-256 `fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa`,
+  ELF SHA-256 `a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506`,
+  softfloat `/opt/lib/ld.so.1` ABI, payload only `/opt/bin/telemt-ipc-lab`.
+- The guest preflight is now **diagnose-only**: it records the original
+  ancestor facts (owner, group/world-writable, sticky) plus the
+  `/proc/mounts` read-only flag of `/` and fails closed on contradictions
+  (110 root violating and not read-only; 111-114 non-root or group/world
+  writable ancestors or a wrong private dir; 115 no find applet) without any
+  chmod/chown. The synthetic step creates ancestor directories with
+  `mkdir -m 755` instead of post-hoc normalization.
+
+Fifteenth guest plan (one-shot label, final run of the session budget): boot,
+Entware, 1ipc2 install + ELF SHA, diagnose-only preflight, A/B/C probes with
+verdict codes, then the full detached acceptance chain — stable PID/ELF,
+control socket, `reload` (same PID + SIGHUP marker), unsafe-parent rejection,
+no implicit pidfd fallback, empty-path rejection, IPC `stop` cleanliness,
+second `stop` rejection, native reboot with no autostart, manual restart and
+opkg rollback.

@@ -27,8 +27,8 @@ concurrency:
 
 env:
   EMULATOR_SHA: 64a446deaacb0bca10d6053781ff1f7ad4a29552
-  IPC_NAME: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
-  IPC_SHA: 5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9
+  IPC_NAME: telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk
+  IPC_SHA: fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa
   # Frozen variant A reference: the already accepted Core 3.5.17-2fb1 build.
   # Read-only download; the accepted IPK, ELF and all original pins are
   # never modified or rebuilt by this workflow.
@@ -109,7 +109,7 @@ jobs:
         with:
           name: telemt-ipc-lab-mipsel-3.4
           repository: saymer-alt/entware-go
-          run-id: 44050853817
+          run-id: 44139876820
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/ipc-ipk
       - name: Fail closed on wrong/missing IPK bytes
