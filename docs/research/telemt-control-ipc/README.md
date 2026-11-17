@@ -109,3 +109,11 @@ The [third run, 44066952376](https://github.com/saymer-alt/entware-go/actions/ru
 This does not identify which readiness condition failed. In particular, `telemt start` double-forks, so parent exit status alone cannot prove a live child or local IPC socket. **Neither `reload` nor `stop` ran; do not merge/ship or close Issue #51.** No raw stderr/console is preserved in the sanitized artifact.
 
 See [focused post-mortem and diagnostic contract](mt7621-start-failure-triage.md) for separate parent-dir, PID, executable and Unix-socket probes and a foreground-only synthetic diagnostic. This is the **third bounded guest attempt**; no fourth guest cycle has been queued. QEMU executable was cache-saved immediately after its SHA check, before launching the guest, and source/IPK rebuild CI was skipped on unchanged hashes.
+
+## One-shot QEMU authorization while PR #58 remains Draft
+
+GitHub requires a `workflow_dispatch` workflow to be present in the default branch. This isolated research workflow is new in Draft PR #58, so its previous manual-dispatch gate could not actually be used. Do **not** merge the unaccepted code just to obtain a Run workflow button.
+
+The guest workflow now uses a **one-shot PR label event**. To deliberately authorize a future full native MT7621 run, add the exact label `telemt-ipc-one-shot-qemu` to [Draft PR #58](https://github.com/saymer-alt/entware-go/pull/58) as a **new** label action. Ordinary PR updates, reviews and documentation commits run only the cheap host-only safety job; they cannot execute `native-guest`. The job additionally requires the exact PR number 58, same-repo head, pinned research branch and a fresh `labeled` event for that precise label. Once attached, the label does not automatically reauthorize guest cycles on later pushes. To authorize another run in the future, deliberately remove and re-apply the label, subject to the three-attempt budget and evidence review.
+
+**No fourth guest run is currently authorized.** Stop/reload on kernel 4.9 remain NOT_TESTED and the lab PR stays Draft.

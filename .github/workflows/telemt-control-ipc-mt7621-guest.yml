@@ -3,23 +3,19 @@ name: TeleMT IPC MT7621 kernel 4.9 guest (no release)
 
 on:
   pull_request:
+    # Ordinary updates run the cheap safety checks. A *new label event*
+    # explicitly authorizes a single native QEMU guest cycle.
+    types: [opened, reopened, synchronize, labeled]
     branches: [gh-action-build]
     paths:
       - '.github/workflows/telemt-control-ipc-mt7621-guest.yml'
       - 'docs/research/telemt-control-ipc/mt7621_guest.py'
       - 'docs/research/telemt-control-ipc/test_mt7621_guest_plan.py'
-  # The native-guest job is never executed by PR events. GitHub's PR paths
-  # filter matches the entire accumulated PR diff, so documentation-only
-  # commits otherwise waste an extra full QEMU cycle. An explicit opt-in
-  # workflow_dispatch is required, including the authorizing input.
-  workflow_dispatch:
-    inputs:
-      approve_guest_run:
-        description: 'Explicit permission for ONE MT7621 QEMU-system guest run'
-        required: true
-        type: choice
-        options: ['NO', 'YES']
-        default: 'NO'
+  # This research-only workflow is NOT on the default branch. GitHub only
+  # accepts workflow_dispatch for workflow files already present there.
+  # Avoid merging unaccepted lab code just to unblock manual CI.
+  # Label the specific Draft PR once with "telemt-ipc-one-shot-qemu" to send a
+  # one-shot pull_request/labeled event; ordinary commits never run QEMU.
 
 permissions:
   contents: read
@@ -45,22 +41,13 @@ jobs:
           fetch-depth: 0
       - name: Research-only PR and Python syntax gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          APPROVE_GUEST: ${{ inputs.approve_guest_run || 'NO' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$HEAD_SHA"
-          if [ -z "$BASE_SHA" ]; then
-            test "$APPROVE_GUEST" = 'YES' || {
-              echo "::error::Manual guest cycle was not explicitly authorized"
-              exit 1
-            }
-            git fetch -q origin gh-action-build
-            BASE_SHA=$(git merge-base "$HEAD_SHA" origin/gh-action-build)
-            test -n "$BASE_SHA"
-          fi
+          test -n "$HEAD_SHA" && test -n "$BASE_SHA"
+          test "$BASE_SHA" != "$HEAD_SHA"
           changed=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
           allowed='^(docs/research/telemt-control-ipc/|\.github/workflows/telemt-control-ipc-(source|mipsle-build|mt7621-guest)\.yml$)'
           if echo "$changed" | grep -qvE "$allowed"; then
@@ -87,9 +74,10 @@ jobs:
 
   native-guest:
     needs: safety
-    # FAIL CLOSED: pull_request (including docs-only commits) cannot start
-    # a fourth expensive guest cycle. A human must explicitly dispatch YES.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.approve_guest_run == 'YES' }}
+    # FAIL CLOSED: only an explicit *new label* action against Draft PR #58,
+    # on this same-repo pinned research branch, can run the expensive QEMU
+    # guest. An already-present label cannot reauthorize on new commits.
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'telemt-ipc-one-shot-qemu' && github.event.pull_request.number == 58 && github.event.pull_request.head.ref == 'research/telemt-mipsle-daemon-ipc-20261117' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
