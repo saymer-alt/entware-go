@@ -470,22 +470,21 @@ def scenario_for(emulator_root):
         # 84 other wget failure, 85 implausible size, 86 SHA mismatch),
         # because an ssh answer mismatch with exit 0 is structurally
         # undiagnosable from the sanitized report alone.
-        guest_ssh(bb + " mkdir -p /opt/lab || exit 81; "
-                  bb + " rm -f /opt/lab/ipc.ipk /opt/lab/ipc.wget.err; "
-                  bb + " wget -qO /opt/lab/ipc.ipk "
-                  "http://" + MIRROR_HOST + "/entware/" + IPC_NAME +
-                  " 2>/opt/lab/ipc.wget.err || { "
-                  bb + " grep -q 404 /opt/lab/ipc.wget.err && exit 82; "
-                  bb + " grep -Eqi 'refused|unreachable|timed out|"
-                  "no route|network is down' /opt/lab/ipc.wget.err && "
-                  "exit 83; exit 84; }; "
-                  "sz=$(" + bb + " wc -c < /opt/lab/ipc.ipk | " + bb +
-                  " tr -d ' '); "
-                  "[ \"$sz\" -ge 1000000 ] 2>/dev/null || exit 85; "
-                  "printf '%s  %s\\n' '" + IPC_SHA +
-                  "' /opt/lab/ipc.ipk > /opt/lab/ipc.sha && "
-                  bb + " sha256sum -c /opt/lab/ipc.sha >/dev/null || "
-                  "exit 86; "
+        guest_ssh(f"{bb} mkdir -p /opt/lab || exit 81; "
+                  f"{bb} rm -f /opt/lab/ipc.ipk /opt/lab/ipc.wget.err; "
+                  f"{bb} wget -qO /opt/lab/ipc.ipk "
+                  f"http://{MIRROR_HOST}/entware/{IPC_NAME} "
+                  f"2>/opt/lab/ipc.wget.err || {{ "
+                  f"{bb} grep -q 404 /opt/lab/ipc.wget.err && exit 82; "
+                  f"{bb} grep -Eqi 'refused|unreachable|timed out|"
+                  f"no route|network is down' /opt/lab/ipc.wget.err && "
+                  f"exit 83; exit 84; }}; "
+                  f"sz=$({bb} wc -c < /opt/lab/ipc.ipk | {bb} tr -d ' '); "
+                  f"[ \"$sz\" -ge 1000000 ] 2>/dev/null || exit 85; "
+                  f"printf '%s  %s\\n' '{IPC_SHA}' "
+                  f"/opt/lab/ipc.ipk > /opt/lab/ipc.sha && "
+                  f"{bb} sha256sum -c /opt/lab/ipc.sha >/dev/null || "
+                  f"exit 86; "
                   "printf 'IPCP_%s\\n' IPC_IPK_DELIVERED",
                   "IPCP_IPK_DELIVERED", 300),
         guest_ssh("/opt/bin/opkg install /opt/lab/ipc.ipk "
@@ -503,21 +502,20 @@ def scenario_for(emulator_root):
                   "IPCP_ELF_PINNED"),
         synthetic_file_step(config, secret),
         guest_ssh(core_ready_command(), "IPCP_CORE_READY", 150),
-        guest_ssh(bb + " rm -f /opt/lab/panel.ipk /opt/lab/panel.wget.err; "
-                  bb + " wget -qO /opt/lab/panel.ipk "
-                  "http://" + MIRROR_HOST + "/entware/" + PANEL_NAME +
-                  " 2>/opt/lab/panel.wget.err || { "
-                  bb + " grep -q 404 /opt/lab/panel.wget.err && exit 87; "
-                  bb + " grep -Eqi 'refused|unreachable|timed out|"
-                  "no route|network is down' /opt/lab/panel.wget.err && "
-                  "exit 88; exit 89; }; "
-                  "sz=$(" + bb + " wc -c < /opt/lab/panel.ipk | " + bb +
-                  " tr -d ' '); "
-                  "[ \"$sz\" -ge 1000000 ] 2>/dev/null || exit 90; "
-                  "printf '%s  %s\\n' '" + PANEL_SHA +
-                  "' /opt/lab/panel.ipk > /opt/lab/panel.sha && "
-                  bb + " sha256sum -c /opt/lab/panel.sha >/dev/null || "
-                  "exit 91; "
+        guest_ssh(f"{bb} rm -f /opt/lab/panel.ipk /opt/lab/panel.wget.err; "
+                  f"{bb} wget -qO /opt/lab/panel.ipk "
+                  f"http://{MIRROR_HOST}/entware/{PANEL_NAME} "
+                  f"2>/opt/lab/panel.wget.err || {{ "
+                  f"{bb} grep -q 404 /opt/lab/panel.wget.err && exit 87; "
+                  f"{bb} grep -Eqi 'refused|unreachable|timed out|"
+                  f"no route|network is down' /opt/lab/panel.wget.err && "
+                  f"exit 88; exit 89; }}; "
+                  f"sz=$({bb} wc -c < /opt/lab/panel.ipk | {bb} tr -d ' '); "
+                  f"[ \"$sz\" -ge 1000000 ] 2>/dev/null || exit 90; "
+                  f"printf '%s  %s\\n' '{PANEL_SHA}' "
+                  f"/opt/lab/panel.ipk > /opt/lab/panel.sha && "
+                  f"{bb} sha256sum -c /opt/lab/panel.sha >/dev/null || "
+                  f"exit 91; "
                   "printf 'IPCP_%s\\n' PANEL_IPK_DELIVERED",
                   "IPCP_PANEL_IPK_DELIVERED", 300),
         guest_ssh("/opt/bin/opkg install /opt/lab/panel.ipk "
