@@ -57,12 +57,13 @@ but **supervisor + real TeleMT has NOT been tested**.
 
 ## Host verification
 
-`python3 -m unittest -v tests.test_telemt_legacy_supervisor`
+`python3 -m unittest discover -s docs/research/telemt-mipsle-ipk-3517/legacy-control -p test_legacy_supervisor.py -v`
 
 Locally on Linux x86_64: **4/4 PASS** (C compile with `-Werror`,
 synthetic child reload/stop/exited, absent endpoint, insecure parent, preexisting
-endpoint, early child exit). Tests are also in `tests/` for the existing
-read-only safety workflow. These are **HOST MOCK PASS**, not MIPSel, ABI,
+endpoint, early child exit). The same host proof is invoked from the already-allowlisted
+`tools/tests/telemt_mipsle_ipk_preflight_tests.py` by the existing getfb research
+workflow, without expanding either MIPSel boundary guard. These are **HOST MOCK PASS**, not MIPSel, ABI,
 QEMU-system, or actual TeleMT acceptance.
 
 ## Known limitations / hard STOP gates
