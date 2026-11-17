@@ -182,15 +182,17 @@ def scenario_for(emulator_root):
         # verify numeric PID, pinned live /proc/exe identity and stability
         # across 2s in the same SSH session. Then, if not stable, attempt
         # one short, isolated foreground run.
-        # The subprocess is terminated by bounded BusyBox timeout; no PID
-        # from a file is ever signalled. The foreground PID, socket and log
-        # names differ from normal ones, on the same disposable guest.
-        # SSH exports only fixed exit codes. Never upload raw guest stderr,
-        # process cmdlines, journal, config or synthetic secret.
-        # 62 foreground remained alive until timeout; 63 exited 0 early;
-        # 64 other foreground failure; 65 panic; 66 permission/bind;
-        # 67 config/syntax failure; 68 missing file/path; 69 no timeout
-        # applet; 70 unsupported kernel syscall.
+        # The pinned MIPSel BusyBox *lacks* the timeout applet (native run 10).
+        # Run foreground binary as a direct shell child ($!), not via a PID
+        # file. Keep it unreaped until wait: this blocks PID reuse. Verify
+        # /proc/$fg_pid/exe is the exact pinned executable BEFORE sending
+        # TERM to that direct child only. Never signal PID-file contents.
+        # The foreground PID, socket and log use separate disposable paths.
+        # SSH returns only fixed codes, no raw log/config/process arguments.
+        # 62 alive for bounded window and terminated, 63 exited 0 early;
+        # 64 other failure; 65 panic; 66 permission/bind; 67 config;
+        # 68 missing file; 70 unsupported syscall; 71 unexpected child
+        # executable; 72 direct-child TERM failed or it did not exit.
         guest_ssh("i=0; seen=0; while [ \"$i\" -lt 30 ]; do "
                   "[ -e " + PID + " ] && seen=1; "
                   "if [ -r " + PID + " ]; then "
@@ -219,17 +221,24 @@ def scenario_for(emulator_root):
                   "/opt/bin/busybox grep -Eqi "
                   "'permission denied|operation not permitted|failed to bind|address already in use' " +
                   LOG + " && exit 59; fi; "
-                  "/opt/bin/busybox --list | "
-                  "/opt/bin/busybox grep -qx timeout || exit 69; "
-                  "HOME=/opt/lab TMPDIR=/opt/lab "
-                  "/opt/bin/busybox timeout -k 2 12 " + BIN +
+                  "fg_timed=0; HOME=/opt/lab TMPDIR=/opt/lab " + BIN +
                   " start --foreground "
                   "--log-file /opt/var/log/telemt-ipc-fg.log "
                   "--pid-file /opt/var/run/telemt-ipc-fg.pid "
                   "--control-socket /opt/var/run/telemt-ipc-lab/ctl-fg.sock " +
-                  CONF + " >/opt/lab/ipc-fg.out 2>&1; "
-                  "frc=$?; "
-                  "[ \"$frc\" = 143 ] && exit 62; "
+                  CONF + " >/opt/lab/ipc-fg.out 2>&1 & fg_pid=$!; "
+                  "/opt/bin/busybox sleep 12; "
+                  "fg_exe=$(/opt/bin/busybox readlink /proc/$fg_pid/exe "
+                  "2>/dev/null); "
+                  "if [ \"$fg_exe\" = '" + BIN + "' ]; then "
+                  "kill -TERM \"$fg_pid\" || exit 72; "
+                  "/opt/bin/busybox sleep 2; "
+                  "[ \"$(/opt/bin/busybox readlink /proc/$fg_pid/exe "
+                  "2>/dev/null)\" != '" + BIN + "' ] || exit 72; "
+                  "fg_timed=1; "
+                  "elif [ -n \"$fg_exe\" ]; then exit 71; fi; "
+                  "wait \"$fg_pid\"; frc=$?; "
+                  "[ \"$fg_timed\" = 1 ] && exit 62; "
                   "/opt/bin/busybox grep -Eqi 'panic|panicked' "
                   "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
                   "2>/dev/null && exit 65; "

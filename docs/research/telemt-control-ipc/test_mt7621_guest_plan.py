@@ -54,8 +54,9 @@ FAIL_CODES = {
     66: "foreground permission/bind error",
     67: "foreground config parse error",
     68: "foreground missing file/path",
-    69: "BusyBox timeout applet unavailable",
     70: "foreground Linux syscall unsupported",
+    71: "direct foreground child executable identity mismatch",
+    72: "direct foreground child TERM failed or did not exit",
 }
 
 
@@ -137,8 +138,8 @@ class ResearchPlanTests(unittest.TestCase):
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]
                          if isinstance(s.get("send"), str))
-        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[0-9]|70)\b", text)
-        # Group 41..70 exclusively belongs to the new startup stages.
+        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[0-8]|7[0-2])\b", text)
+        # Group 41..68 and 70..72 belongs to startup diagnostics (legacy 69 removed).
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
         # One code may guard multiple conditions within its error category.
         self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
@@ -211,10 +212,17 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertIn("seen=0;", command)
         self.assertIn("readlink", command)
         self.assertIn("grep -Eqi", command)
-        for code in (46, *range(55, 71)):
+        for code in (46, *range(55, 69), 70, 71, 72):
             self.assertIn(f"exit {code}", command)
+        self.assertNotIn("exit 69", command)
         self.assertTrue(command.endswith("exit 46"))
-        self.assertIn("/opt/bin/busybox timeout -k 2 12 ", command)
+        self.assertNotIn("/opt/bin/busybox timeout", command)
+        self.assertIn("fg_pid=$!;", command)
+        self.assertIn("/opt/bin/busybox sleep 12;", command)
+        self.assertIn("kill -TERM \"$fg_pid\" || exit 72", command)
+        self.assertIn('wait "$fg_pid"; frc=$?', command)
+        self.assertLess(command.index("fg_exe=$("),
+                        command.index('kill -TERM "$fg_pid"'))
         self.assertIn("start --foreground", command)
         self.assertIn("/opt/var/run/telemt-ipc-fg.pid", command)
         self.assertIn("/opt/var/run/telemt-ipc-lab/ctl-fg.sock", command)
@@ -248,11 +256,34 @@ class ResearchPlanTests(unittest.TestCase):
         command = step["send"]
         self.assertIn(self.module.BIN + " start --foreground", command)
         self.assertIn(self.module.CONF + " >/opt/lab/ipc-fg.out", command)
-        self.assertIn("grep -qx timeout || exit 69", command)
+        self.assertIn("fg_timed=0;", command)
+        self.assertIn('fg_exe=$(/opt/bin/busybox readlink /proc/$fg_pid/exe', command)
+        self.assertIn('elif [ -n "$fg_exe" ]; then exit 71', command)
+        self.assertNotIn('kill -TERM "$p"', command)
+        self.assertNotIn('kill -TERM "$pid"', command)
         self.assertNotIn("--run-as-user", command)
         self.assertNotIn("kill -9 ", command)
         self.assertNotIn("pkill ", command)
         # Parsed by a real /bin/sh; no foreground binary is run by host tests.
+
+    def test_direct_child_term_is_bounded_and_not_pidfile_based(self):
+        # Local POSIX-shell exercise: only the child spawned via $! may be
+        # signalled. This never starts TeleMT or reads any guest files.
+        executable = str(Path("/bin/sleep").resolve())
+        with tempfile.TemporaryDirectory(prefix="ipc-direct-child-") as tmp:
+            command = (
+                "sleep 20 >/dev/null 2>&1 & fg_pid=$!; "
+                "sleep 0.1; fg_exe=$(readlink /proc/$fg_pid/exe 2>/dev/null); "
+                "[ \"$fg_exe\" = '" + executable + "' ] || exit 71; "
+                "kill -TERM \"$fg_pid\" || exit 72; "
+                "sleep 0.1; "
+                "[ \"$(readlink /proc/$fg_pid/exe 2>/dev/null)\" != '" +
+                executable + "' ] || exit 72; "
+                "wait \"$fg_pid\"; frc=$?; "
+                "[ \"$frc\" != 0 ]")
+            actual = subprocess.run(["/bin/sh", "-c", command], cwd=tmp,
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(actual.returncode, 0, actual.stderr[:300])
 
     def test_ssh_command_posix_shell_parse_without_execution(self):
         labels = [step.get("expect") for step in self.plan["steps"]]
