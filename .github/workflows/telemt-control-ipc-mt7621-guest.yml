@@ -55,6 +55,7 @@ jobs:
           fi
           python3 -m py_compile docs/research/telemt-control-ipc/mt7621_guest.py
           python3 -m py_compile docs/research/telemt-control-ipc/test_mt7621_guest_plan.py
+          python3 -m py_compile docs/research/telemt-control-ipc/prefetch_entware_assets.py
           echo 'GUEST_RESEARCH_ISOLATION: PASS'
       - name: Fetch SHA-pinned public emulator fixture for cheap offline tests
         uses: actions/checkout@v4
@@ -70,6 +71,8 @@ jobs:
           test "$(git -C emulator rev-parse HEAD)" = "$EMULATOR_SHA"
           python3 docs/research/telemt-control-ipc/test_mt7621_guest_plan.py \
             --emulator-root emulator
+          python3 docs/research/telemt-control-ipc/prefetch_entware_assets.py \
+            --emulator-root emulator --check-only
           echo 'IPC_HOST_ONLY_GUEST_CONTRACT: PASS'
 
   native-guest:
@@ -156,6 +159,24 @@ jobs:
             ${{ runner.temp }}/mt7621-qemu/qemu-system-mipsel
             ${{ runner.temp }}/mt7621-qemu/qemu-mipsel.sha256
           key: ipc-mt7621-ubuntu24-v10.1.0-${{ hashFiles('emulator/qemu-patches/*.patch', 'emulator/lab/mt7621/build_qemu_mipsel.sh') }}
+      - name: Restore SHA-locked Entware asset cache
+        id: entware-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/mt7621-entware-cache
+          key: ipc-mt7621-entware-v1-${{ hashFiles('emulator/lab/entware-mipselsf.lock.json') }}
+      - name: Prefetch and verify every pinned Entware input before QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 docs/research/telemt-control-ipc/prefetch_entware_assets.py \
+            --emulator-root emulator --cache-dir "$RUNNER_TEMP/mt7621-entware-cache"
+      - name: Save verified Entware cache before QEMU
+        if: steps.entware-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/mt7621-entware-cache
+          key: ipc-mt7621-entware-v1-${{ hashFiles('emulator/lab/entware-mipselsf.lock.json') }}
       - name: Fetch only hash-pinned public Ported 5.1.8 image assets
         shell: bash
         run: |
@@ -207,6 +228,7 @@ jobs:
             --nand-dir "$RUNNER_TEMP/mt7621-nand" \
             --workspace "$RUNNER_TEMP/mt7621-ipc-workspace" \
             --credentials-file "$RUNNER_TEMP/mt7621-credentials.json" \
+            --entware-cache "$RUNNER_TEMP/mt7621-entware-cache" \
             --max-seconds 2400
       - name: Factual sanitized report only
         if: always()

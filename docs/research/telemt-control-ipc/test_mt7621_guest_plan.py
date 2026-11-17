@@ -73,6 +73,41 @@ class ResearchPlanTests(unittest.TestCase):
         from lab.run import load_scenario
         cls.load_scenario = staticmethod(load_scenario)
 
+    def test_pinned_entware_prefetch_manifest_and_fail_closed_cache(self):
+        spec = importlib.util.spec_from_file_location(
+            "telemt_mipsel_entware_prefetch",
+            Path(__file__).resolve().with_name("prefetch_entware_assets.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rows = module.assets(self.root)
+        self.assertGreater(len(rows), 20)
+        self.assertEqual(rows[0], ("installer.tar.gz",
+                                 module.INSTALLER_URL, module.INSTALLER_SHA))
+        self.assertEqual(len({x[0] for x in rows}), len(rows))
+        for name, url, digest in rows:
+            self.assertTrue(url.startswith("https://bin.entware.net/mipselsf-k3.4/"))
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        with tempfile.TemporaryDirectory(prefix="ipc-cache-test-") as d:
+            with self.assertRaises(ValueError):
+                module.verify_cache(Path(d), rows)
+            (Path(d) / rows[0][0]).write_bytes(b"incorrect installer")
+            with self.assertRaises(ValueError):
+                module.verify_cache(Path(d), [rows[0]])
+
+    def test_entware_cache_preserves_guest_freshness(self):
+        code = Path(__file__).resolve().with_name("mt7621_guest.py").read_text()
+        self.assertIn('workspace.mkdir(mode=0o700, exist_ok=False)', code)
+        self.assertIn('if args.entware_cache:', code)
+        self.assertIn('verify_cache(source_cache, rows)', code)
+        self.assertIn('verify_cache(internal_cache, rows)', code)
+        self.assertIn('shutil.copyfile(source_cache / name, internal_cache / name)', code)
+        workflow = (Path(__file__).resolve().parents[3] /
+                    ".github/workflows/telemt-control-ipc-mt7621-guest.yml").read_text()
+        self.assertLess(
+            workflow.index("Save verified Entware cache before QEMU"),
+            workflow.index("One QEMU-system kernel-4.9 IPC cycle"))
+        self.assertIn('--entware-cache "$RUNNER_TEMP/mt7621-entware-cache"', workflow)
+
     def test_emulator_sha_is_immutable(self):
         self.assertEqual(
             self.module.EMU_SHA,

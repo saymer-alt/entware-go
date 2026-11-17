@@ -387,6 +387,7 @@ def main():
     ap.add_argument("--emulator-root", required=True)
     ap.add_argument("--ipk-dir", required=True)
     ap.add_argument("--workspace", help="fresh private workspace")
+    ap.add_argument("--entware-cache", help="verified cache outside fresh private workspace")
     ap.add_argument("--nand-dir")
     ap.add_argument("--credentials-file")
     ap.add_argument("--max-seconds", type=int, default=2400)
@@ -448,6 +449,18 @@ def main():
     from lab.run import run
     lock = root / "lab/entware-mipselsf.lock.json"
     image, mirror = workspace / "opt.img", workspace / "mirror"
+    if args.entware_cache:
+        # The workspace MUST remain fresh. Copy only verified public assets
+        # into it after the existing exist_ok=False safety boundary.
+        from prefetch_entware_assets import assets, verify_cache
+        rows = assets(root)
+        source_cache = Path(args.entware_cache)
+        verify_cache(source_cache, rows)
+        internal_cache = workspace / "cache"
+        internal_cache.mkdir(mode=0o700)
+        for name, _, _ in rows:
+            shutil.copyfile(source_cache / name, internal_cache / name)
+        verify_cache(internal_cache, rows)
     build(str(image), str(mirror), workspace / "cache",
           args.credentials_file, arch="mipsel", lock_path=str(lock))
     shutil.copyfile(ipk, mirror / "entware" / CORE_NAME)
