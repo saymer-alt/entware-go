@@ -48,3 +48,28 @@ Three bounded full QEMU guest cycles were attempted for this research gate:
 No fourth run automatically. The patched QEMU binary has now been independently SHA-checked and saved to the cache prior to guest execution, but cache availability is not permission to bypass the explicit budget or rerun without new evidence.
 
 **Current gate:** `MIPSEL_IPC_LAB_IPK_BUILD=PASS`, `PORTed_MT7621_GUEST_PREP=PASS`, `IPC_DAEMON_READY=BLOCKED`, `IPC_RELOAD/STOP=NOT_TESTED`, `MERGE/RELEASE=NO`. Evidence notes are research-only; do not modify the frozen Core/Panel pins or actual routers.
+
+
+## Implemented host-only diagnostic gates after the third guest attempt
+
+- Commit `9f91cbce`: the previous aggregated step #27 is split into **seven ordered checks**. The harness now reports specific sanitized SSH exit statuses rather than a generic exit 1. It does **not** start TeleMT during host-only validation.
+- Commit `c4fccd4a` plus the `d39e0249` host-test fix: `test_mt7621_guest_plan.py` runs six cheap Python tests on the exact pinned `router-emulator` parser; test ordering, synthetic credentials, echo safety, one-line SSH command constraint, code mapping, and no fallback `kill(pidfile)`. The tests also deliberately inject malformed newlines and echo-unsafe markers and demand rejection.
+- [Offline CI 44072003724](https://github.com/saymer-alt/entware-go/actions/runs/44072003724) **PASS (6/6 in 0.029 s)**. The `native-guest` job is **SKIPPED** because only explicit `workflow_dispatch` with `approve_guest_run=YES` can authorize another QEMU-system guest cycle.
+
+The new accepted exit-status mapping, visible as `RuntimeError: ssh_exit_nonzero_XX` in the sanitized guest report, is:
+
+| Code | Exactly what failed |
+| --- | --- |
+| 41 | At least one control-socket ancestor is a symlink |
+| 42 | Missing control-socket ancestor or a non-directory component |
+| 43 | Control-socket parent is not in the expected private mode 0700 |
+| 44 | Effective UID differs from control-socket parent owner |
+| 45 | The immediate `telemt start` CLI returned nonzero |
+| 46 | PID file did not become readable within 30 s |
+| 47 | PID file content was not a positive decimal PID |
+| 48 | `/proc/<pid>/cmdline` was not readable (child not alive or inaccessible) |
+| 49 | `/proc/<pid>/exe` was not the expected pinned `telemt-ipc-lab` executable |
+| 50 | Unix control socket did not appear within 30 s |
+| 51 | Final simultaneous process/executable/socket consistency assertion failed |
+
+These are **prospective categories, not evidence of which error actually occurred on run 44066952376**. The old run recorded only `ssh_exit_nonzero_1`, so it remains unclassified. The new code can be used only on a future explicitly authorized guest session. No runtime claims are upgraded by passing these host-only tests.
