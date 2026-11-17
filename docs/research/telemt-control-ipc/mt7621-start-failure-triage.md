@@ -47,7 +47,7 @@ Three bounded full QEMU guest cycles were attempted for this research gate:
 
 No fourth run automatically. The patched QEMU binary has now been independently SHA-checked and saved to the cache prior to guest execution, but cache availability is not permission to bypass the explicit budget or rerun without new evidence.
 
-**Current gate:** `MIPSEL_IPC_LAB_IPK_BUILD=PASS`, `PORTed_MT7621_GUEST_PREP=PASS`, `IPC_DAEMON_READY=BLOCKED`, `IPC_RELOAD/STOP=NOT_TESTED`, `MERGE/RELEASE=NO`. Evidence notes are research-only; do not modify the frozen Core/Panel pins or actual routers.
+**Current gate:** `MIPSEL_IPC_LAB_IPK_BUILD=PASS`, `PORTed_MT7621_GUEST_PREP=PASS`, `IPC_DAEMON_READY=PASS`, `IPC_RELOAD/STOP=PASS` (native kernel 4.9), `REBOOT/ROLLBACK=PASS` (run 16, 63/63), `MERGE/RELEASE=NO` (Draft PR awaiting owner review; physical-router stop/reload still required for Issue #51). Evidence notes are research-only; do not modify the frozen Core/Panel pins or actual routers.
 
 
 ## Implemented host-only diagnostic gates after the third guest attempt
@@ -400,3 +400,40 @@ any stale lab version in the scenario. `IPC_REBOOT_ABSENT_REJECTED`,
 `IPC_REBOOT_MANUAL_START`, `IPC_REBOOT_STOP_CLEAN` and `IPC_ROLLBACK_OK` are
 therefore NOT_TESTED on the guest; the scenario is ready for one explicit
 one-shot re-run when authorized (the four-run session budget was consumed).
+
+
+## Sixteenth guest run: the confirming run is fully green — P0–P2 PASS (2026-11-17, 22:03–22:11 MSK)
+
+After the owner's explicit GO, one-shot run
+[44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)
+executed the fixed scenario at head `d8986c9` (22:03:04–22:10:50 MSK per
+GitHub timestamps; the 18.11 dates in earlier drafts were a reporting error).
+Result: **63 of 63 planned steps PASS, 0 failures** (sanitized report
+`outcome=PASS`, junit `tests=63 failures=0`; total guest cycle 361.63 s).
+The frozen `1ipc2` candidate (ELF `a83caf10…d9506`, IPK `fbf5ef4c…5daa`) and
+the pinned emulator `64a446d…` were reused unchanged; nothing was rebuilt.
+
+The exported step-action sequence was verified identical to the local
+deterministic plan built from the pinned emulator, so by position the five
+previously NOT_TESTED steps passed (markers live only in the plan, never in
+the report):
+
+- step 58 `IPC_REBOOT_NO_AUTOSTART` — after native reboot the lab package
+  has version `3.5.17-1ipc2`, the binary is executable, the control socket
+  and init-script are absent, no daemon process exists (3.11 s);
+- step 59 `IPC_REBOOT_ABSENT_REJECTED` — after reboot a client command
+  against the absent socket is rejected (0.52 s);
+- step 60 `IPC_REBOOT_MANUAL_START` — a manual start after reboot reaches
+  detached readiness with the control socket present (1.39 s);
+- step 61 `IPC_REBOOT_STOP_CLEAN` — that instance stops cleanly through the
+  IPC socket: no socket, no live process (1.44 s);
+- step 62 `IPC_ROLLBACK_OK` — `opkg remove telemt-ipc-lab` succeeds and the
+  binary and socket are gone (0.35 s).
+
+With run 15 the full acceptance matrix now holds: P0 (stable daemon start
+with the IPC integration on real MT7621 kernel 4.9), P1 (safe native
+`reload`/`stop` semantics), P2 (reboot → no autostart → manual start → clean
+stop → rollback) — all **PASS on the guest**. The one-shot label was removed
+after the run; nothing was merged, released or installed on physical
+routers; frozen accepted Core/Panel pins are untouched. Issue #51 stays open
+until `stop/reload` are exercised on real hardware.
