@@ -281,3 +281,46 @@ validation is the blocker and the class names the message; C = 152+2/152+3 →
 path/bind mechanics; C PASS but detached still failing → daemonize-specific;
 A/B/C all PASS and full detached acceptance completes → the guest environment
 was the root cause and the run doubles as native IPC acceptance.
+
+## Fourteenth guest result: ROOT CAUSE CONFIRMED (2026-11-17)
+
+[Run 44126323538](https://github.com/saymer-alt/entware-go/actions/runs/44126323538),
+sanitized artifact (report.json): 28 executed steps, 27 PASS, FAIL at the new
+`IPC_ANCESTORS_TRUSTED` preflight with **`ssh_exit_nonzero_110`** — the
+**firmware root "/" violates `validate_trusted_directory`** (owned by root or
+not, and group/world-writable without a compensating sticky bit) **and the
+chown 0:0 + chmod 755 repair did not clear the violation** (the second
+verification failed, so the root filesystem is read-only; a writable root
+would have accepted a root chmod). Code 110 is emitted only after the repair
+attempt failed, so this is not a transient.
+
+This closes the investigation opened after guest run 3:
+
+- `local_control::private_parent` calls upstream `AnchoredPath::open_trusted_parent`,
+  which walks the **entire** absolute path with `O_NOFOLLOW` and applies the
+  trust rule to **every** component, starting at `/`.
+- On the Ported KeeneticOS 5.1.8 MT7621 guest (and, by firmware identity, on
+  real Keenetic MT7621 devices) `/` itself does not satisfy that rule and
+  cannot be repaired, so **every** opt-in control-socket bind fails with
+  `Custom { kind: PermissionDenied, error: "directory path is not owned and
+  protected from group/world writes" }`, the daemon child returns an orderly
+  error, the double-fork discards stderr, RAII removes the PID file — exactly
+  the silent early death of runs 7, 8, 11 and 12's detached step (code 75),
+  and exactly variant-C-only behavior (runs 13: A=HEALTHY, B=HEALTHY, C=153).
+- The client-side `stop --control-socket` fails the same way, which is why the
+  historical `IPC_ABSENT_REJECTED` PASS was ambiguous and never proved the
+  trust chain was satisfiable.
+- Everything else was methodically excluded: build recipe identical to the
+  accepted Core (same rustc pin, sysroot alias, gates), the SIGHUP watcher
+  change compiles into both A/B and B stays healthy, stale-socket
+  "already exists" contamination was removed as a factor, and the /opt
+  subdirs plus the ext4 image root (0755 root, verified by replicating the
+  exact CI `mkfs.ext4 -d` command in WSL) all satisfy the rule.
+
+**Fix direction (research patch, not upstream security weakening):** the
+namespace root is a mount boundary — its directory entry cannot be renamed,
+removed, or exchanged through any parent, so a permissive `/` gives no path
+redirection vector into `/opt/...`. The patch will anchor the trust walk
+below the root: validate every component from the first mount point downward
+(unchanged rule), skip only the root's own validation, and document why.
+Private-parent 0700 + same-UID + no-symlink requirements are unchanged.
