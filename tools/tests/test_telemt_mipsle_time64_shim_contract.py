@@ -1,0 +1,58 @@
+"""Host-only contract tests for Entware MIPS O32 time32/time64 shim layout.
+
+The GitHub Actions toolchain glibc headers may represent struct timespec as
+16 bytes, but Entware glibc-2.27 time32 ABI always expects 8 bytes.
+These tests do NOT run a guest or pretend to prove TeleMT runtime.
+"""
+from pathlib import Path
+import re
+import unittest
+
+SCRIPT = (Path(__file__).resolve().parents[2]
+          / "docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh")
+
+
+def shim_source():
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith("cat > ") and "shim/shim.c" in line and "EOF" in line]
+    if len(starts) != 1:
+        raise AssertionError("unique shim heredoc must exist")
+    begin = starts[0]
+    end = lines.index("EOF", begin + 1)
+    return "\n".join(lines[begin + 1:end]) + "\n"
+
+class Time64AbiContract(unittest.TestCase):
+    def test_entware_time32_explicit_fixed_width_layout(self):
+        s = shim_source()
+        self.assertIn("struct entware_timespec32 { int32_t tv_sec; int32_t tv_nsec; };", s)
+        self.assertIn("sizeof(struct entware_timespec32) == 8", s)
+        self.assertIn("offsetof(struct entware_timespec32, tv_nsec) == 4", s)
+        self.assertIn("sizeof(struct ts64) == 16", s)
+        self.assertIn("offsetof(struct ts64, tv_nsec) == 8", s)
+        self.assertNotRegex(s, r"struct timespec\s+(?:ts|rq|rm)\b")
+        self.assertIn("tp->_padding = 0", s)
+
+    def test_time32_external_calls_only(self):
+        s = shim_source()
+        self.assertRegex(s, r"entware_clock_gettime32\(clockid_t, struct entware_timespec32 \*\)")
+        self.assertRegex(s, r"entware_nanosleep32\(const struct entware_timespec32 \*, struct entware_timespec32 \*\)")
+        self.assertIn(' __asm__("clock_gettime")', s)
+        self.assertIn(' __asm__("nanosleep")', s)
+
+    def test_stat_uses_opaque_aligned_legacy_buffer(self):
+        s = shim_source()
+        self.assertIn("legacy_stat_storage[512]", s)
+        self.assertIn("__attribute__((aligned(16)))", s)
+        self.assertNotIn("struct stat st;", s)
+        self.assertIn("entware_stat32(path, (struct stat *)(void *)legacy_stat_storage)", s)
+
+    def test_nanosleep_overflow_fails_closed(self):
+        s = shim_source()
+        self.assertIn("req->tv_sec < INT32_MIN || req->tv_sec > INT32_MAX", s)
+        self.assertIn("errno = EOVERFLOW", s)
+        self.assertIn("rem->_padding = 0", s)
+
+
+if __name__ == "__main__":
+    unittest.main()

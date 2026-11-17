@@ -1,0 +1,258 @@
+# Experimental MIPSLE IPK preparation for TeleMT 3.5.17 Core + Panel Lite RC4.
+# Isolated from the ARM64 release pipelines: pull_request/workflow_dispatch only,
+# read-only permissions, no releases, no feed, artifacts expire after 7 days.
+# QEMU/OPKG/FIELD remain NOT_TESTED until the emulator is ready and owner-GO is given.
+name: TeleMT MIPSLE experimental IPKs (no release)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - .github/workflows/telemt-mipsle-ipk-3517-rc4-experimental.yml
+      - docs/research/telemt-mipsle-ipk-3517/**
+      - tools/telemt_mipsle_ipk_preflight.py
+      - tools/tests/test_telemt_mipsle_time64_shim_contract.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-mipsle-ipk-3517-rc4-experimental
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_SHA: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+  PANEL_SHA: 758d155fe309ec99bea6df2544d0e3c5d1bb8ad4
+
+jobs:
+  boundary-guard:
+    name: "Guard: no ARM64 pipeline or stable output is touched"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out this branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Only research files may change
+        run: |
+          set -euo pipefail
+          git fetch -q origin gh-action-build
+          allowed='^(docs/research/telemt-mipsle-ipk-3517/|tools/telemt_mipsle_ipk_preflight.py|tools/tests/telemt_mipsle_ipk_preflight_tests\.py|tools/tests/test_telemt_mipsle_time64_shim_contract\.py|\.github/workflows/telemt-mipsle-ipk-3517-rc4-experimental\.yml|\.github/workflows/telemt-mipsle-ipk-3517-getfb-experimental\.yml)'
+          changed=$(git diff --name-only origin/gh-action-build...HEAD)
+          echo "$changed"
+          if echo "$changed" | grep -qvE "$allowed"; then
+            echo "::error::Files outside the isolated research scope are modified"
+            exit 1
+          fi
+          if echo "$changed" | grep -qE '\.github/workflows/(telemt-arm64|telemt-mipsle-core-3517-poc|telemt-mipsle-compat-3517-check)'; then
+            echo "::error::Existing workflows must not be modified"
+            exit 1
+          fi
+          echo "BOUNDARY_GUARD: PASS (research-scope-only changes)"
+
+      - name: Regression tests for MIPS O32 time64 shim (host-only)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/tests -p 'test_telemt_mipsle_time64_shim_contract.py' -v
+
+  core-ipk:
+    name: Core 3.5.17 Entware build, ABI gate, IPK
+    runs-on: ubuntu-24.04
+    needs: boundary-guard
+    timeout-minutes: 45
+    steps:
+      - name: Check out this research branch (patch + scripts)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPSLE cross tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross \
+            binutils-mipsel-linux-gnu file
+      - name: Install Rust nightly with rust-src
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustc +nightly -V
+      - name: Build Core for Entware ABI (pinned sysroot, bounded)
+        run: bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
+        env:
+          CARGO_BUILD_JOBS: '2'
+      - name: Package telemt_3.5.17-1_mipsel-3.4.ipk
+        run: |
+          set -euo pipefail
+          BIN=~/entware-build/upstream/target/mipsel-unknown-linux-gnu/release/telemt
+          ROOT=~/entware-build/data-root/opt/bin
+          mkdir -p "$ROOT"
+          install -m 0755 "$BIN" "$ROOT/telemt"
+          cat > ~/entware-build/control <<'CTRL'
+          Package: telemt
+          Version: 3.5.17-1
+          Architecture: mipsel-3.4
+          Maintainer: entware-go experimental research <noreply@users.noreply.github.com>
+          Section: net
+          Depends: libc, libgcc, libpthread, librt
+          Description: TeleMT proxy core 3.5.17 (experimental MIPSLE Entware build).
+           Configuration is created by the application on first run; this package
+           ships no config, no init script and no autostart.
+          Source: https://github.com/telemt/telemt
+          CTRL
+          bash docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh \
+            ~/entware-build/control ~/entware-build/data-root \
+            telemt_3.5.17-1_mipsel-3.4.ipk
+      - name: IPK preflight (PR #42 tool, core mode)
+        run: |
+          set -euo pipefail
+          python3 tools/telemt_mipsle_ipk_preflight.py --kind core \
+            --file telemt_3.5.17-1_mipsel-3.4.ipk
+          echo "IPK_PACKAGE_VALIDATION (core): PASS"
+          sha256sum telemt_3.5.17-1_mipsel-3.4.ipk
+      - name: Upload experimental core IPK (7-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-core-mipsel-experimental
+          path: telemt_3.5.17-1_mipsel-3.4.ipk
+          retention-days: 7
+          if-no-files-found: error
+
+  panel-ipk:
+    name: Panel Lite RC4 build, static preflight, IPK
+    runs-on: ubuntu-24.04
+    needs: boundary-guard
+    timeout-minutes: 25
+    steps:
+      - name: Check out this research branch (scripts + tool)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out pinned Panel Lite RC4 source
+        uses: actions/checkout@v4
+        with:
+          repository: amirotin/telemt_panel
+          ref: 758d155fe309ec99bea6df2544d0e3c5d1bb8ad4
+          path: panel-src
+          persist-credentials: false
+      - name: Setup upstream Go version
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: panel-src/go.mod
+          cache: true
+          cache-dependency-path: panel-src/go.sum
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: panel-src/web/package-lock.json
+      - name: Build upstream frontend
+        working-directory: panel-src/web
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Pure-Go MIPSLE cross-build (PR #40 recipe)
+        working-directory: panel-src
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 758d155fe309ec99bea6df2544d0e3c5d1bb8ad4
+          go version
+          go tool dist list | grep -Fx 'linux/mipsle'
+          export GOTOOLCHAIN=local
+          export CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat
+          export GOEXPERIMENT=nojsonv2
+          go build -trimpath -tags lite \
+            -ldflags='-s -w -X main.version=1.0.0-rc.4' \
+            -o "$RUNNER_TEMP/telemt-panel" ./cmd/panel
+          file "$RUNNER_TEMP/telemt-panel"
+          readelf -h "$RUNNER_TEMP/telemt-panel" | grep -E 'Class:|Data:|Machine:|Type:'
+          readelf -l "$RUNNER_TEMP/telemt-panel" | grep -q INTERP && {
+            echo "::error::panel must be static"; exit 1; } || true
+          echo "PANEL_BUILD: PASS"
+      - name: Package telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+        run: |
+          set -euo pipefail
+          ROOT=~/panel-data-root/opt/bin
+          mkdir -p "$ROOT"
+          install -m 0755 "$RUNNER_TEMP/telemt-panel" "$ROOT/telemt-panel"
+          cat > ~/panel-control <<'CTRL'
+          Package: telemt-panel-lite
+          Version: 1.0.0~rc.4-1
+          Architecture: mipsel-3.4
+          Maintainer: entware-go experimental research <noreply@users.noreply.github.com>
+          Section: net
+          Description: TeleMT Panel Lite 1.0.0-rc.4 (experimental MIPSLE Entware build).
+           Self-contained pure-Go binary; ships no config, no init script and no
+           autostart. Independently installable from the core package.
+          Source: https://github.com/amirotin/telemt_panel
+          CTRL
+          bash docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh \
+            ~/panel-control ~/panel-data-root \
+            telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+      - name: IPK preflight (PR #42 tool, lite-rc4 mode)
+        run: |
+          set -euo pipefail
+          python3 tools/telemt_mipsle_ipk_preflight.py --kind lite-rc4 \
+            --file telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+          echo "IPK_PACKAGE_VALIDATION (panel): PASS"
+          sha256sum telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+      - name: Upload experimental panel IPK (7-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-panel-lite-mipsel-experimental
+          path: telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+          retention-days: 7
+          if-no-files-found: error
+
+  mipsle-only-gate:
+    name: "Guard: MIPSLE packages can never replace ARM64 files"
+    runs-on: ubuntu-24.04
+    needs: [core-ipk, panel-ipk]
+    timeout-minutes: 5
+    steps:
+      - name: Download both artifacts and verify arch isolation
+        uses: actions/download-artifact@v4
+        with:
+          path: ipks
+          merge-multiple: true
+      - name: Filenames and control architectures are mipsel-3.4 only
+        run: |
+          set -euo pipefail
+          ls -la ipks/
+          test -f ipks/telemt_3.5.17-1_mipsel-3.4.ipk
+          test -f ipks/telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
+          python3 - <<'PY'
+          import io, json, sys, tarfile
+          from pathlib import Path
+          for name, want in (("telemt_3.5.17-1_mipsel-3.4.ipk", "telemt"),
+                             ("telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk", "telemt-panel-lite")):
+              blob = Path("ipks", name).read_bytes()
+              with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+                  control = t.extractfile("./control.tar.gz") or t.extractfile("control.tar.gz")
+                  with tarfile.open(fileobj=io.BytesIO(control.read()), mode="r:gz") as c:
+                      fields = {}
+                      for line in c.extractfile("./control").read().decode().splitlines():
+                          if ": " in line:
+                              k, v = line.split(": ", 1)
+                              fields.setdefault(k, v)
+              assert fields["Architecture"] == "mipsel-3.4", fields
+              assert fields["Package"] == want, fields
+              assert "aarch64" not in name and "arm64" not in name
+              print(f"{name}: Architecture={fields['Architecture']} OK")
+          PY
+          echo "MIPSLE_ONLY_GATE: PASS (no ARM64 replacement possible; no release/feed writes anywhere in this workflow)"
+      - name: Final status report
+        run: |
+          echo 'CORE_BUILD: PASS'
+          echo 'CORE_ENTWARE_ABI: PASS (interp /opt/lib/ld.so.1, GLIBC<=2.27, 0 FPU instr)'
+          echo 'PANEL_BUILD: PASS'
+          echo 'PANEL_STATIC_PREFLIGHT: PASS (pure-Go static, PR #42 tool)'
+          echo 'IPK_PACKAGE_VALIDATION: PASS (both IPKs, PR #42 tool extended)'
+          echo 'QEMU_RUNTIME: NOT_TESTED (emulator not ready)'
+          echo 'OPKG_INSTALL_ROLLBACK: NOT_TESTED'
+          echo 'PHYSICAL_DEVICE: NOT_TESTED'

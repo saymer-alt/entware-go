@@ -1,0 +1,984 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 3a43060..bca4345 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1923,6 +1923,12 @@ dependencies = [
+  "universal-hash",
+ ]
+ 
++[[package]]
++name = "portable-atomic"
++version = "1.15.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
++
+ [[package]]
+ name = "potential_utf"
+ version = "0.1.6"
+@@ -2813,6 +2819,7 @@ dependencies = [
+  "num-bigint",
+  "num-traits",
+  "parking_lot",
++ "portable-atomic",
+  "proptest",
+  "rand 0.10.2",
+  "regex",
+diff --git a/Cargo.toml b/Cargo.toml
+index c9a2883..9d7ae84 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -112,3 +112,9 @@ harness = false
+ [profile.release]
+ lto = "fat"
+ codegen-units = 1
++
++# Atomic64 compatibility for targets without native 64-bit atomics (MIPS32r2).
++# Kept target-scoped so 64-bit targets build exactly as upstream did; src/compat.rs
++# re-exports it under the same cfg condition.
++[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
++portable-atomic = "1.11.0"
+diff --git a/src/api/discovery/http_tests.rs b/src/api/discovery/http_tests.rs
+index 34a3088..d9ad36f 100644
+--- a/src/api/discovery/http_tests.rs
++++ b/src/api/discovery/http_tests.rs
+@@ -1,5 +1,6 @@
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU64};
++use crate::compat::AtomicU64;
++use std::sync::atomic::AtomicBool;
+ use std::time::Duration;
+ 
+ use hyper::server::conn::http1;
+diff --git a/src/api/mod.rs b/src/api/mod.rs
+index 6a3f285..026f90b 100644
+--- a/src/api/mod.rs
++++ b/src/api/mod.rs
+@@ -5,7 +5,8 @@ use std::io::{Error as IoError, ErrorKind};
+ use std::net::{IpAddr, SocketAddr};
+ use std::path::PathBuf;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, Ordering};
+ use std::time::Duration;
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/api/runtime_watch.rs b/src/api/runtime_watch.rs
+index 307021c..079bb14 100644
+--- a/src/api/runtime_watch.rs
++++ b/src/api/runtime_watch.rs
+@@ -204,7 +204,8 @@ fn now_epoch_secs() -> u64 {
+ mod tests {
+     use super::*;
+     use crate::config::ProxyConfig;
+-    use std::sync::atomic::{AtomicBool, AtomicU64};
++    use crate::compat::AtomicU64;
++    use std::sync::atomic::AtomicBool;
+     use std::time::Duration;
+ 
+     fn state(
+diff --git a/src/api/users/period_tests.rs b/src/api/users/period_tests.rs
+index 7186843..c8dd0dc 100644
+--- a/src/api/users/period_tests.rs
++++ b/src/api/users/period_tests.rs
+@@ -8,7 +8,8 @@ use crate::proxy::{shared_state::ProxySharedState, user_admission::UserAdmission
+ use crate::quota_state::QuotaStateOwner;
+ use crate::stats::QuotaStore;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU64};
++use crate::compat::AtomicU64;
++use std::sync::atomic::AtomicBool;
+ use tokio::sync::{Mutex, watch};
+ 
+ // Period-only mutations must fence already attached accounts as well as new ones.
+diff --git a/src/compat.rs b/src/compat.rs
+new file mode 100644
+index 0000000..f620ba6
+--- /dev/null
++++ b/src/compat.rs
+@@ -0,0 +1,135 @@
++//! Architecture compatibility layer for 64-bit atomics.
++//!
++//! Targets with native 64-bit atomics (x86_64, aarch64, ...) keep the standard
++//! `std::sync::atomic::AtomicU64` so the hot path stays unchanged and zero-cost.
++//! MIPS32r2 (Entware `mipsel-3.4`, MT7621) lacks `target_has_atomic = "64"`, so
++//! the standard library does not provide `AtomicU64` at all; there this module
++//! re-exports `portable_atomic::AtomicU64`, which implements the identical API
++//! with a global-lock fallback on 32-bit atomics.
++//!
++//! This is a type re-export only: ordering semantics, CAS loops, counters,
++//! traffic limits, quotas and replay accounting are untouched, and no `AtomicU64`
++//! is downgraded to a narrower type. The lock fallback trades throughput, not
++//! correctness; runtime behavior on the device remains gated by QEMU validation.
++
++#[cfg(target_has_atomic = "64")]
++pub use std::sync::atomic::AtomicU64;
++
++#[cfg(not(target_has_atomic = "64"))]
++pub use portable_atomic::AtomicU64;
++
++#[cfg(test)]
++mod tests {
++    use std::sync::atomic::Ordering;
++    use std::sync::Arc;
++
++    use super::AtomicU64;
++
++    /// The selected atomic type must expose the full API surface upstream uses,
++    /// with the same semantics, on both the native and the fallback path.
++    #[test]
++    fn api_parity_basic_operations() {
++        let value = AtomicU64::new(7);
++        assert_eq!(value.load(Ordering::Relaxed), 7);
++        value.store(9, Ordering::Release);
++        assert_eq!(value.load(Ordering::Acquire), 9);
++        assert_eq!(value.swap(3, Ordering::AcqRel), 9);
++        assert_eq!(value.fetch_add(4, Ordering::Relaxed), 3);
++        assert_eq!(value.fetch_sub(1, Ordering::Relaxed), 7);
++        assert_eq!(value.fetch_or(8, Ordering::Relaxed), 6);
++        assert_eq!(value.fetch_and(0xFF, Ordering::Relaxed), 14);
++        assert_eq!(value.fetch_max(100, Ordering::Relaxed), 14);
++        assert_eq!(value.into_inner(), 100);
++        let mut owned = AtomicU64::new(5);
++        assert_eq!(owned.get_mut(), &mut 5);
++        *owned.get_mut() = 41;
++        assert_eq!(owned.load(Ordering::SeqCst), 41);
++    }
++
++    /// CAS admission loops (slot budgets, rate limiter windows, quota charge,
++    /// replay windows) must still progress through the compatibility alias.
++    #[test]
++    fn compare_exchange_cas_loop_progresses() {
++        let slot = AtomicU64::new(0);
++        let mut observed = Vec::new();
++        loop {
++            let current = slot.load(Ordering::Relaxed);
++            if current >= 10 {
++                break;
++            }
++            match slot.compare_exchange(
++                current,
++                current + 1,
++                Ordering::AcqRel,
++                Ordering::Acquire,
++            ) {
++                Ok(_) => observed.push(current),
++                Err(actual) => observed.push(actual),
++            }
++        }
++        assert_eq!(slot.load(Ordering::Relaxed), 10);
++        assert_eq!(observed.len(), 10);
++        assert!(observed.windows(2).all(|pair| pair[0] <= pair[1]));
++    }
++
++    /// Monotonic accounting counters shared across threads must not lose
++    /// increments under concurrent access.
++    #[test]
++    fn concurrent_fetch_add_matches_expected_total() {
++        const THREADS: u64 = 8;
++        const INCREMENTS: u64 = 10_000;
++        let counter = Arc::new(AtomicU64::new(0));
++        let handles: Vec<_> = (0..THREADS)
++            .map(|_| {
++                let counter = Arc::clone(&counter);
++                std::thread::spawn(move || {
++                    for _ in 0..INCREMENTS {
++                        counter.fetch_add(1, Ordering::Relaxed);
++                    }
++                })
++            })
++            .collect();
++        for handle in handles {
++            handle.join().expect("counter thread must not panic");
++        }
++        assert_eq!(counter.load(Ordering::Relaxed), THREADS * INCREMENTS);
++    }
++
++    /// Concurrent CAS contention on a single slot must make exactly the
++    /// expected number of successful transitions (traffic limiter refill).
++    #[test]
++    fn concurrent_compare_exchange_is_lossless() {
++        const THREADS: usize = 4;
++        const CLAIMS: u64 = 1_000;
++        let slot = Arc::new(AtomicU64::new(0));
++        let handles: Vec<_> = (0..THREADS)
++            .map(|_| {
++                let slot = Arc::clone(&slot);
++                std::thread::spawn(move || {
++                    let mut claims = 0;
++                    while claims < CLAIMS {
++                        let current = slot.load(Ordering::Relaxed);
++                        if slot
++                            .compare_exchange(
++                                current,
++                                current + 1,
++                                Ordering::AcqRel,
++                                Ordering::Relaxed,
++                            )
++                            .is_ok()
++                        {
++                            claims += 1;
++                        }
++                    }
++                    claims
++                })
++            })
++            .collect();
++        let total: u64 = handles
++            .into_iter()
++            .map(|handle| handle.join().expect("CAS thread must not panic"))
++            .sum();
++        assert_eq!(total, THREADS as u64 * CLAIMS);
++        assert_eq!(slot.load(Ordering::Relaxed), THREADS as u64 * CLAIMS);
++    }
++}
+diff --git a/src/config/load/publication.rs b/src/config/load/publication.rs
+index 795c34a..2fde255 100644
+--- a/src/config/load/publication.rs
++++ b/src/config/load/publication.rs
+@@ -1,4 +1,5 @@
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ use super::ProxyConfig;
+ 
+diff --git a/src/config/load/runtime_web/build.rs b/src/config/load/runtime_web/build.rs
+index 720d417..0c0c2ad 100644
+--- a/src/config/load/runtime_web/build.rs
++++ b/src/config/load/runtime_web/build.rs
+@@ -1,5 +1,6 @@
+ use super::*;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ static NEXT_SNAPSHOT: AtomicU64 = AtomicU64::new(1);
+ 
+diff --git a/src/config/load/validate_web.rs b/src/config/load/validate_web.rs
+index 5a7cd49..a8a350b 100644
+--- a/src/config/load/validate_web.rs
++++ b/src/config/load/validate_web.rs
+@@ -23,7 +23,12 @@ const MAX_WEB_BODY_BYTES: usize = 16 * 1024 * 1024;
+ const MAX_WEB_FRAME_BYTES: usize = 1024 * 1024;
+ const MAX_WEB_FRAMES_PER_BODY: usize = 4096;
+ const MAX_WEB_TOMBSTONES_PER_SESSION: usize = 4096;
+-const MAX_WEB_MEMORY_ENVELOPE_BYTES: usize = 4 * 1024 * 1024 * 1024;
++// The 4 GiB envelope must not be evaluated in `usize`: on 32-bit targets the
++// literal overflows and fails const evaluation. Widening to `u64` keeps the
++// exact same ceiling; `usize as u64` is lossless on every supported target.
++// On 32-bit builds a configured envelope above `u32::MAX` is rejected even
++// earlier, by the `usize` deserialization of `web.limits.memory_envelope_bytes`.
++const MAX_WEB_MEMORY_ENVELOPE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+ 
+ /// Validates WEB policy and resource bounds before building runtime state.
+ pub(super) fn validate(config: &mut ProxyConfig) -> Result<()> {
+diff --git a/src/config/load/validate_web/memory.rs b/src/config/load/validate_web/memory.rs
+index 218803b..7d36561 100644
+--- a/src/config/load/validate_web/memory.rs
++++ b/src/config/load/validate_web/memory.rs
+@@ -103,7 +103,7 @@ pub(super) fn validate(limits: &WebLimitsConfig, wildcard: bool) -> Result<()> {
+         .and_then(|value| value.checked_add(overload_connection_reservation))
+         .ok_or_else(|| ProxyError::Config("web.limits byte ceilings overflow usize".to_string()))?;
+     if reserved > limits.memory_envelope_bytes
+-        || limits.memory_envelope_bytes > MAX_WEB_MEMORY_ENVELOPE_BYTES
++        || limits.memory_envelope_bytes as u64 > MAX_WEB_MEMORY_ENVELOPE_BYTES
+     {
+         return config_error(
+             "web.limits memory reservations must fit memory_envelope_bytes within 4 GiB",
+diff --git a/src/config/observation.rs b/src/config/observation.rs
+index 6e92412..e7e4450 100644
+--- a/src/config/observation.rs
++++ b/src/config/observation.rs
+@@ -4,7 +4,8 @@
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::path::PathBuf;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ use arc_swap::ArcSwapOption;
+diff --git a/src/config/tests/load_mask_shape_security_tests.rs b/src/config/tests/load_mask_shape_security_tests.rs
+index b213978..4a3d848 100644
+--- a/src/config/tests/load_mask_shape_security_tests.rs
++++ b/src/config/tests/load_mask_shape_security_tests.rs
+@@ -1,7 +1,8 @@
+ use super::*;
+ use std::fs;
+ use std::path::PathBuf;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ static TEMP_CONFIG_COUNTER: AtomicU64 = AtomicU64::new(0);
+diff --git a/src/ip_tracker.rs b/src/ip_tracker.rs
+index f2a71f6..3cbd968 100644
+--- a/src/ip_tracker.rs
++++ b/src/ip_tracker.rs
+@@ -8,7 +8,8 @@ use std::hash::{Hash, Hasher};
+ use std::net::IpAddr;
+ use std::sync::Arc;
+ use std::sync::Mutex;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/maestro/listeners/unix.rs b/src/maestro/listeners/unix.rs
+index 8159361..8ccc5da 100644
+--- a/src/maestro/listeners/unix.rs
++++ b/src/maestro/listeners/unix.rs
+@@ -1,6 +1,7 @@
+ use std::net::SocketAddr;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/maestro/reload.rs b/src/maestro/reload.rs
+index a65d0da..6fa19f2 100644
+--- a/src/maestro/reload.rs
++++ b/src/maestro/reload.rs
+@@ -1,6 +1,7 @@
+ use std::collections::VecDeque;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ use parking_lot::Mutex;
+diff --git a/src/main.rs b/src/main.rs
+index 8e2f307..9c13a94 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -2,6 +2,7 @@
+ 
+ mod api;
+ mod cli;
++mod compat;
+ mod config;
+ mod conntrack_control;
+ mod crypto;
+diff --git a/src/proxy/direct_buffer_budget.rs b/src/proxy/direct_buffer_budget.rs
+index 39f6374..63a19cd 100644
+--- a/src/proxy/direct_buffer_budget.rs
++++ b/src/proxy/direct_buffer_budget.rs
+@@ -1,5 +1,6 @@
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ 
+ use parking_lot::{Mutex as ParkingMutex, MutexGuard as ParkingMutexGuard};
+diff --git a/src/proxy/middle_relay.rs b/src/proxy/middle_relay.rs
+index 56a4a5a..c9b42dc 100644
+--- a/src/proxy/middle_relay.rs
++++ b/src/proxy/middle_relay.rs
+@@ -8,7 +8,8 @@ use std::hash::Hasher;
+ use std::hash::{BuildHasher, Hash};
+ use std::net::{IpAddr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
+ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+diff --git a/src/proxy/relay/io/counters.rs b/src/proxy/relay/io/counters.rs
+index 3bad32d..b44058a 100644
+--- a/src/proxy/relay/io/counters.rs
++++ b/src/proxy/relay/io/counters.rs
+@@ -1,4 +1,5 @@
+-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicU32, Ordering};
+ use std::time::Duration;
+ 
+ use tokio::time::Instant;
+diff --git a/src/proxy/shared_state.rs b/src/proxy/shared_state.rs
+index 78538f4..dfcd1e3 100644
+--- a/src/proxy/shared_state.rs
++++ b/src/proxy/shared_state.rs
+@@ -1,7 +1,8 @@
+ use std::collections::hash_map::RandomState;
+ use std::collections::{HashMap, HashSet};
+ use std::net::{IpAddr, SocketAddr};
+-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, Mutex};
+ use std::time::Instant;
+ 
+diff --git a/src/proxy/tests/client_adversarial_tests.rs b/src/proxy/tests/client_adversarial_tests.rs
+index 5bc90bc..eabb769 100644
+--- a/src/proxy/tests/client_adversarial_tests.rs
++++ b/src/proxy/tests/client_adversarial_tests.rs
+@@ -5,7 +5,8 @@ use crate::ip_tracker::UserIpTracker;
+ use crate::stats::Stats;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ // ------------------------------------------------------------------
+ // Priority 3: Massive Concurrency Stress (OWASP ASVS 5.1.6)
+diff --git a/src/proxy/tests/middle_relay_atomic_quota_invariant_tests.rs b/src/proxy/tests/middle_relay_atomic_quota_invariant_tests.rs
+index a05c13e..e363a0f 100644
+--- a/src/proxy/tests/middle_relay_atomic_quota_invariant_tests.rs
++++ b/src/proxy/tests/middle_relay_atomic_quota_invariant_tests.rs
+@@ -4,7 +4,8 @@ use bytes::Bytes;
+ use std::io;
+ use std::pin::Pin;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use std::task::{Context, Poll};
+ use tokio::io::AsyncWrite;
+ 
+diff --git a/src/proxy/tests/middle_relay_idle_policy_security_tests.rs b/src/proxy/tests/middle_relay_idle_policy_security_tests.rs
+index 8a3d580..948a183 100644
+--- a/src/proxy/tests/middle_relay_idle_policy_security_tests.rs
++++ b/src/proxy/tests/middle_relay_idle_policy_security_tests.rs
+@@ -3,7 +3,7 @@ use crate::crypto::AesCtr;
+ use crate::stats::Stats;
+ use crate::stream::{BufferPool, CryptoReader};
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use tokio::io::AsyncWriteExt;
+ use tokio::io::duplex;
+ use tokio::time::{Duration as TokioDuration, Instant as TokioInstant, timeout};
+diff --git a/src/proxy/tests/middle_relay_length_cast_hardening_security_tests.rs b/src/proxy/tests/middle_relay_length_cast_hardening_security_tests.rs
+index 6c6644d..fca3501 100644
+--- a/src/proxy/tests/middle_relay_length_cast_hardening_security_tests.rs
++++ b/src/proxy/tests/middle_relay_length_cast_hardening_security_tests.rs
+@@ -1,6 +1,6 @@
+ use super::*;
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ 
+ #[test]
+ fn intermediate_secure_wire_len_allows_max_31bit_payload() {
+diff --git a/src/proxy/tests/middle_relay_tiny_frame_debt_concurrency_security_tests.rs b/src/proxy/tests/middle_relay_tiny_frame_debt_concurrency_security_tests.rs
+index 6b1d511..937a615 100644
+--- a/src/proxy/tests/middle_relay_tiny_frame_debt_concurrency_security_tests.rs
++++ b/src/proxy/tests/middle_relay_tiny_frame_debt_concurrency_security_tests.rs
+@@ -3,7 +3,7 @@ use crate::crypto::AesCtr;
+ use crate::stats::Stats;
+ use crate::stream::{BufferPool, CryptoReader};
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use std::time::Instant;
+ use tokio::io::{AsyncRead, AsyncWriteExt, duplex};
+ use tokio::task::JoinSet;
+diff --git a/src/proxy/tests/middle_relay_tiny_frame_debt_proto_chunking_security_tests.rs b/src/proxy/tests/middle_relay_tiny_frame_debt_proto_chunking_security_tests.rs
+index cbbc971..82d3f17 100644
+--- a/src/proxy/tests/middle_relay_tiny_frame_debt_proto_chunking_security_tests.rs
++++ b/src/proxy/tests/middle_relay_tiny_frame_debt_proto_chunking_security_tests.rs
+@@ -3,7 +3,7 @@ use crate::crypto::AesCtr;
+ use crate::stats::Stats;
+ use crate::stream::{BufferPool, CryptoReader, PooledBuffer};
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use std::time::Instant;
+ use tokio::io::{AsyncRead, AsyncWriteExt, duplex};
+ use tokio::time::{Duration as TokioDuration, sleep};
+diff --git a/src/proxy/tests/middle_relay_tiny_frame_debt_security_tests.rs b/src/proxy/tests/middle_relay_tiny_frame_debt_security_tests.rs
+index b5285fc..65ae7dd 100644
+--- a/src/proxy/tests/middle_relay_tiny_frame_debt_security_tests.rs
++++ b/src/proxy/tests/middle_relay_tiny_frame_debt_security_tests.rs
+@@ -3,7 +3,7 @@ use crate::crypto::AesCtr;
+ use crate::stats::Stats;
+ use crate::stream::{BufferPool, CryptoReader};
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use std::time::Instant;
+ use tokio::io::{AsyncRead, AsyncWriteExt, duplex};
+ 
+diff --git a/src/proxy/tests/middle_relay_zero_length_frame_security_tests.rs b/src/proxy/tests/middle_relay_zero_length_frame_security_tests.rs
+index dbf6c4c..08270d0 100644
+--- a/src/proxy/tests/middle_relay_zero_length_frame_security_tests.rs
++++ b/src/proxy/tests/middle_relay_zero_length_frame_security_tests.rs
+@@ -3,7 +3,7 @@ use crate::crypto::AesCtr;
+ use crate::stats::Stats;
+ use crate::stream::{BufferPool, CryptoReader};
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use std::time::Instant;
+ use tokio::io::{AsyncRead, AsyncWriteExt, duplex};
+ 
+diff --git a/src/proxy/tests/route_mode_security_tests.rs b/src/proxy/tests/route_mode_security_tests.rs
+index cc169ca..87150e0 100644
+--- a/src/proxy/tests/route_mode_security_tests.rs
++++ b/src/proxy/tests/route_mode_security_tests.rs
+@@ -2,7 +2,8 @@ use super::*;
+ use rand::rngs::StdRng;
+ use rand::{RngExt, SeedableRng};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ #[test]
+ fn cutover_stagger_delay_is_deterministic_for_same_inputs() {
+diff --git a/src/proxy/traffic_limiter.rs b/src/proxy/traffic_limiter.rs
+index 1b16d0e..b4fb9df 100644
+--- a/src/proxy/traffic_limiter.rs
++++ b/src/proxy/traffic_limiter.rs
+@@ -1,7 +1,8 @@
+ use std::collections::{HashMap, HashSet};
+ use std::net::IpAddr;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ use arc_swap::ArcSwap;
+ use dashmap::DashMap;
+diff --git a/src/quota_state.rs b/src/quota_state.rs
+index 07c3fe0..8263d95 100644
+--- a/src/quota_state.rs
++++ b/src/quota_state.rs
+@@ -42,7 +42,7 @@ pub(crate) struct QuotaStateOwner {
+     store: Arc<QuotaStore>,
+     mutation: Arc<Mutex<()>>,
+     #[cfg(test)]
+-    scheduler_iterations: std::sync::atomic::AtomicU64,
++    scheduler_iterations: crate::compat::AtomicU64,
+ }
+ 
+ impl QuotaStateOwner {
+@@ -53,7 +53,7 @@ impl QuotaStateOwner {
+             mutation: store.mutation_gate(),
+             store,
+             #[cfg(test)]
+-            scheduler_iterations: std::sync::atomic::AtomicU64::new(0),
++            scheduler_iterations: crate::compat::AtomicU64::new(0),
+         })
+     }
+ 
+diff --git a/src/stats/helpers.rs b/src/stats/helpers.rs
+index 2db8cfa..2a77512 100644
+--- a/src/stats/helpers.rs
++++ b/src/stats/helpers.rs
+@@ -1,5 +1,6 @@
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};
+ 
+ use crate::config::MeTelemetryLevel;
+diff --git a/src/stats/mod.rs b/src/stats/mod.rs
+index 0a85b6b..dbce79f 100644
+--- a/src/stats/mod.rs
++++ b/src/stats/mod.rs
+@@ -18,7 +18,8 @@ mod writer_counters;
+ use dashmap::DashMap;
+ use std::collections::HashMap;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+ use std::time::Instant;
+ 
+ pub(crate) use self::quota_store::{
+diff --git a/src/stats/quota_store.rs b/src/stats/quota_store.rs
+index 5369e21..48c1f96 100644
+--- a/src/stats/quota_store.rs
++++ b/src/stats/quota_store.rs
+@@ -1,6 +1,7 @@
+ use std::collections::HashMap;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ use arc_swap::ArcSwap;
+ use dashmap::DashMap;
+diff --git a/src/stats/replay.rs b/src/stats/replay.rs
+index e6fe20f..606e1e9 100644
+--- a/src/stats/replay.rs
++++ b/src/stats/replay.rs
+@@ -4,7 +4,8 @@ use std::collections::{HashMap, VecDeque};
+ use std::hash::{Hash, Hasher};
+ use std::num::NonZeroUsize;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
+ use lru::LruCache;
+diff --git a/src/stats/tests.rs b/src/stats/tests.rs
+index f2165db..84f1ef5 100644
+--- a/src/stats/tests.rs
++++ b/src/stats/tests.rs
+@@ -1,7 +1,8 @@
+ use super::*;
+ use crate::config::MeTelemetryLevel;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ 
+ #[test]
+diff --git a/src/stats/tls_fingerprints.rs b/src/stats/tls_fingerprints.rs
+index 755f170..957725b 100644
+--- a/src/stats/tls_fingerprints.rs
++++ b/src/stats/tls_fingerprints.rs
+@@ -3,7 +3,8 @@
+ use std::cmp::Reverse;
+ use std::hash::Hash;
+ use std::net::{IpAddr, Ipv6Addr};
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ 
+ use dashmap::DashMap;
+diff --git a/src/tls_front/cache.rs b/src/tls_front/cache.rs
+index a177a91..c511499 100644
+--- a/src/tls_front/cache.rs
++++ b/src/tls_front/cache.rs
+@@ -4,7 +4,8 @@ use std::hash::{BuildHasher, Hash, Hasher};
+ use std::net::IpAddr;
+ use std::path::PathBuf;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+ 
+ use tokio::sync::RwLock;
+diff --git a/src/tls_front/fetcher.rs b/src/tls_front/fetcher.rs
+index a831f1f..1c7efd6 100644
+--- a/src/tls_front/fetcher.rs
++++ b/src/tls_front/fetcher.rs
+@@ -5,7 +5,8 @@ use std::net::SocketAddr;
+ use std::sync::Arc;
+ use std::sync::Mutex;
+ use std::sync::OnceLock;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
+ use anyhow::{Result, anyhow};
+diff --git a/src/transport/middle_proxy/health/tests.rs b/src/transport/middle_proxy/health/tests.rs
+index 2b223d1..b2c9c89 100644
+--- a/src/transport/middle_proxy/health/tests.rs
++++ b/src/transport/middle_proxy/health/tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/pool.rs b/src/transport/middle_proxy/pool.rs
+index 9543779..4d8a201 100644
+--- a/src/transport/middle_proxy/pool.rs
++++ b/src/transport/middle_proxy/pool.rs
+@@ -4,9 +4,8 @@ use std::collections::{HashMap, HashSet};
+ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+ use std::ops::{Deref, DerefMut};
+ use std::sync::Arc;
+-use std::sync::atomic::{
+-    AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+-};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/transport/middle_proxy/pool_reinit/tests.rs b/src/transport/middle_proxy/pool_reinit/tests.rs
+index 1f1b492..8cdca9c 100644
+--- a/src/transport/middle_proxy/pool_reinit/tests.rs
++++ b/src/transport/middle_proxy/pool_reinit/tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::{HashMap, HashSet};
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::Instant;
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/pool_status/tests.rs b/src/transport/middle_proxy/pool_status/tests.rs
+index ef479ce..da83f13 100644
+--- a/src/transport/middle_proxy/pool_status/tests.rs
++++ b/src/transport/middle_proxy/pool_status/tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
+ use std::time::Instant;
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/pool_writer.rs b/src/transport/middle_proxy/pool_writer.rs
+index 6abc36b..186adc8 100644
+--- a/src/transport/middle_proxy/pool_writer.rs
++++ b/src/transport/middle_proxy/pool_writer.rs
+@@ -4,7 +4,8 @@ use std::io::ErrorKind;
+ use std::net::SocketAddr;
+ use std::pin::Pin;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use bytes::BytesMut;
+diff --git a/src/transport/middle_proxy/reader.rs b/src/transport/middle_proxy/reader.rs
+index 15f6c71..0ca5861 100644
+--- a/src/transport/middle_proxy/reader.rs
++++ b/src/transport/middle_proxy/reader.rs
+@@ -3,7 +3,8 @@
+ use std::collections::HashMap;
+ use std::io::ErrorKind;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use bytes::{Bytes, BytesMut};
+diff --git a/src/transport/middle_proxy/registry.rs b/src/transport/middle_proxy/registry.rs
+index 18ce532..0e61fa9 100644
+--- a/src/transport/middle_proxy/registry.rs
++++ b/src/transport/middle_proxy/registry.rs
+@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
+ use std::net::SocketAddr;
+ use std::sync::Arc;
+ use std::sync::Mutex as StdMutex;
+-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicU8, Ordering};
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ use dashmap::DashMap;
+diff --git a/src/transport/middle_proxy/tests/admission_test_support.rs b/src/transport/middle_proxy/tests/admission_test_support.rs
+index 1f5b6a6..a1bbed5 100644
+--- a/src/transport/middle_proxy/tests/admission_test_support.rs
++++ b/src/transport/middle_proxy/tests/admission_test_support.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::Instant;
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/health_adversarial_tests.rs b/src/transport/middle_proxy/tests/health_adversarial_tests.rs
+index cafff0f..c62002a 100644
+--- a/src/transport/middle_proxy/tests/health_adversarial_tests.rs
++++ b/src/transport/middle_proxy/tests/health_adversarial_tests.rs
+@@ -2,7 +2,8 @@ use std::collections::HashMap;
+ use std::collections::HashSet;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/health_integration_tests.rs b/src/transport/middle_proxy/tests/health_integration_tests.rs
+index 9aecfba..4808588 100644
+--- a/src/transport/middle_proxy/tests/health_integration_tests.rs
++++ b/src/transport/middle_proxy/tests/health_integration_tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/health_regression_tests.rs b/src/transport/middle_proxy/tests/health_regression_tests.rs
+index b06e721..b00b5fc 100644
+--- a/src/transport/middle_proxy/tests/health_regression_tests.rs
++++ b/src/transport/middle_proxy/tests/health_regression_tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/pool_writer_publication_tests.rs b/src/transport/middle_proxy/tests/pool_writer_publication_tests.rs
+index 814ba21..b6e7722 100644
+--- a/src/transport/middle_proxy/tests/pool_writer_publication_tests.rs
++++ b/src/transport/middle_proxy/tests/pool_writer_publication_tests.rs
+@@ -1,6 +1,7 @@
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/pool_writer_security_tests.rs b/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
+index 5b16b79..c75e81b 100644
+--- a/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
++++ b/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::{HashMap, HashSet};
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/middle_proxy/tests/send_adversarial_tests.rs b/src/transport/middle_proxy/tests/send_adversarial_tests.rs
+index c98e7f8..6250b92 100644
+--- a/src/transport/middle_proxy/tests/send_adversarial_tests.rs
++++ b/src/transport/middle_proxy/tests/send_adversarial_tests.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+ use std::time::{Duration, Instant};
+ 
+ use tokio::sync::mpsc;
+diff --git a/src/transport/upstream.rs b/src/transport/upstream.rs
+index 667ad1f..1e209eb 100644
+--- a/src/transport/upstream.rs
++++ b/src/transport/upstream.rs
+@@ -9,7 +9,8 @@ use std::collections::{BTreeSet, HashMap};
+ use std::net::{IpAddr, SocketAddr};
+ use std::pin::Pin;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use std::task::{Context, Poll};
+ use std::time::Duration;
+ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+diff --git a/src/web/control.rs b/src/web/control.rs
+index f0ad1e2..16025fa 100644
+--- a/src/web/control.rs
++++ b/src/web/control.rs
+@@ -1,7 +1,8 @@
+ use std::net::SocketAddr;
+ use std::sync::Arc;
+ use std::sync::Weak;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::Instant;
+ 
+ use tokio::sync::watch;
+diff --git a/src/web/manager.rs b/src/web/manager.rs
+index e609409..bbed7d3 100644
+--- a/src/web/manager.rs
++++ b/src/web/manager.rs
+@@ -1,7 +1,7 @@
+ use std::future::Future;
+ use std::net::IpAddr;
+ use std::sync::Arc;
+-use std::sync::atomic::AtomicU64;
++use crate::compat::AtomicU64;
+ use std::time::Duration;
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/web/manager/operator_lifecycle.rs b/src/web/manager/operator_lifecycle.rs
+index 95e926e..3f9e60a 100644
+--- a/src/web/manager/operator_lifecycle.rs
++++ b/src/web/manager/operator_lifecycle.rs
+@@ -1,5 +1,6 @@
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
+ use arc_swap::ArcSwap;
+diff --git a/src/web/manager/websocket.rs b/src/web/manager/websocket.rs
+index cdfcacc..388347a 100644
+--- a/src/web/manager/websocket.rs
++++ b/src/web/manager/websocket.rs
+@@ -1,7 +1,8 @@
+ use std::collections::HashMap;
+ use std::net::IpAddr;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+ use std::time::Duration;
+ 
+ use tokio::sync::OwnedSemaphorePermit;
+diff --git a/src/web/telemetry.rs b/src/web/telemetry.rs
+index 2648cf7..48296d8 100644
+--- a/src/web/telemetry.rs
++++ b/src/web/telemetry.rs
+@@ -1,5 +1,6 @@
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use std::time::Instant;
+ 
+ use serde::Serialize;
+diff --git a/src/web/telemetry/lifecycle.rs b/src/web/telemetry/lifecycle.rs
+index c053f2a..989d042 100644
+--- a/src/web/telemetry/lifecycle.rs
++++ b/src/web/telemetry/lifecycle.rs
+@@ -1,4 +1,5 @@
+-use std::sync::atomic::{AtomicU64, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::Ordering;
+ 
+ use serde::Serialize;
+ 
+diff --git a/src/web/trace/store.rs b/src/web/trace/store.rs
+index 95bc447..3de8b7c 100644
+--- a/src/web/trace/store.rs
++++ b/src/web/trace/store.rs
+@@ -1,7 +1,8 @@
+ use std::collections::VecDeque;
+ use std::net::IpAddr;
+ use std::sync::Arc;
+-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
++use crate::compat::AtomicU64;
++use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+ 
+ use arc_swap::ArcSwap;
+ use parking_lot::Mutex;
