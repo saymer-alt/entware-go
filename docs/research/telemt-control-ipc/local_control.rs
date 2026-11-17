@@ -24,23 +24,34 @@ fn private_parent(path: &Path) -> io::Result<AnchoredPath> {
     // All control sockets must live in an existing private directory.
     // Require a stable, absolute, symlink-free path, including the ancestors.
     if !path.is_absolute()
-        || path.components().any(|c| !matches!(c, Component::Normal(_) | Component::RootDir))
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::RootDir))
         || path.as_os_str().as_bytes().len() >= 108
     {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid control socket path"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid control socket path",
+        ));
     }
     let anchor = AnchoredPath::open_trusted_parent(path)?;
     let parent_file = fs::File::from(anchor.parent().try_clone()?);
     let metadata = parent_file.metadata()?;
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied,
-            "control socket parent must be owned by this user and private"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "control socket parent must be owned by this user and private",
+        ));
     }
     Ok(anchor)
 }
 
 fn peer_uid(fd: i32) -> io::Result<libc::uid_t> {
-    let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     // SAFETY: SO_PEERCRED writes exactly a kernel-owned ucred value.
     let result = unsafe {
@@ -56,7 +67,10 @@ fn peer_uid(fd: i32) -> io::Result<libc::uid_t> {
         return Err(io::Error::last_os_error());
     }
     if length as usize != std::mem::size_of::<libc::ucred>() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid peer credentials"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid peer credentials",
+        ));
     }
     Ok(credentials.uid)
 }
@@ -65,7 +79,10 @@ fn peer_uid(fd: i32) -> io::Result<libc::uid_t> {
 pub fn send_command(path: &Path, command: u8) -> io::Result<()> {
     let _anchor = private_parent(path)?;
     if !matches!(command, b'S' | b'R') {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid control command"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid control command",
+        ));
     }
     // CLI is invoked outside the long-running server's Tokio runtime.
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -75,8 +92,10 @@ pub fn send_command(path: &Path, command: u8) -> io::Result<()> {
         tokio::time::timeout(COMMAND_TIMEOUT, async {
             let mut stream = UnixStream::connect(path).await?;
             if peer_uid(stream.as_raw_fd())? != unsafe { libc::geteuid() } {
-                return Err(io::Error::new(io::ErrorKind::PermissionDenied,
-                    "control endpoint belongs to an unexpected user"));
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "control endpoint belongs to an unexpected user",
+                ));
             }
             stream.write_all(&[command]).await?;
             let mut response = [0u8; 1];
@@ -85,8 +104,9 @@ pub fn send_command(path: &Path, command: u8) -> io::Result<()> {
                 return Err(io::Error::other("control operation was rejected"));
             }
             Ok(())
-        }).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut,
-            "local control request timed out"))?
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "local control request timed out"))?
     })
 }
 
@@ -105,8 +125,12 @@ impl LocalControl {
     pub fn bind(path: &Path, stop_requests: mpsc::Sender<()>) -> io::Result<Self> {
         let anchor = private_parent(path)?;
         match fs::symlink_metadata(path) {
-            Ok(_) => return Err(io::Error::new(io::ErrorKind::AlreadyExists,
-                "control socket path already exists; refusing to remove it")),
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "control socket path already exists; refusing to remove it",
+                ));
+            }
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -114,8 +138,10 @@ impl LocalControl {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         let metadata = fs::symlink_metadata(path)?;
         if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied,
-                "control socket identity changed during bind"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "control socket identity changed during bind",
+            ));
         }
         let cancelled = CancellationToken::new();
         let cancellation = cancelled.clone();
@@ -197,7 +223,8 @@ impl LocalControl {
                 self.anchor.parent(),
                 self.anchor.name(),
                 nix::unistd::UnlinkatFlags::NoRemoveDir,
-            ).map_err(|error| io::Error::from_raw_os_error(error as i32))?;
+            )
+            .map_err(|error| io::Error::from_raw_os_error(error as i32))?;
         }
         Ok(())
     }
@@ -222,7 +249,8 @@ mod tests {
         let endpoint = LocalControl::bind(&path, tx).unwrap();
         let client_path = path.clone();
         let result = tokio::task::spawn_blocking(move || send_command(&client_path, b'S'))
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(result.is_ok(), "local stop was not accepted: {result:?}");
         assert_eq!(rx.recv().await, Some(()));
         endpoint.close().await.unwrap();
