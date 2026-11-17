@@ -48,8 +48,8 @@ jobs:
           module=$(git hash-object docs/research/telemt-control-ipc/local_control.rs)
           patch=$(git hash-object docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch)
           if [ "$module" = '950a60416868a6a1d54e17abbe4b4242367fcc2e' ] && [ "$patch" = '4d61949995b93184acac66c111b5d8c538c6bb68' ]; then
-            echo 'build_needed=true' >> "$GITHUB_OUTPUT"
-            echo 'IPC2_MOUNT_BOUNDARY_CANDIDATE: fresh 1ipc2 build required; the 1ipc1 ELF/IPK and its SHA pins stay frozen and unused'
+            echo 'build_needed=false' >> "$GITHUB_OUTPUT"
+            echo 'FROZEN_IPC2_ELF_AND_IPK_REUSED: PASS (Actions 44139876820, byte-reproducible rebuild 44143555539 produced identical SHA-256)'
           else
             echo "::error::Research IPC source drifted from the pinned 1ipc2 candidate; re-pin local_control.rs and the daemon-control patch first"
             exit 1
