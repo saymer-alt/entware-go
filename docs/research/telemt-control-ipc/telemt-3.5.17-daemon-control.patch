@@ -28,9 +28,9 @@ diff --git a/src/cli/daemon_commands.rs b/src/cli/daemon_commands.rs
              }
 +            "--control-socket" => {
 +                i += 1;
-+                if i < args.len() {
-+                    opts.control_socket = Some(PathBuf::from(&args[i]));
-+                }
++                opts.control_socket = Some(PathBuf::from(
++                    args.get(i).map(String::as_str).unwrap_or(""),
++                ));
 +            }
 +            s if s.starts_with("--control-socket=") => {
 +                opts.control_socket = Some(PathBuf::from(
@@ -122,9 +122,9 @@ diff --git a/src/cli.rs b/src/cli.rs
 +            #[cfg(unix)]
 +            "--control-socket" => {
 +                i += 1;
-+                if i < args.len() {
-+                    cmd.daemon_opts.control_socket = Some(PathBuf::from(&args[i]));
-+                }
++                cmd.daemon_opts.control_socket = Some(PathBuf::from(
++                    args.get(i).map(String::as_str).unwrap_or(""),
++                ));
 +            }
 +            #[cfg(unix)]
 +            s if s.starts_with("--control-socket=") => {
@@ -274,7 +274,7 @@ diff --git a/src/daemon/local_control.rs b/src/daemon/local_control.rs
 new file mode 100644
 --- /dev/null
 +++ b/src/daemon/local_control.rs
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,297 @@
 +//! Linux-only opt-in, process-owned control channel for TeleMT.
 +//!
 +//! Research patch for upstream TeleMT 3.5.17. It never signals a PID read
@@ -561,5 +561,14 @@ new file mode 100644
 +        let (_root, path) = private_socket();
 +        assert!(send_command(&path, b'S').is_err());
 +        assert!(send_command(&path, b'X').is_err());
++    }
++
++    #[test]
++    fn missing_opt_in_path_is_rejected_instead_of_pidfd_fallback() {
++        let args = vec!["stop".to_string(), "--control-socket".to_string()];
++        let command = crate::cli::parse_command(&args);
++        assert_eq!(command.daemon_opts.control_socket, Some(PathBuf::new()));
++        let path = command.daemon_opts.control_socket.as_deref().unwrap();
++        assert!(send_command(path, b'S').is_err());
 +    }
 +}

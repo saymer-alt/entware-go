@@ -51,3 +51,12 @@ jobs:
           cd "$RUNNER_TEMP/upstream"
           cargo check --locked --tests
           echo 'HOST_CARGO_CHECK: PASS'
+      - name: Execute new control-socket unit tests on Linux host
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: '2'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upstream"
+          cargo test --locked daemon::local_control::tests -- --test-threads=1
+          echo 'LOCAL_CONTROL_HOST_TESTS: PASS'

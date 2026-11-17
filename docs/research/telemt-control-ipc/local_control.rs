@@ -285,4 +285,13 @@ mod tests {
         assert!(send_command(&path, b'S').is_err());
         assert!(send_command(&path, b'X').is_err());
     }
+
+    #[test]
+    fn missing_opt_in_path_is_rejected_instead_of_pidfd_fallback() {
+        let args = vec!["stop".to_string(), "--control-socket".to_string()];
+        let command = crate::cli::parse_command(&args);
+        assert_eq!(command.daemon_opts.control_socket, Some(PathBuf::new()));
+        let path = command.daemon_opts.control_socket.as_deref().unwrap();
+        assert!(send_command(path, b'S').is_err());
+    }
 }
