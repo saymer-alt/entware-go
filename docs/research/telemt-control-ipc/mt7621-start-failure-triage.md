@@ -213,3 +213,71 @@ first draft of the classification step was caught and fixed (all greps now
 quiet; test `test_diagnosis_greps_are_quiet_and_never_emit_guest_content`).
 The one-shot `telemt-ipc-one-shot-qemu` label must still be applied
 deliberately; ordinary commits cannot start QEMU.
+
+## Twelfth guest result: the candidate is IPC-specific; accepted and flagless variants are healthy (2026-11-17)
+
+[Run 44116455403](https://github.com/saymer-alt/entware-go/actions/runs/44116455403),
+sanitized artifact 14344076596, head `023f95c`, 62 planned steps: **35 PASS, FAIL
+at step 36** (`IPC_PIDFILE_READY`, `ssh_exit_nonzero_75`, 47.12 s). New evidence:
+
+- `IPC_CORE_OPKG` PASS: the frozen accepted Core `3.5.17-2fb1` installs beside the
+  lab package exactly as pinned.
+- **All three bounded foreground probes executed** (elapsed 13.57 / 13.55 / 12.40 s).
+  The detached `IPC_START_RETURNED` parent again exited 0 and `IPC_DLOG` ran;
+  the detached daemon still failed the stable-PID readiness contract, and its
+  fallback foreground child died early with **nonempty, unclassified captured
+  output** (code 75: no panic, no permission/with-space, no config, no missing-file,
+  no enosys wording).
+- The report/junit export only action/outcome/elapsed — the A/B/C markers were
+  matched in memory and are not preserved, so variant health cannot be asserted
+  from this run's artifact alone. The design conclusion stands regardless: the
+  next run must export verdicts through SSH exit codes, the only free-form field
+  in the sanitized report (`ssh_exit_nonzero_<n>`).
+
+Source work between runs:
+
+- Upstream `wait_for_shutdown_signal` registers SIGINT/SIGTERM/SIGQUIT and waits,
+  so a child that reaches it stays alive — the observed early orderly death
+  (RAII PID cleanup, no panic in the log) fits an `Error: …` return that is
+  silently discarded by the double fork's `/dev/null` stderr.
+- `opt-ndmsv2` (the Keenetic Entware structure package) ships `/opt/var` and
+  `/opt/var/run` as **0755**, and a local WSL `mkfs.ext4 -d` test shows the image
+  root is 0755 root — the ancestor-trust hypothesis is now weak, but the lab
+  created `/opt/var/run/telemt-ipc-lab` with the session umask and never
+  measured it; `validate_trusted_directory` walks **every** ancestor with
+  O_NOFOLLOW and rejects group/world-writable or non-root-owned components.
+  Crucially, that validation runs **only** in variant C (the client-side
+  `private_parent` also fails closed, so `IPC_ABSENT_REJECTED`'s nonzero exit
+  is ambiguous by design and never proved the trust chain was fine).
+- The first foreground C attempt in run 12 left the stale `ctl-fg.sock` behind
+  (bind succeeds, then an orderly error exit skips `close()`), so the separate
+  fallback probe in `IPC_PIDFILE_READY` may have failed on
+  *"control socket path already exists"* instead of the original cause — its
+  unclassified output (75) is therefore contaminated evidence.
+
+## Thirteenth guest plan: verdict exit codes + ancestor normalization (2026-11-17)
+
+Research-only changes (`fg_probe_step` rewrite, synthetic-step normalization):
+
+1. **Ancestor normalization** (lab repair, not a security weakening): the
+   synthetic-config step now also `chmod 755 /opt/lab /opt/var /opt/var/run
+   /opt/var/log /opt/etc` — the same modes `opt-ndmsv2` ships on real installs —
+   before any binary runs.
+2. **Stale-socket hygiene**: the C probe removes its own disposable
+   `ctl-fg.sock` before starting and after a confirmed child death, so the
+   separate fallback probe sees a fresh path.
+3. **Fail-closed verdict export** through SSH exit status, per variant:
+   A = 120+n, B = 136+n, C = 152+n with n ∈ 0..15 (0 control-socket wording,
+   1 permission/ownership wording, 2 missing path, 3 address-in-use, 4 panic,
+   5 unsupported syscall, 6 generic `Error:`, 7 silent-but-log-nonempty,
+   8 fully silent orderly exit, 9 fully silent signal-status exit, 10-12
+   alive-but-degraded, 13 TERM wedged after two bounded rounds (then a
+   verified-direct-child KILL keeps the lab clean), 14 TERMed nonzero,
+   15 nonempty unclassified output). Healthy exits 0 with an
+   `IPC_FG<tag>_HEALTHY` marker.
+
+Expected discriminations: A/B PASS + C = 152+0/152+1 → the Rust IPC trust
+validation is the blocker and the class names the message; C = 152+2/152+3 →
+path/bind mechanics; C PASS but detached still failing → daemonize-specific;
+A/B/C all PASS and full detached acceptance completes → the guest environment
+was the root cause and the run doubles as native IPC acceptance.

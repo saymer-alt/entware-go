@@ -166,9 +166,9 @@ class ResearchPlanTests(unittest.TestCase):
         labels = [step.get("expect") for step in self.plan["steps"]]
         steps = {label: step for label, step in zip(labels, self.plan["steps"])
                  if label is not None}
-        fg_a = steps["IPC_FGA_[0-9]_[0-9A-Z]+"]
-        fg_b = steps["IPC_FGB_[0-9]_[0-9A-Z]+"]
-        fg_c = steps["IPC_FGC_[0-9]_[0-9A-Z]+"]
+        fg_a = steps["IPC_FGA_HEALTHY"]
+        fg_b = steps["IPC_FGB_HEALTHY"]
+        fg_c = steps["IPC_FGC_HEALTHY"]
         cls = steps["IPC_CLS_[0-9]+_[0-9]+_[0-9]+"]
         # A runs the frozen accepted binary; B the lab binary without the
         # opt-in flag; C the lab binary with it. Exactly one opt-in socket.
@@ -192,6 +192,32 @@ class ResearchPlanTests(unittest.TestCase):
             self.assertNotIn("pkill ", command)
             self.assertNotIn("cat " + self.module.PID, command)
             self.assertNotIn("rm -rf", command)
+            # The verified direct child may be KILLed only when it ignored
+            # both bounded TERM rounds; never any other target.
+            if "kill -KILL" in command:
+                self.assertIn('kill -KILL "$fgp"', command)
+                self.assertLess(command.index('j=0; while'),
+                                command.index("kill -KILL"))
+        # C clears its own stale disposable socket so attempts stay
+        # independent, but never removes a socket of a live process.
+        self.assertIn(
+            "/opt/bin/busybox rm -f " + self.module.FG_SOCK + "; ",
+            fg_c["send"])
+        self.assertIn(self.module.FG_SOCK,
+                      fg_c["send"].split("& fgp=$!;")[0])
+        self.assertIn("[ -r /proc/$fgp/exe ] || "
+                      "/opt/bin/busybox rm -f " + self.module.FG_SOCK,
+                      fg_c["send"])
+        # The verdict is exported through dedicated non-colliding exit code
+        # ranges; healthy exits 0 with an explicit marker.
+        text = "\n".join(steps[m]["send"] for m in
+                         ("IPC_FGA_HEALTHY", "IPC_FGB_HEALTHY", "IPC_FGC_HEALTHY"))
+        for match in re.findall(r"exit (\d+)", text):
+            code = int(match)
+            if code == 0:
+                continue
+            self.assertTrue(120 <= code <= 167, code)
+        self.assertIn("exit 0", text)
         # Variants run strictly one at a time: each SSH step is a separate
         # bounded session and no step starts two instances concurrently.
         positions = [self._label_position(labels, marker) for marker in EXPECTED]

@@ -111,28 +111,61 @@ def audit_core_ipk(emulator_root, ipk):
 
 
 def fg_probe_step(tag, binary, control_socket):
-    """One bounded foreground run of one variant (A, B or C).
+    """One bounded foreground run of one variant (A, B or C), fail closed.
+
+    The sanitized report cannot carry matched marker text, so the verdict is
+    exported through the SSH exit status (the only free-form channel in the
+    report). A healthy variant exits 0 with marker `IPC_FG<tag>_HEALTHY`;
+    every unhealthy outcome exits with a dedicated per-variant code:
+
+      base = 120 (A, accepted Core), 136 (B, lab binary without the flag),
+             152 (C, lab binary with --control-socket); +0..+15:
+
+      +0 early exit; captured output mentions the control socket (Rust
+         custom IPC validation message from the research patch);
+      +1 early exit; permission/ownership wording (incl. the Rust kind
+         spelling PermissionDenied and the trusted-directory message);
+      +2 early exit; missing path wording;
+      +3 early exit; address already in use;
+      +4 early exit; panic wording;
+      +5 early exit; unsupported syscall/argument wording;
+      +6 early exit; an `Error:` line with none of the above classes;
+      +7 early exit; empty captured output but a nonempty tracing log;
+      +8 early exit; fully silent, wait status < 128 (orderly exit);
+      +9 early exit; fully silent, wait status >= 128 (fatal signal);
+      +10 alive at 12 s but the control socket is missing (C only);
+      +11 alive at 12 s but a listener is not in LISTEN state;
+      +12 alive at 12 s but both missing;
+      +13 alive but TERM did not terminate within the bounded grace
+          (verified direct child is then KILLed to keep the lab clean);
+      +14 alive, TERMed, exited nonzero;
+      +15 early exit with nonempty unclassified captured output.
 
     The child is a direct shell child ($!); its identity is verified through
-    /proc/$fgp/exe before any TERM. Terminating only that verified direct
-    child never signals any PID read from a file. The step always exits 0 and
-    reports exactly one sanitized marker `IPC_FG<tag>_<d>_<status>`:
-      <d> 0 = healthy; 1 = control socket missing (C only); 2 = listeners
-          not both in LISTEN state; 3 = both missing; 9 = child exited before
-          the 12 s window (early exit).
-      <status> the raw `wait` exit status of the verified direct child, or
-          `W` when it did not terminate within the 10 s bounded TERM grace.
+    /proc/$fgp/exe before any TERM. Terminating (and if wedged, KILLing)
+    only that verified direct child never signals any PID read from a file.
+    A stale control socket of an already-dead previous attempt is removed
+    first so attempts stay independent; nothing unlinks a live socket.
     """
     upper = tag.upper()
-    marker = f"IPC_FG{upper}_[0-9]_[0-9A-Z]+"
+    base = {"a": 120, "b": 136, "c": 152}[tag]
+    marker = f"IPC_FG{upper}_HEALTHY"
     pid = f"/opt/var/run/abc-fg-{tag}.pid"
     log = f"/opt/var/log/abc-fg-{tag}.log"
     out = f"/opt/lab/abc-fg-{tag}.out"
-    ctl_arg = f" --control-socket {control_socket}" if control_socket else ""
-    sock_check = "" if control_socket is None else (
-        f"[ -S {control_socket} ] || d=$((d+1)); ")
+    rm_paths = f"{pid} {log} {out}"
+    ctl_arg = ""
+    sock_check = ""
+    sock_cleanup = ""
+    if control_socket is not None:
+        ctl_arg = f" --control-socket {control_socket}"
+        rm_paths += f" {control_socket}"
+        sock_check = f"[ -S {control_socket} ] || d=$((d+1)); "
+        sock_cleanup = (
+            f"[ -r /proc/$fgp/exe ] || "
+            f"/opt/bin/busybox rm -f {control_socket}; ")
     command = (
-        f"/opt/bin/busybox rm -f {pid} {log} {out}; "
+        f"/opt/bin/busybox rm -f {rm_paths}; "
         f"HOME=/opt/lab TMPDIR=/opt/lab {binary} start --foreground "
         f"--log-file {log} --pid-file {pid}{ctl_arg} {CONF} >{out} 2>&1 "
         "& fgp=$!; "
@@ -140,7 +173,28 @@ def fg_probe_step(tag, binary, control_socket):
         "fg_exe=$(/opt/bin/busybox readlink /proc/$fgp/exe 2>/dev/null); "
         f"if [ \"$fg_exe\" != '{binary}' ]; then "
         "wait \"$fgp\"; frc=$?; "
-        f"printf 'IPC_%s\\n' \"FG{upper}_9_$frc\"; exit 0; fi; "
+        f"/opt/bin/busybox grep -q 'control socket' {out} 2>/dev/null && "
+        f"exit {base + 0}; "
+        f"/opt/bin/busybox grep -Eiq 'permission denied|permissiondenied|"
+        f"not owned and protected|operation not permitted' {out} 2>/dev/null "
+        f"&& exit {base + 1}; "
+        f"/opt/bin/busybox grep -Eiq 'no such file|not a directory|not found' "
+        f"{out} 2>/dev/null && exit {base + 2}; "
+        f"/opt/bin/busybox grep -Eiq 'address already in use' {out} "
+        f"2>/dev/null && exit {base + 3}; "
+        f"/opt/bin/busybox grep -Eiq 'panic|panicked' {out} 2>/dev/null && "
+        f"exit {base + 4}; "
+        f"/opt/bin/busybox grep -Eiq 'invalid argument|not supported|"
+        f"function not implemented|enosys' {out} 2>/dev/null && "
+        f"exit {base + 5}; "
+        f"/opt/bin/busybox grep -q 'Error:' {out} 2>/dev/null && "
+        f"exit {base + 6}; "
+        f"[ -s {out} ] && exit {base + 15}; "
+        f"/opt/bin/busybox grep -q 'Log level:' {log} 2>/dev/null && "
+        f"exit {base + 7}; "
+        f"[ -s {log} ] && exit {base + 7}; "
+        f"[ \"$frc\" -ge 128 ] && exit {base + 9}; "
+        f"exit {base + 8}; fi; "
         "lst=1; "
         f"/opt/bin/busybox grep -Eq '{TCP_LISTEN3443}' /proc/net/tcp 2>/dev/null "
         "|| lst=0; "
@@ -152,11 +206,19 @@ def fg_probe_step(tag, binary, control_socket):
         "i=0; while [ \"$i\" -lt 10 ] && [ -r /proc/$fgp/exe ]; do "
         "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
         "if [ -r /proc/$fgp/exe ]; then "
-        "printf 'IPC_%s\\n' \"FG" + upper + "_${d}_W\"; exit 0; fi; "
+        "kill -TERM \"$fgp\" 2>/dev/null; "
+        "j=0; while [ \"$j\" -lt 5 ] && [ -r /proc/$fgp/exe ]; do "
+        "/opt/bin/busybox sleep 1; j=$((j+1)); done; "
+        "if [ -r /proc/$fgp/exe ]; then "
+        f"kill -KILL \"$fgp\" 2>/dev/null; fi; wait \"$fgp\"; "
+        f"[ \"$d\" -ne 0 ] && exit $(({base} + 9 + d)) || exit {base + 13}; fi; "
+        f"{sock_cleanup}"
         "wait \"$fgp\"; frc=$?; "
-        "printf 'IPC_%s\\n' \"FG" + upper + "_${d}_$frc\"; exit 0"
+        f"[ \"$d\" -ne 0 ] && exit $(({base} + 9 + d)) || "
+        f"{{ [ \"$frc\" = 0 ] && printf 'IPC_%s\\n' FG{upper}_HEALTHY && "
+        f"exit 0 || exit {base + 14}; }}"
     )
-    return guest_ssh_regex(command, marker, 120)
+    return guest_ssh_regex(command, marker, 180)
 
 
 def classification_step():
@@ -241,10 +303,17 @@ def daemon_log_step():
 def synthetic_file_step(config, secret):
     # No real Telegram credentials: both inputs come from pinned offline
     # router-emulator synthetic lab fixtures.
+    # The runtime-path ancestors are normalized to the same modes the
+    # opt-ndmsv2 package ships on real Entware installations (0755 root):
+    # local_control's trusted-parent validation runs in the guest and must
+    # see a standard, non-group/world-writable chain. This is lab
+    # environment repair, not a weakening of any Rust security check.
     b64_config = base64.b64encode(config).decode("ascii")
     b64_secret = base64.b64encode(secret).decode("ascii")
     return guest_ssh(
         "/opt/bin/busybox mkdir -p /opt/lab /opt/var/run/telemt-ipc-lab "
+        "/opt/var/log /opt/etc && "
+        "/opt/bin/busybox chmod 755 /opt/lab /opt/var /opt/var/run "
         "/opt/var/log /opt/etc && "
         "/opt/bin/busybox chmod 700 /opt/var/run/telemt-ipc-lab && "
         "printf '%s' '" + b64_config +
