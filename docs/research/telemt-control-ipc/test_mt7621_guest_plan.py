@@ -279,7 +279,7 @@ class ResearchPlanTests(unittest.TestCase):
         for code in (111, 112, 113, 114, 115):
             self.assertIn(f"exit {code}", command, code)
         # Exact trusted-directory rule per component, quiet outputs only.
-        self.assertIn("\( -perm -0020 -o -perm -0002 \)", command)
+        self.assertIn("\\( -perm -0020 -o -perm -0002 \\)", command)
         self.assertIn("-perm 700 -print", command)
         self.assertIn("-user 0 -print", command)
         self.assertNotIn("cat ", command)
