@@ -37,9 +37,9 @@ FAIL_CODES = {
     49: "wrong live executable",
     50: "Unix control socket did not appear",
     51: "readiness race or inconsistency",
-    52: "GNU find helper not installed or not executable",
-    53: "GNU find numeric-mode invocation failed",
-    54: "GNU find numeric-UID invocation failed",
+    52: "BusyBox find applet unavailable",
+    53: "BusyBox find -perm invocation failed",
+    54: "BusyBox find -user invocation failed",
 }
 
 
@@ -76,8 +76,8 @@ class ResearchPlanTests(unittest.TestCase):
             self.assertEqual(labels.count(label), 1, label)
         positions = [labels.index(label) for label in EXPECTED]
         self.assertEqual(positions, list(range(positions[0], positions[0] + len(positions))))
-        self.assertLess(labels.index("IPC_ABSENT_REJECTED"), labels.index("IPC_FINDUTILS_INSTALLED"))
-        self.assertLess(labels.index("IPC_FINDUTILS_INSTALLED"), positions[0])
+        self.assertLess(labels.index("IPC_ABSENT_REJECTED"), positions[0])
+        self.assertNotIn("IPC_FINDUTILS_INSTALLED", labels)
         self.assertLess(positions[-1], labels.index("IPC_RELOAD_SAME_PID"))
         self.assertLess(labels.index("IPC_STOP_CLEAN"), labels.index("IPC_REBOOT_NO_AUTOSTART"))
         self.assertLess(labels.index("IPC_REBOOT_NO_AUTOSTART"),
@@ -108,42 +108,50 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertIn("--control-socket " + self.module.CTL,
                       self.module.start_command())
 
-    def test_findutils_in_exact_emulator_lock(self):
+    def test_busybox_find_in_exact_emulator_lock_and_probe(self):
         lock_path = self.root / "lab/entware-mipselsf.lock.json"
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        found = [p for p in lock["packages"] if p["Package"] == "findutils"]
+        found = [p for p in lock["packages"] if p["Package"] == "busybox"]
         self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["Version"], "1.38.0-5")
         self.assertEqual(found[0]["Architecture"], "mipsel-3.4")
-        self.assertEqual(found[0]["Filename"], self.module.FIND_NAME)
-        self.assertEqual(found[0]["SHA256sum"], self.module.FIND_SHA)
-        self.assertEqual(found[0]["Version"], "4.10.0-1")
-        labels = [s.get("expect") for s in self.plan["steps"]]
-        self.assertEqual(labels.count("IPC_FINDUTILS_INSTALLED"), 1)
-        helper = next(s for s in self.plan["steps"]
-                      if s.get("expect") == "IPC_FINDUTILS_INSTALLED")
-        self.assertIn("sha256sum -c", helper["send"])
-        self.assertIn("/opt/bin/opkg install /opt/lab/findutils.ipk", helper["send"])
-        self.assertIn(self.module.FIND_SHA, helper["send"])
-        self.assertIn("test -x /opt/bin/find", helper["send"])
+        self.assertEqual(
+            found[0]["SHA256sum"],
+            "0ba41200b8fdd51c2b606fc92c141059350cd3da7a45233eb0174aeaea1bfa32")
+        labels = [step.get("expect") for step in self.plan["steps"]]
+        self.assertNotIn("IPC_FINDUTILS_INSTALLED", labels)
         step = next(x for x in self.plan["steps"]
                     if x.get("expect") == "IPC_PARENT_OWNER_MODE")
-        self.assertIn("test -x /opt/bin/find || exit 52", step["send"])
-        self.assertIn("-printf %m", step["send"])
-        self.assertIn("-printf %U", step["send"])
-        self.assertNotIn("busybox stat", step["send"])
+        self.assertIn("/opt/bin/busybox --list", step["send"])
+        self.assertIn("/opt/bin/busybox find", step["send"])
+        self.assertIn("-maxdepth 0 -type d -perm 700 -print", step["send"])
+        self.assertIn('-maxdepth 0 -type d -user "$uid" -print', step["send"])
+        self.assertNotIn("/opt/bin/find", step["send"])
+        self.assertNotIn("findutils.ipk", step["send"])
 
-    def test_gnu_findutils_mode_and_numeric_uid_from_private_dir(self):
-        # The host test checks GNU find syntax and semantics only. It does
-        # not claim that the remote mipsel executable has run.
-        with tempfile.TemporaryDirectory(prefix="ipc-mode-") as root:
+    def test_busybox_find_mode_and_owner_negative_controls(self):
+        # Optional runner-local executable test, never runs any guest binary.
+        import shutil
+        binary = shutil.which("busybox")
+        if binary is None:
+            self.skipTest("busybox not installed on host runner (guest plan statically checked)")
+        with tempfile.TemporaryDirectory(prefix="ipc-bb-find-") as root:
             private = Path(root) / "private"
             private.mkdir(mode=0o700)
             os.chmod(private, 0o700)
-            observed = subprocess.run(
-                ["find", str(private), "-maxdepth", "0",
-                 "-printf", "%m:%U"],
-                capture_output=True, text=True, check=True)
-            self.assertEqual(observed.stdout, f"700:{os.getuid()}")
+            def matched(extra):
+                args = [binary, "find", str(private), "-maxdepth", "0",
+                        "-type", "d", *extra, "-print"]
+                result = subprocess.run(args, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr[:300])
+                return result.stdout.strip() == str(private)
+            self.assertTrue(matched(["-perm", "700"]))
+            self.assertTrue(matched(["-user", str(os.getuid())]))
+            os.chmod(private, 0o755)
+            self.assertFalse(matched(["-perm", "700"]))
+            os.chmod(private, 0o700)
+            wrong_uid = 1 if os.getuid() == 0 else 0
+            self.assertFalse(matched(["-user", str(wrong_uid)]))
 
     def test_ssh_command_posix_shell_parse_without_execution(self):
         labels = [step.get("expect") for step in self.plan["steps"]]
