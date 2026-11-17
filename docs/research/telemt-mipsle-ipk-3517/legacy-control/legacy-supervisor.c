@@ -44,8 +44,9 @@ static int valid_parent(const char *path) {
 static int make_address(const char *path, struct sockaddr_un *addr) {
     memset(addr, 0, sizeof(*addr));
     addr->sun_family = AF_UNIX;
-    if (strlen(path) >= sizeof(addr->sun_path)) return -1;
-    strcpy(addr->sun_path, path);
+    size_t len = strlen(path);
+    if (len == 0 || len >= sizeof(addr->sun_path)) return -1;
+    memcpy(addr->sun_path, path, len + 1);
     return 0;
 }
 
