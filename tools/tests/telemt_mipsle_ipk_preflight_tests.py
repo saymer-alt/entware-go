@@ -198,5 +198,37 @@ class PanelModeTests(unittest.TestCase):
             pf.audit(p, "old-panel")
 
 
+
+class TelemtLockSnapshotTests(unittest.TestCase):
+    """Archive is an actual pinned dependency graph, not a Cargo project."""
+
+    RESEARCH = (Path(__file__).resolve().parents[2] /
+                "docs/research/telemt-mipsle-ipk-3517/getrandom-fallback")
+
+    def test_patched_snapshot_contains_three_forks(self):
+        import tomllib
+        snap = self.RESEARCH / "telemt-patched-deps.snapshot"
+        self.assertTrue(snap.is_file())
+        lock = tomllib.loads(snap.read_text(encoding="utf-8"))
+        self.assertEqual(lock["version"], 4)
+        self.assertEqual(sorted(
+            x["version"] for x in lock["package"] if x["name"] == "getrandom"),
+            ["0.2.17", "0.3.4", "0.4.3"])
+        self.assertEqual(len([
+            x for x in lock["package"] if x["name"] == "rustls"]), 1)
+
+    def test_no_orphan_lock_or_fabricated_manifest(self):
+        self.assertFalse((self.RESEARCH / "Cargo.lock").exists())
+        self.assertFalse((self.RESEARCH / "Cargo.toml").exists())
+
+    def test_assembler_restores_snapshot_into_pinned_upstream(self):
+        script = (self.RESEARCH / "assemble-forks.sh").read_text(encoding="utf-8")
+        self.assertIn('test -f "$RESEARCH_DIR/telemt-patched-deps.snapshot"', script)
+        self.assertIn('test ! -e "$RESEARCH_DIR/Cargo.lock"', script)
+        self.assertIn('cp "$RESEARCH_DIR/telemt-patched-deps.snapshot" "$UP/Cargo.lock"', script)
+        self.assertIn('cargo metadata --format-version 1 --locked', script)
+
+
+
 if __name__ == "__main__":
     unittest.main()
