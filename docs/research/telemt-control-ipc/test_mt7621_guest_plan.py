@@ -83,7 +83,8 @@ class ResearchPlanTests(unittest.TestCase):
         all_codes = re.findall(r"\bexit (4[1-9]|50|51)\b", text)
         # Group 41..51 exclusively belongs to the new startup stages.
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
-        self.assertEqual(len(all_codes), len(FAIL_CODES))
+        # One code may guard multiple conditions within its error category.
+        self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
         for code in FAIL_CODES:
             self.assertIn(f"exit {code}", text)
 
