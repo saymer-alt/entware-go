@@ -47,6 +47,15 @@ FAIL_CODES = {
     59: "on-guest daemon log has permission or bind marker; content not exported",
     60: "other nonempty on-guest daemon log; content not exported",
     61: "sibling PID lock persists without PID file or readable log",
+    62: "foreground process survived until bounded SIGTERM",
+    63: "foreground process exited cleanly before bounded timeout",
+    64: "foreground process failed, no allowlisted classification",
+    65: "foreground crash/panic marker",
+    66: "foreground permission/bind error",
+    67: "foreground config parse error",
+    68: "foreground missing file/path",
+    69: "BusyBox timeout applet unavailable",
+    70: "foreground Linux syscall unsupported",
 }
 
 
@@ -93,8 +102,8 @@ class ResearchPlanTests(unittest.TestCase):
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]
                          if isinstance(s.get("send"), str))
-        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[01])\b", text)
-        # Group 41..61 exclusively belongs to the new startup stages.
+        all_codes = re.findall(r"\bexit (4[1-9]|5[0-9]|6[0-9]|70)\b", text)
+        # Group 41..70 exclusively belongs to the new startup stages.
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
         # One code may guard multiple conditions within its error category.
         self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
@@ -167,12 +176,33 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertIn("seen=0;", command)
         self.assertIn("readlink", command)
         self.assertIn("grep -Eqi", command)
-        for code in (46, 55, 56, 57, 58, 59, 60, 61):
+        for code in (46, *range(55, 71)):
             self.assertIn(f"exit {code}", command)
         self.assertTrue(command.endswith("exit 46"))
+        self.assertIn("/opt/bin/busybox timeout -k 2 12 ", command)
+        self.assertIn("start --foreground", command)
+        self.assertIn("/opt/var/run/telemt-ipc-fg.pid", command)
+        self.assertIn("/opt/var/run/telemt-ipc-lab/ctl-fg.sock", command)
+        self.assertIn(">/opt/lab/ipc-fg.out 2>&1", command)
+        self.assertIn("frc=$?", command)
+        self.assertNotIn("/opt/bin/busybox kill ", command)
+        self.assertNotIn("rm -f", command)
+        self.assertLess(command.index('n=0;'), command.index('start --foreground'))
         self.assertNotIn("cat " + self.module.LOG, command)
         self.assertNotIn("cat /proc/", command)
         self.assertNotIn("echo $e", command)
+
+    def test_foreground_classifier_uses_only_pinned_disposable_config(self):
+        step = next(s for s in self.plan["steps"]
+                    if s.get("expect") == "IPC_PIDFILE_READY")
+        command = step["send"]
+        self.assertIn(self.module.BIN + " start --foreground", command)
+        self.assertIn(self.module.CONF + " >/opt/lab/ipc-fg.out", command)
+        self.assertIn("grep -qx timeout || exit 69", command)
+        self.assertNotIn("--run-as-user", command)
+        self.assertNotIn("kill -9 ", command)
+        self.assertNotIn("pkill ", command)
+        # Parsed by a real /bin/sh; no foreground binary is run by host tests.
 
     def test_ssh_command_posix_shell_parse_without_execution(self):
         labels = [step.get("expect") for step in self.plan["steps"]]

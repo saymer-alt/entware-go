@@ -177,12 +177,18 @@ def scenario_for(emulator_root):
                   "rc=$?; [ \"$rc\" = 0 ] || exit 45; "
                   "printf 'IPC_%s\\n' START_RETURNED",
                   "IPC_START_RETURNED", 120),
-        # A clean start(1) CLI return can conceal a detached child crash
-        # and PID RAII removal. This step emits ONLY a sanitized SSH code,
-        # never the guest's stdout, config, process cmdline, or log content.
-        # 55 socket w/o PID, 56 live pinned binary w/o PID, 57 transient PID,
-        # 58 on-guest panic text, 59 permission/bind signature, 60 other log,
-        # 61 persisted sibling lock without PID, 46 no further evidence.
+        # A detached child can fail after start(1) parent exits 0 and
+        # release its PID via RAII. If there is no live pinned executable
+        # and no transient PID, diagnose one short, isolated foreground run.
+        # The subprocess is terminated by bounded BusyBox timeout; no PID
+        # from a file is ever signalled. The foreground PID, socket and log
+        # names differ from normal ones, on the same disposable guest.
+        # SSH exports only fixed exit codes. Never upload raw guest stderr,
+        # process cmdlines, journal, config or synthetic secret.
+        # 62 foreground remained alive until timeout; 63 exited 0 early;
+        # 64 other foreground failure; 65 panic; 66 permission/bind;
+        # 67 config/syntax failure; 68 missing file/path; 69 no timeout
+        # applet; 70 unsupported kernel syscall.
         guest_ssh("i=0; seen=0; while [ \"$i\" -lt 30 ]; do "
                   "[ -e " + PID + " ] && seen=1; "
                   "[ -r " + PID + " ] && break; "
@@ -200,9 +206,41 @@ def scenario_for(emulator_root):
                   " && exit 58; "
                   "/opt/bin/busybox grep -Eqi "
                   "'permission denied|operation not permitted|failed to bind|address already in use' " +
-                  LOG + " && exit 59; "
-                  "exit 60; fi; "
+                  LOG + " && exit 59; fi; "
+                  "/opt/bin/busybox --list | "
+                  "/opt/bin/busybox grep -qx timeout || exit 69; "
+                  "HOME=/opt/lab TMPDIR=/opt/lab "
+                  "/opt/bin/busybox timeout -k 2 12 " + BIN +
+                  " start --foreground "
+                  "--log-file /opt/var/log/telemt-ipc-fg.log "
+                  "--pid-file /opt/var/run/telemt-ipc-fg.pid "
+                  "--control-socket /opt/var/run/telemt-ipc-lab/ctl-fg.sock " +
+                  CONF + " >/opt/lab/ipc-fg.out 2>&1; "
+                  "frc=$?; "
+                  "[ \"$frc\" = 143 ] && exit 62; "
+                  "/opt/bin/busybox grep -Eqi 'panic|panicked' "
+                  "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
+                  "2>/dev/null && exit 65; "
+                  "/opt/bin/busybox grep -Eqi "
+                  "'permission denied|operation not permitted|failed to bind|address already in use' "
+                  "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
+                  "2>/dev/null && exit 66; "
+                  "/opt/bin/busybox grep -Eqi "
+                  "'invalid.*config|parse error|toml|unclosed table' "
+                  "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
+                  "2>/dev/null && exit 67; "
+                  "/opt/bin/busybox grep -Eqi "
+                  "'no such file|not found|cannot open.*file' "
+                  "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
+                  "2>/dev/null && exit 68; "
+                  "/opt/bin/busybox grep -Eqi "
+                  "'function not implemented|operation not supported|enosys' "
+                  "/opt/lab/ipc-fg.out /opt/var/log/telemt-ipc-fg.log "
+                  "2>/dev/null && exit 70; "
+                  "[ \"$frc\" = 0 ] && exit 63; "
+                  "[ -s " + LOG + " ] && exit 60; "
                   "[ -e " + PID + ".lock ] && exit 61; "
+                  "[ \"$frc\" != 0 ] && exit 64; "
                   "exit 46",
                   "IPC_PIDFILE_READY", 120),
         guest_ssh("p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
