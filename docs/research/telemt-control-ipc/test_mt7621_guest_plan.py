@@ -231,8 +231,7 @@ class ResearchPlanTests(unittest.TestCase):
         # Run 15 lost its after-reboot steps to a stale 1ipc1 version grep
         # left in the reboot block; every lab version reference must match
         # the pinned candidate.
-        text = "
-".join(str(s.get("send", "")) for s in self.plan["steps"])
+        text = "\n".join(str(s.get("send", "")) for s in self.plan["steps"])
         self.assertNotIn("1ipc1", text)
         self.assertEqual(text.count("Version: 3.5.17-1ipc2"), 2)
 
