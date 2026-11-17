@@ -37,6 +37,9 @@ FAIL_CODES = {
     49: "wrong live executable",
     50: "Unix control socket did not appear",
     51: "readiness race or inconsistency",
+    52: "GNU find helper not installed or not executable",
+    53: "GNU find numeric-mode invocation failed",
+    54: "GNU find numeric-UID invocation failed",
 }
 
 
@@ -73,7 +76,8 @@ class ResearchPlanTests(unittest.TestCase):
             self.assertEqual(labels.count(label), 1, label)
         positions = [labels.index(label) for label in EXPECTED]
         self.assertEqual(positions, list(range(positions[0], positions[0] + len(positions))))
-        self.assertLess(labels.index("IPC_ABSENT_REJECTED"), positions[0])
+        self.assertLess(labels.index("IPC_ABSENT_REJECTED"), labels.index("IPC_FINDUTILS_INSTALLED"))
+        self.assertLess(labels.index("IPC_FINDUTILS_INSTALLED"), positions[0])
         self.assertLess(positions[-1], labels.index("IPC_RELOAD_SAME_PID"))
         self.assertLess(labels.index("IPC_STOP_CLEAN"), labels.index("IPC_REBOOT_NO_AUTOSTART"))
         self.assertLess(labels.index("IPC_REBOOT_NO_AUTOSTART"),
@@ -82,8 +86,8 @@ class ResearchPlanTests(unittest.TestCase):
     def test_codes_are_reserved_only_for_start_diagnosis(self):
         text = "\n".join(s.get("send", "") for s in self.plan["steps"]
                          if isinstance(s.get("send"), str))
-        all_codes = re.findall(r"\bexit (4[1-9]|50|51)\b", text)
-        # Group 41..51 exclusively belongs to the new startup stages.
+        all_codes = re.findall(r"\bexit (4[1-9]|5[0-4])\b", text)
+        # Group 41..54 exclusively belongs to the new startup stages.
         self.assertEqual(sorted({int(c) for c in all_codes}), sorted(FAIL_CODES))
         # One code may guard multiple conditions within its error category.
         self.assertGreaterEqual(len(all_codes), len(FAIL_CODES))
@@ -110,10 +114,20 @@ class ResearchPlanTests(unittest.TestCase):
         found = [p for p in lock["packages"] if p["Package"] == "findutils"]
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["Architecture"], "mipsel-3.4")
-        self.assertRegex(found[0]["SHA256sum"], r"^[a-f0-9]{64}$")
+        self.assertEqual(found[0]["Filename"], self.module.FIND_NAME)
+        self.assertEqual(found[0]["SHA256sum"], self.module.FIND_SHA)
+        self.assertEqual(found[0]["Version"], "4.10.0-1")
+        labels = [s.get("expect") for s in self.plan["steps"]]
+        self.assertEqual(labels.count("IPC_FINDUTILS_INSTALLED"), 1)
+        helper = next(s for s in self.plan["steps"]
+                      if s.get("expect") == "IPC_FINDUTILS_INSTALLED")
+        self.assertIn("sha256sum -c", helper["send"])
+        self.assertIn("/opt/bin/opkg install /opt/lab/findutils.ipk", helper["send"])
+        self.assertIn(self.module.FIND_SHA, helper["send"])
+        self.assertIn("test -x /opt/bin/find", helper["send"])
         step = next(x for x in self.plan["steps"]
                     if x.get("expect") == "IPC_PARENT_OWNER_MODE")
-        self.assertIn("test -x /opt/bin/find", step["send"])
+        self.assertIn("test -x /opt/bin/find || exit 52", step["send"])
         self.assertIn("-printf %m", step["send"])
         self.assertIn("-printf %U", step["send"])
         self.assertNotIn("busybox stat", step["send"])

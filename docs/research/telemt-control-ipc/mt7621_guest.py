@@ -20,6 +20,8 @@ CORE_SHA = "5079390d513ebf118292323a8eb8f0e1beb663d0348147d7cea9f4d0d0865da9"
 ELF_SHA = "0d3dcce3b9922d5dbffc748045168def7420c770ed6b4336e5e67d418c6f7e66"
 EMU_SHA = "64a446deaacb0bca10d6053781ff1f7ad4a29552"
 MIRROR_HOST = "192.168.1.100"
+FIND_NAME = "findutils_4.10.0-1_mipsel-3.4.ipk"
+FIND_SHA = "03a9b78dc1f3fb257fbead58f95a56e9da5eb09db79e13faa46b2952b8e73f20"
 PID = "/opt/var/run/telemt-ipc-lab.pid"
 CTL = "/opt/var/run/telemt-ipc-lab/ctl.sock"
 CONF = "/opt/etc/telemt-lab.toml"
@@ -101,6 +103,17 @@ def scenario_for(emulator_root):
             or len(secret) != 32):
         raise ValueError("non-synthetic or unexpected lab config")
 
+    # The pinned Entware lock describes locally available packages, not
+    # packages guaranteed to be INSTALLED by the minimal bootstrap. The
+    # helper must be explicitly installed and verified inside the guest.
+    lock = json.loads((emulator_root / "lab/entware-mipselsf.lock.json").read_text())
+    found = [p for p in lock["packages"] if p.get("Package") == "findutils"]
+    if (len(found) != 1 or found[0].get("Filename") != FIND_NAME
+            or found[0].get("SHA256sum") != FIND_SHA
+            or found[0].get("Version") != "4.10.0-1"
+            or found[0].get("Architecture") != "mipsel-3.4"):
+        raise ValueError("findutils pin in isolated Entware mirror drifted")
+
     steps = list(prefix)
     steps.extend([
         guest_ssh("/opt/bin/busybox mkdir -p /opt/lab && "
@@ -129,6 +142,21 @@ def scenario_for(emulator_root):
                   "[ \"$rc\" -ne 0 ] && "
                   "printf 'IPC_%s\\n' ABSENT_REJECTED",
                   "IPC_ABSENT_REJECTED"),
+        # Locked local mirror is a FEED, not evidence of an installed package.
+        # Install the exact SHA-pinned helper only on this disposable guest;
+        # never touch product TeleMT IPK or original router-emulator checkout.
+        guest_ssh("/opt/bin/busybox wget -qO /opt/lab/findutils.ipk "
+                  "http://" + MIRROR_HOST + "/entware/" + FIND_NAME +
+                  " && printf '%s  %s\\n' '" + FIND_SHA +
+                  "' /opt/lab/findutils.ipk > /opt/lab/findutils.sha && "
+                  "/opt/bin/busybox sha256sum -c /opt/lab/findutils.sha >/dev/null && "
+                  "/opt/bin/opkg install /opt/lab/findutils.ipk "
+                  ">/opt/lab/findutils-opkg.log 2>&1 && "
+                  "/opt/bin/opkg status findutils | "
+                  "/opt/bin/busybox grep -q 'Version: 4.10.0-1' && "
+                  "test -x /opt/bin/find && "
+                  "printf 'IPC_%s\\n' FINDUTILS_INSTALLED",
+                  "IPC_FINDUTILS_INSTALLED", 300),
         # Probe the exact parent trust conditions from local_control::private_parent.
         # Distinct nonzero SSH codes are preserved in the sanitized JSON report:
         # 41 symlink ancestor, 42 missing/non-directory, 43 parent mode,
@@ -141,16 +169,16 @@ def scenario_for(emulator_root):
                   "[ -d \"$d\" ] || exit 42; done; "
                   "printf 'IPC_%s\\n' PARENT_COMPONENTS_SAFE",
                   "IPC_PARENT_COMPONENTS_SAFE"),
-        # In pinned Entware mipsel-3.4, BusyBox STAT applet is not built.
-        # GNU findutils *is* in the immutable mipsel lock and provides
-        # exact numeric mode (%m) and numeric owner UID (%U), no shell parsing.
-        guest_ssh("test -x /opt/bin/find || exit 43; "
+        # With pinned GNU findutils explicitly installed, keep distinct
+        # codes for missing helper (52), invocation (53/54), actual mode
+        # mismatch (43) and actual numeric owner mismatch (44).
+        guest_ssh("test -x /opt/bin/find || exit 52; "
                   "uid=$(/opt/bin/busybox id -u) || exit 44; "
                   "mode=$(/opt/bin/find /opt/var/run/telemt-ipc-lab "
-                  "-maxdepth 0 -printf %m) || exit 43; "
+                  "-maxdepth 0 -printf %m 2>/dev/null) || exit 53; "
                   "[ \"$mode\" = 700 ] || exit 43; "
                   "owner=$(/opt/bin/find /opt/var/run/telemt-ipc-lab "
-                  "-maxdepth 0 -printf %U) || exit 44; "
+                  "-maxdepth 0 -printf %U 2>/dev/null) || exit 54; "
                   "[ \"$owner\" = \"$uid\" ] || exit 44; "
                   "printf 'IPC_%s\\n' PARENT_OWNER_MODE",
                   "IPC_PARENT_OWNER_MODE"),
