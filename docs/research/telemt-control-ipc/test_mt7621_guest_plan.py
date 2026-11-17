@@ -270,8 +270,7 @@ class ResearchPlanTests(unittest.TestCase):
         # Any non-quiet grep would print matching guest log/config lines into
         # the SSH answer and therefore into the sanitized report.
         for marker in ("IPC_CLS_[0-9]+_[0-9]+_[0-9]+", "IPC_DLOG_[0-9]+",
-                       "IPC_FGA_[0-9]_[0-9A-Z]+", "IPC_FGB_[0-9]_[0-9A-Z]+",
-                       "IPC_FGC_[0-9]_[0-9A-Z]+"):
+                       "IPC_FGA_HEALTHY", "IPC_FGB_HEALTHY", "IPC_FGC_HEALTHY"):
             step = next(s for s in self.plan["steps"]
                         if s.get("expect") == marker)
             command = step["send"]
