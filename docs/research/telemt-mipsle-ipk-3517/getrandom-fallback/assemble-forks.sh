@@ -6,7 +6,7 @@
 # Usage: assemble-forks.sh <entware-build-dir>
 # Expects <dir>/upstream to be the pinned telemt checkout (with the atomic64
 # compat patch already applied) and crates.io checksums to match the committed
-# Cargo.lock (single source of truth for the crate provenance).
+# pinned archival lock snapshot (restored beside actual upstream Cargo.toml).
 set -euo pipefail
 
 EB="${1:?usage: assemble-forks.sh <entware-build-dir>}"
@@ -21,7 +21,8 @@ command -v cargo >/dev/null 2>&1 || { test -f "$HOME/.cargo/env" && . "$HOME/.ca
 command -v cargo >/dev/null 2>&1 || { echo "::error::cargo not found for the lock check"; exit 1; }
 
 test -e "$UP/.git" || { echo "::error::upstream tree missing at $UP"; exit 1; }
-test -f "$RESEARCH_DIR/Cargo.lock" || { echo "::error::committed Cargo.lock missing"; exit 1; }
+test -f "$RESEARCH_DIR/telemt-patched-deps.snapshot" || { echo "::error::pinned dependency snapshot missing"; exit 1; }
+test ! -e "$RESEARCH_DIR/Cargo.lock" || { echo "::error::orphan Cargo.lock must not be autodiscovered"; exit 1; }
 test -f "$RESEARCH_DIR/checksums.txt" || { echo "::error::committed checksums.txt missing"; exit 1; }
 test -f "$RESEARCH_DIR/patch-section.toml.snippet" || { echo "::error::patch section snippet missing"; exit 1; }
 
@@ -73,7 +74,7 @@ else:
     open(p, "w").write(txt.rstrip() + "\n" + open(snippet).read())
     print("PATCH_SECTION_INSERTED")
 PYEOF
-cp "$RESEARCH_DIR/Cargo.lock" "$UP/Cargo.lock"
+cp "$RESEARCH_DIR/telemt-patched-deps.snapshot" "$UP/Cargo.lock"
 (cd "$UP" && cargo metadata --format-version 1 --locked >/dev/null) || {
   echo "::error::Cargo.lock inconsistent with manifests after patch wiring"
   exit 1

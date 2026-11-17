@@ -40,7 +40,7 @@ locked getrandom versions to in-build forks assembled by `assemble-forks.sh`:
 | getrandom 0.2.17 | same; ring's `SystemRandom` calls `getrandom::getrandom()` (ring `src/rand.rs:165`) | ring 0.17.14 (rustls), x25519-dalek via rand_core 0.6.4 |
 
 Each fork = the crates.io source **verified against the checksum recorded in
-the committed Cargo.lock** (single provenance source) plus one delta patch:
+the committed pinned dependency snapshot** (restored as Cargo.lock in the genuine upstream project) plus one delta patch:
 
 1. A new module `linux_mips_with_fallback.rs` — a verbatim copy of upstream's
    own `linux_android_with_fallback.rs` for that version, with the readiness
@@ -100,3 +100,20 @@ Panel Lite IPK is unchanged (Go binary, its own entropy handling) and is NOT
 rebuilt — the pinned artifact of run 43742529964 stays authoritative. Nothing
 is published to releases/feeds; upstream sources and pins of PR #44 are not
 modified (this branch only adds research files and a separate workflow).
+
+## Archival lockfile and dependency security
+
+The byte-identical original research `Cargo.lock` now lives as
+`telemt-patched-deps.snapshot`, because this directory has **no Cargo.toml**:
+Dependabot incorrectly treated the orphan file as a separate Cargo project
+and failed with `dependency_file_not_found` ([Issue #53](https://github.com/saymer-alt/entware-go/issues/53)).
+The assembler restores the snapshot verbatim to the verified TeleMT upstream
+checkout *after* adding the reviewed `[patch.crates-io]` to the REAL
+`Cargo.toml` and enforces `cargo metadata --locked`. None of the locked versions
+or entropy fallback code changes in this patch.
+
+**Security caveat:** the snapshot still pins `rustls 0.23.43`, which has
+published advisories. Archival naming does NOT remediate them and does not
+provide the same automatic Dependabot update experience as a real Cargo
+project; audit the pinned graph separately before a release. Resolving the
+advisory requires a distinct build, SHA pins and real guest acceptance.
