@@ -1,0 +1,194 @@
+# Isolated candidate built on the accepted TeleMT MT7621 Entware 4.9 recipe.
+# This does NOT update telemt, the feed, ARM64, the existing installer, or
+# accepted Core/Panel SHA pins. A differently named, non-autostart lab IPK.
+name: TeleMT daemon IPC MIPSLE lab IPK (no release)
+
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - 'docs/research/telemt-control-ipc/**'
+      - '.github/workflows/telemt-control-ipc-mipsle-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemt-ipc-mipsle-lab-research
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_SHA: 66708d2866f3f3a4541c4fa67984d408e71a8af4
+  RUST_NIGHTLY_PIN: nightly-2026-11-16
+  RUST_BUILD_TOOLCHAIN: nightly
+  RUSTC_PIN_VERSION: 'rustc 1.102.0-nightly (5f4effd57 2026-11-13)'
+  LAB_IPK: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
+  LAB_VERSION: 3.5.17-1ipc1
+
+jobs:
+  isolation:
+    name: "Guard: only research candidate, no accepted artifacts/pins or release edits"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Enforce isolated PR scope before any expensive toolchain setup
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$PR_BASE_SHA" || { echo "::error::PR-only isolation gate"; exit 1; }
+          git cat-file -e "$PR_BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          changed=$(git diff --name-only "$PR_BASE_SHA...$HEAD_SHA")
+          echo "$changed"
+          allowed='^(docs/research/telemt-control-ipc/|\.github/workflows/telemt-control-ipc-(source|mipsle-build)\.yml$)'
+          if echo "$changed" | grep -qvE "$allowed"; then
+            echo "::error::Only the dedicated IPC research workflow and docs are allowed"
+            exit 1
+          fi
+          test -f docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          test -f docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh
+          echo 'IPC_MIPSLE_BOUNDARY: PASS'
+
+  lab-package:
+    name: "Native MIPSLE binary and separate telemt-ipc-lab Entware IPK"
+    needs: isolation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPSel cross-toolchain and qemu-user prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu libc6-dev-mipsel-cross \
+            binutils-mipsel-linux-gnu file qemu-user
+          command -v qemu-mipsel
+      - name: Restore the exact accepted dated Rust compiler and sysroot alias
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_NIGHTLY_PIN" --profile minimal --component rust-src
+          actual=$(rustc +"$RUST_NIGHTLY_PIN" -V)
+          echo "PINNED_RUSTC=$actual"
+          test "$actual" = "$RUSTC_PIN_VERSION" || {
+            echo "::error::Pinned compiler drift"; exit 1;
+          }
+          host=$(rustc +"$RUST_NIGHTLY_PIN" -vV | sed -n 's/^host: //p')
+          test -n "$host"
+          archive="$HOME/.rustup/toolchains/$RUST_NIGHTLY_PIN-$host"
+          original="$HOME/.rustup/toolchains/nightly-$host"
+          test -d "$archive"
+          if [ -e "$original" ] || [ -L "$original" ]; then
+            rustup toolchain uninstall nightly
+          fi
+          cp -a "$archive" "$original"
+          test "$(rustc +"$RUST_BUILD_TOOLCHAIN" -V)" = "$RUSTC_PIN_VERSION"
+          test "$(rustc +"$RUST_BUILD_TOOLCHAIN" --print sysroot)" = "$original"
+          echo 'RUST_NIGHTLY_IDENTITY_AND_SYSROOT: PASS'
+      - name: Assemble both *immutable* patches into a disposable combined source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          original=docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch
+          ipc=docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch
+          combined=docs/research/telemt-control-ipc/.combined-build.patch
+          test -s "$original" && test -s "$ipc"
+          cat "$original" "$ipc" > "$combined"
+          test "$(grep -c '^diff --git a/' "$combined")" -ge 8
+          git clone -q https://github.com/telemt/telemt.git "$RUNNER_TEMP/upstream-check"
+          git -C "$RUNNER_TEMP/upstream-check" checkout -q "$UPSTREAM_SHA"
+          test "$(git -C "$RUNNER_TEMP/upstream-check" rev-parse HEAD)" = "$UPSTREAM_SHA"
+          (cd "$RUNNER_TEMP/upstream-check" && git apply --check "$GITHUB_WORKSPACE/$combined")
+          echo 'STACKED_PATCH_CHECK: PASS'
+      - name: Build new Entware MIPSLE binary using the accepted getrandom/sysroot recipe
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: '2'
+          TELEMT_GETFB: '1'
+          PATCH_FILE: docs/research/telemt-control-ipc/.combined-build.patch
+        run: |
+          set -euo pipefail
+          bash docs/research/telemt-mipsle-ipk-3517/scripts/build-telemt-core.sh
+          echo 'IPC_MIPSLE_BUILD_AND_ABI_GATE: PASS'
+      - name: Run accepted entropy fallback gates (host + qemu-user, not QEMU-system)
+        run: |
+          set -euo pipefail
+          bash docs/research/telemt-mipsle-ipk-3517/getrandom-fallback/gate.sh ~/entware-build
+          echo 'IPC_GETRANDOM_FALLBACK_GATE: PASS'
+      - name: Package under DIFFERENT package name and DIFFERENT executable path
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$HOME/entware-build/upstream/target/mipsel-unknown-linux-gnu/release/telemt"
+          test -f "$BIN"
+          ROOT="$RUNNER_TEMP/ipc-lab-root/opt/bin"
+          mkdir -p "$ROOT"
+          install -m 0755 "$BIN" "$ROOT/telemt-ipc-lab"
+          cat > "$RUNNER_TEMP/ipc-lab-control" <<'CTRL'
+          Package: telemt-ipc-lab
+          Version: 3.5.17-1ipc1
+          Architecture: mipsel-3.4
+          Maintainer: entware-go isolated laboratory research <noreply@users.noreply.github.com>
+          Section: net
+          Depends: libc, libgcc, libpthread, librt
+          Description: TeleMT 3.5.17 experimental MT7621 in-daemon IPC candidate.
+           Research-only standalone binary under /opt/bin/telemt-ipc-lab.
+           Ships no config, init script, autostart or service. Not accepted
+           for production installation or replacement of telemt.
+          Source: https://github.com/telemt/telemt
+          CTRL
+          bash docs/research/telemt-mipsle-ipk-3517/scripts/make-ipk.sh \
+            "$RUNNER_TEMP/ipc-lab-control" "$RUNNER_TEMP/ipc-lab-root" "$LAB_IPK"
+          python3 - <<'PY'
+          import os, io, tarfile
+          from pathlib import Path
+          name = os.environ["LAB_IPK"]
+          outer = Path(name).read_bytes()
+          assert name == "telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk"
+          with tarfile.open(fileobj=io.BytesIO(outer), mode="r:gz") as opkg:
+              names = set(opkg.getnames())
+              assert "./control.tar.gz" in names and "./data.tar.gz" in names, names
+              control_bytes = opkg.extractfile("./control.tar.gz").read()
+              data_bytes = opkg.extractfile("./data.tar.gz").read()
+          with tarfile.open(fileobj=io.BytesIO(control_bytes), mode="r:gz") as control:
+              meta = control.extractfile("./control").read().decode()
+              assert "Package: telemt-ipc-lab\n" in meta
+              assert "Version: 3.5.17-1ipc1\n" in meta
+              assert "Architecture: mipsel-3.4\n" in meta
+          with tarfile.open(fileobj=io.BytesIO(data_bytes), mode="r:gz") as data:
+              paths = {item.name.lstrip("./") for item in data.getmembers() if item.isfile()}
+              assert paths == {"opt/bin/telemt-ipc-lab"}, paths
+              payload = data.extractfile("./opt/bin/telemt-ipc-lab").read()
+              assert payload.startswith(b"\x7fELF")
+          print("IPC_LAB_IPK_SEPARATION: PASS; no /opt/bin/telemt replacement")
+          PY
+          sha256sum "$BIN" "$LAB_IPK"
+          mipsel-linux-gnu-readelf -A "$BIN" | grep -E 'Tag_GNU_MIPS_ABI_FP|FP ABI|ISA:'
+          mipsel-linux-gnu-readelf -l "$BIN" | grep 'interpreter: /opt/lib/ld.so.1'
+          echo 'IPC_LAB_NEW_SHA256: RECORDED; real guest not tested'
+      - name: Preserve research-only IPK for seven days; never publish a feed/release
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-ipc-lab-mipsel-3.4
+          path: telemt-ipc-lab_3.5.17-1ipc1_mipsel-3.4.ipk
+          retention-days: 7
+          if-no-files-found: error
+      - name: Honest evidence boundary
+        run: |
+          echo 'HOST_RUST_TESTS: PASS on source-gate workflow SHA 0ad4596'
+          echo 'MIPSEL_COMPILE_AND_ENTWARE_ABI: PASS if this job reached the end'
+          echo 'MIPSEL_QEMU_USER: entropy gate only; not guest service integration'
+          echo 'QEMU_SYSTEM_REAL_KERNEL_4_9_STOP_RELOAD: NOT_TESTED'
+          echo 'PANEL_LITE_NATIVE_REBOOT_AND_ROLLBACK: NOT_TESTED'
+          echo 'TELEGRAM_UPSTREAM: NOT_TESTED'
+          echo 'NO_RELEASE_NO_FEED_NO_ROUTER_DEPLOYMENT: PASS'
