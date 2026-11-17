@@ -22,6 +22,13 @@ jobs:
           busybox ash -n warpscout/install.sh
           busybox ash -n warpscout/update.sh
           shellcheck -S error warpscout/install.sh warpscout/update.sh
+          # TeleMT package scripts: syntax/static plus isolated mock GitHub/opkg tests.
+          sh -n telemt/entware-manager.sh telemt/install.sh telemt/upgrade.sh telemt/tests/test-entware-manager.sh
+          busybox ash -n telemt/entware-manager.sh
+          busybox ash -n telemt/install.sh
+          busybox ash -n telemt/upgrade.sh
+          shellcheck -S error telemt/entware-manager.sh telemt/install.sh telemt/upgrade.sh telemt/tests/test-entware-manager.sh
+          sudo env PATH="$PATH" sh telemt/tests/test-entware-manager.sh
           python3 -m unittest discover -s tests -p 'test_*.py'
           INSTALL_TEST_SHELL=busybox python3 -m unittest discover -s tests -p 'test_warpscout_installer.py'
           INSTALL_TEST_SHELL=busybox python3 -m unittest discover -s tests -p 'test_warpscout_updater.py'
