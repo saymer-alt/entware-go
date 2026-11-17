@@ -701,7 +701,7 @@ def scenario_for(emulator_root):
     steps.extend(reboot)
     steps.extend([
         guest_ssh("/opt/bin/opkg status telemt-ipc-lab | "
-                  "/opt/bin/busybox grep -q 'Version: 3.5.17-1ipc1' "
+                  "/opt/bin/busybox grep -q 'Version: 3.5.17-1ipc2' "
                   "&& test -x " + BIN + " && "
                   "test ! -e " + CTL + " && "
                   "test ! -e /opt/etc/init.d/S99telemt-ipc-lab && "

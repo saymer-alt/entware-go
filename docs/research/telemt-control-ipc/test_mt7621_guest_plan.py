@@ -227,6 +227,15 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertIn('"CLS_${ma}_${mb}_${mc}"', cls["send"])
         self.assertNotIn("cat ", cls["send"])
 
+    def test_no_stale_lab_version_remains_in_the_scenario(self):
+        # Run 15 lost its after-reboot steps to a stale 1ipc1 version grep
+        # left in the reboot block; every lab version reference must match
+        # the pinned candidate.
+        text = "
+".join(str(s.get("send", "")) for s in self.plan["steps"])
+        self.assertNotIn("1ipc1", text)
+        self.assertEqual(text.count("Version: 3.5.17-1ipc2"), 2)
+
     def test_accepted_core_reference_pins_are_frozen_and_read_only(self):
         self.assertEqual(
             self.module.CORE_IPK_NAME, "telemt_3.5.17-2fb1_mipsel-3.4.ipk")
