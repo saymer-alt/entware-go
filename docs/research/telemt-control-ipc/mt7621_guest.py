@@ -110,6 +110,53 @@ def audit_core_ipk(emulator_root, ipk):
             "elf_sha256": CORE_ELF_SHA, "elf": info}
 
 
+def trust_preflight_step():
+    """Verify every control-socket ancestor against the exact Rust rule.
+
+    `validate_trusted_directory` (upstream secure_fs, called by the research
+    patch's private_parent) requires every walked ancestor to be a directory
+    owned by root or the effective UID and not group/world-writable unless
+    the sticky bit compensates. Run 13 proved this check is what still kills
+    variant C after the 0755 normalization of /opt subdirs, so the only
+    unnormalized component left is the firmware root "/". This step applies
+    the identical rule with quiet BusyBox find, attempts a 0755 repair for
+    repairable components, re-verifies, and exports the first unrepairable
+    violator through a dedicated exit code (110 root, 111 /opt, 112
+    /opt/var, 113 /opt/var/run, 114 private dir). Healthy exits 0 with an
+    explicit marker. No content is exported.
+    """
+    bb = "/opt/bin/busybox"
+    ancestors = [
+        (110, "/", "755"),
+        (111, "/opt", "755"),
+        (112, "/opt/var", "755"),
+        (113, "/opt/var/run", "755"),
+        (114, "/opt/var/run/telemt-ipc-lab", "700"),
+    ]
+    parts = []
+    for code, path, repair in ancestors:
+        owner = (f"{bb} find {path} -maxdepth 0 -type d -user 0 -print "
+                 f"2>/dev/null")
+        writable = (f"{bb} find {path} -maxdepth 0 -type d "
+                    f"\\( -perm -0020 -o -perm -0002 \\) -print 2>/dev/null")
+        sticky = (f"{bb} find {path} -maxdepth 0 -type d -perm -01000 "
+                  f"-print 2>/dev/null")
+        repair_cmd = (f"{bb} chown 0:0 {path} 2>/dev/null; "
+                      f"{bb} chmod {repair} {path} 2>/dev/null; ")
+        parts.append(
+            f"[ \"$({owner})\" = {path} ] || {{ {repair_cmd}"
+            f"[ \"$({owner})\" = {path} ] || exit {code}; }}; "
+            f"[ -n \"$({writable})\" ] && [ -z \"$({sticky})\" ] && "
+            f"{{ {repair_cmd}"
+            f"[ -n \"$({writable})\" ] && [ -z \"$({sticky})\" ] && "
+            f"exit {code}; }}; ")
+    command = (
+        f"{bb} --list | {bb} grep -qx find || exit 115; "
+        "".join(parts) +
+        "printf 'IPC_%s\\n' ANCESTORS_TRUSTED")
+    return guest_ssh(command, "IPC_ANCESTORS_TRUSTED", 120)
+
+
 def fg_probe_step(tag, binary, control_socket):
     """One bounded foreground run of one variant (A, B or C), fail closed.
 
@@ -123,8 +170,9 @@ def fg_probe_step(tag, binary, control_socket):
 
       +0 early exit; captured output mentions the control socket (Rust
          custom IPC validation message from the research patch);
-      +1 early exit; permission/ownership wording (incl. the Rust kind
-         spelling PermissionDenied and the trusted-directory message);
+      +1 early exit; permission/ownership wording (A and B only; C splits
+         this into +16 trusted-directory message, +17 OS EACCES/EPERM and
+         +18 any other custom PermissionDenied kind, checked in that order);
       +2 early exit; missing path wording;
       +3 early exit; address already in use;
       +4 early exit; panic wording;
@@ -175,6 +223,18 @@ def fg_probe_step(tag, binary, control_socket):
         "wait \"$fgp\"; frc=$?; "
         f"/opt/bin/busybox grep -q 'control socket' {out} 2>/dev/null && "
         f"exit {base + 0}; "
+        + (
+            # Finer permission-class split for variant C only: the trusted
+            # directory message, an OS EACCES/EPERM, and the Rust kind
+            # spelling of any other custom PermissionDenied error.
+            f"/opt/bin/busybox grep -q 'not owned and protected' {out} "
+            f"2>/dev/null && exit {base + 16}; "
+            f"/opt/bin/busybox grep -Eiq 'permission denied|"
+            f"operation not permitted' {out} 2>/dev/null && "
+            f"exit {base + 17}; "
+            f"/opt/bin/busybox grep -q 'permissiondenied' {out} 2>/dev/null "
+            f"&& exit {base + 18}; "
+        ) +
         f"/opt/bin/busybox grep -Eiq 'permission denied|permissiondenied|"
         f"not owned and protected|operation not permitted' {out} 2>/dev/null "
         f"&& exit {base + 1}; "
@@ -420,6 +480,12 @@ def scenario_for(emulator_root):
                   "[ \"$owner\" = /opt/var/run/telemt-ipc-lab ] || exit 44; "
                   "printf 'IPC_%s\\n' PARENT_OWNER_MODE",
                   "IPC_PARENT_OWNER_MODE"),
+        # Run 13 pinned the C-only death to the permission/ownership class
+        # (exit 153). After normalizing /opt subdirs, the only trust-chain
+        # component that can still violate validate_trusted_directory is the
+        # firmware root. Measure, repair what is repairable, and export the
+        # first unrepairable violator before any binary runs.
+        trust_preflight_step(),
         # Comparative diagnosis (task A/B/C): the same lab environment runs
         # the accepted Core (A), the lab binary without the opt-in flag (B)
         # and the lab binary with it (C), strictly one at a time in bounded
@@ -709,8 +775,8 @@ def main():
         raise ValueError("lab directory must exist before the IPK download")
     expected_readiness = [
         "IPC_PARENT_COMPONENTS_SAFE", "IPC_PARENT_OWNER_MODE",
-        "IPC_CORE_OPKG", "IPC_FGA_*", "IPC_FGB_*", "IPC_FGC_*",
-        "IPC_CLS_*", "IPC_START_RETURNED", "IPC_DLOG_*",
+        "IPC_ANCESTORS_TRUSTED", "IPC_CORE_OPKG", "IPC_FGA_*", "IPC_FGB_*",
+        "IPC_FGC_*", "IPC_CLS_*", "IPC_START_RETURNED", "IPC_DLOG_*",
         "IPC_PIDFILE_READY", "IPC_CHILD_EXE_CONFIRMED",
         "IPC_CONTROL_SOCKET_READY", "IPC_DAEMON_ALIVE",
     ]

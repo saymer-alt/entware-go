@@ -19,6 +19,7 @@ import unittest
 EXPECTED = [
     "IPC_PARENT_COMPONENTS_SAFE",
     "IPC_PARENT_OWNER_MODE",
+    "IPC_ANCESTORS_TRUSTED",
     "IPC_CORE_OPKG",
     "IPC_FGA_*",
     "IPC_FGB_*",
@@ -216,7 +217,7 @@ class ResearchPlanTests(unittest.TestCase):
             code = int(match)
             if code == 0:
                 continue
-            self.assertTrue(120 <= code <= 167, code)
+            self.assertTrue(120 <= code <= 170, code)
         self.assertIn("exit 0", text)
         # Variants run strictly one at a time: each SSH step is a separate
         # bounded session and no step starts two instances concurrently.
@@ -253,6 +254,32 @@ class ResearchPlanTests(unittest.TestCase):
         self.assertLess(
             workflow.index("PINNED_CORE_IPK: PASS"),
             workflow.index("One QEMU-system kernel-4.9 IPC cycle"))
+
+    def test_trust_preflight_matches_the_rust_rule_and_repairs_only(self):
+        step = next(s for s in self.plan["steps"]
+                    if s.get("expect") == "IPC_ANCESTORS_TRUSTED")
+        command = step["send"]
+        # Exactly the validate_trusted_directory rule per ancestor, with one
+        # dedicated export code per component and a chown/chmod repair in
+        # between the two checks.
+        for code, path in ((110, "/"), (111, "/opt"), (112, "/opt/var"),
+                           (113, "/opt/var/run"),
+                           (114, "/opt/var/run/telemt-ipc-lab")):
+            self.assertIn(f"exit {code}; ", command, path)
+            self.assertIn(f'-user 0 -print 2>/dev/null)" = {path} ]',
+                          command, path)
+        self.assertIn("\( -perm -0020 -o -perm -0002 \)", command)
+        self.assertIn("-perm -01000", command)
+        self.assertIn("chown 0:0", command)
+        self.assertIn("chmod 700 /opt/var/run/telemt-ipc-lab", command)
+        self.assertIn("chmod 755 / ", command)
+        # Quiet greps only; no content, no bulk kill, no PID-file signals.
+        self.assertNotIn("cat ", command)
+        self.assertNotIn("kill ", command)
+        self.assertNotIn("pkill ", command)
+        flags = re.findall(r"grep (-[A-Za-z]+ )", command)
+        for flag in flags:
+            self.assertIn("q", flag, flag)
 
     def test_daemon_log_milestones_are_sanitized_numbers(self):
         step = next(s for s in self.plan["steps"]
