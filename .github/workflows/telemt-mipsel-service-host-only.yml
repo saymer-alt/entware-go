@@ -24,6 +24,7 @@ jobs:
           set -euo pipefail
           f=docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh
           sh -n "$f"
+          sha256sum "$f"
           python3 - <<'PY'
           import pathlib, re, tomllib
           f=pathlib.Path('docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh')
