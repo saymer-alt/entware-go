@@ -1,0 +1,92 @@
+name: TeleMT MIPSel KN-1913 one-click pilot bundle (no release)
+on:
+  push:
+    branches:
+      - research/telemt-mipsel-managed-service-20261118
+    paths:
+      - .github/workflows/telemt-mipsel-kn1913-pilot-bundle.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  freeze-pilot-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned IPC Core experimental IPK from accepted build
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-ipc-lab-mipsel-3.4
+          run-id: 44139876820
+          github-token: ${{ github.token }}
+          path: frozen-core
+      - name: Download pinned Panel Lite RC4 experimental IPK from accepted build
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-panel-lite-mipsel-experimental
+          run-id: 43624729371
+          github-token: ${{ github.token }}
+          path: frozen-panel
+      - name: Verify exact IPK pins and package install kit (no router, no release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle
+          test "$(find frozen-core -type f -name 'telemt-ipc-lab_*.ipk' | wc -l)" -eq 1
+          test "$(find frozen-panel -type f -name 'telemt-panel-lite_*.ipk' | wc -l)" -eq 1
+          c=$(find frozen-core -type f -name 'telemt-ipc-lab_*.ipk')
+          p=$(find frozen-panel -type f -name 'telemt-panel-lite_*.ipk')
+          cp "$c" "$p" bundle/
+          root=docs/research/telemt-control-ipc/scripts
+          cp "$root/telemt-mipsel-install.sh" "$root/telemt-mipsel-service.sh" bundle/
+          cd bundle
+          sh -n telemt-mipsel-install.sh
+          sh -n telemt-mipsel-service.sh
+          c=$(find . -maxdepth 1 -name 'telemt-ipc-lab_*.ipk' -printf '%f')
+          p=$(find . -maxdepth 1 -name 'telemt-panel-lite_*.ipk' -printf '%f')
+          printf '%s  %s\n' \
+            'fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa' \
+            "$c" | sha256sum -c -
+          printf '%s  %s\n' \
+            '0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68' \
+            "$p" | sha256sum -c -
+          sha256sum * > SHA256SUMS
+          cat > README.txt <<'TXT'
+          KN-1913 TeleMT MIPSel IPC + Panel Lite RC4 - RESEARCH PILOT, NOT PUBLIC RELEASE
+          Verify: sha256sum -c SHA256SUMS
+          Requires installed Entware mipsel-3.4, root, SOCKS5 available from this router.
+          Use a clean router: cannot overwrite an existing /opt/bin/telemt-panel.
+
+          Run on the router from the unpacked folder, after SHA256 check:
+          sh telemt-mipsel-install.sh \
+            ./telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
+            ./telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk \
+            YOUR_SOCKS5_IP:PORT YOUR_TELEGRAM_LINK_HOST 127.0.0.1
+
+          Installer checks package SHA256 AGAIN before opkg install.
+          Unique secrets generated, never printed.
+          Telegram link: /opt/etc/telemt-mipsel/private-telegram-link.txt
+          Admin password: /opt/etc/telemt-mipsel/private-panel-password.txt
+          Status: /opt/etc/telemt-mipsel/service.sh status
+          After client test, enable boot:
+          /opt/etc/telemt-mipsel/service.sh enable-boot
+          Safe remove (config/credentials preserved):
+          /opt/etc/telemt-mipsel/service.sh uninstall
+
+          New installer is untested on KN-1913; no production release/feed.
+          Do not expose Panel 18082 or Core API 19091 to WAN.
+          Ingress firewall/upstream NAT are not configured by this installer.
+          TXT
+          echo "PINNED_MIPSEL_BUNDLE_PASS"
+          ls -lh .
+      - name: Upload one downloadable KN-1913 pilot ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-mipsel-kn1913-pilot-bundle
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 7
