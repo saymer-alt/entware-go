@@ -150,10 +150,18 @@ def validate_guest_shell_and_custom_config(steps):
     if (telemt != {name: [path] for name, path in expected.items()}
             or panel != {"restart": [PANEL_GUI_RESTART]}):
         raise ValueError("panel custom argv commands drifted")
+    service_posts = 0
     for index, step in enumerate(steps):
         if step.get("action") != "ssh":
             continue
         command = step.get("send", "")
+        if any("/api/telemt/" + action in command
+               for action in ("start", "stop", "restart")):
+            service_posts += 1
+            if ("Origin: " + PANEL_URL not in command
+                    or "HTTP/[0-9.]+ 202" not in command
+                    or "csrf_rejected" not in command):
+                raise ValueError(f"guest step {index}: unsafe service POST contract")
         if not isinstance(command, str):
             raise ValueError(f"guest step {index} has no SSH command")
         parsed = subprocess.run(["/bin/sh", "-n"], input=command + "\n",
@@ -161,6 +169,8 @@ def validate_guest_shell_and_custom_config(steps):
         if parsed.returncode:
             raise ValueError(f"guest step {index}: POSIX sh -n failed: "
                              + parsed.stderr[:200])
+    if service_posts != 3:
+        raise ValueError("GUI service start/stop/restart all need POST assertions")
 
 
 def b64(text):
@@ -836,7 +846,14 @@ def scenario_for(emulator_root):
         guest_ssh_regex("out=$(" + PANEL_WRAPPER + " start) || exit 1; "
                         "printf '%s\\n' \"$out\"",
                         "telemtlab-panel-start gen=4 pid=[0-9]+", 120),
-        guest_ssh("c=$(/opt/bin/busybox wget -qO- -S --post-data "
+        guest_ssh("ready=0; i=0; while [ \"$i\" -lt 20 ]; do "
+                  "body=$(/opt/bin/busybox wget -qO- " + PANEL_URL +
+                  "/api/health 2>/dev/null) && "
+                  "printf '%s' \"$body\" | /opt/bin/busybox grep -q "
+                  "'\"status\":\"ok\"' && { ready=1; break; }; "
+                  "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+                  "[ \"$ready\" = 1 ] || exit 75; "
+                  "c=$(/opt/bin/busybox wget -qO- -S --post-data "
                   "'{\"username\":\"labadmin\",\"password\":\"" + PANEL_PASS +
                   "\"}' --header 'Content-Type: application/json' " +
                   PANEL_URL + "/api/auth/login 2>&1 | /opt/bin/busybox sed -n "
