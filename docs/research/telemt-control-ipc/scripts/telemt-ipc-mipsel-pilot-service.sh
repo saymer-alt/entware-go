@@ -116,7 +116,8 @@ install() {
   [ "$(sha256sum "$PANEL" | "$BB" awk '{print $1}')" = \
     380cb5112b58538eafec9ae9fab27fb22c994fd36ce3130c541c5e11b29a40c8 ] ||
     die "Panel SHA256 mismatch"
-  [ ! -e "$PCONF" ] && [ ! -e "$SELF" ] && [ ! -L "$ROOT" ] ||
+  [ ! -e "$PCONF" ] && [ ! -L "$PCONF" ] &&
+  [ ! -e "$SELF" ] && [ ! -L "$SELF" ] && [ ! -L "$ROOT" ] ||
     die "managed installation already exists, no overwrite"
   [ -f "$0" ] || die "installer must be a file"
   port_busy && die "port 18082 occupied, stop Panel first"
@@ -161,6 +162,9 @@ stop = ["$SELF", "core-stop"]
 restart = ["$SELF", "core-restart"]
 [host.commands.panel]
 restart = ["$SELF", "panel-restart"]
+[updates]
+telemt_binary_path = "$CORE"
+panel_binary_path = "$PANEL"
 TOML
   chmod 600 "$PCONF"
   msg "INSTALLED (no autostart)"
@@ -171,7 +175,8 @@ TOML
 }
 enable_autostart() {
   [ -x "$SELF" ] && [ -f "$PCONF" ] || die "install first"
-  [ ! -e "$ICORE" ] && [ ! -e "$IPANEL" ] ||
+  [ ! -e "$ICORE" ] && [ ! -L "$ICORE" ] &&
+  [ ! -e "$IPANEL" ] && [ ! -L "$IPANEL" ] ||
     die "init conflict; refusing overwrite"
   mkdir -p /opt/etc/init.d
   cat > "$ICORE" <<'INIT'
