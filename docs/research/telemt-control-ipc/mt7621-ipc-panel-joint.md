@@ -250,9 +250,30 @@ actionable:
    (§5). Treat GUI-based daemon control as unverified until a guest run
    (or a KN-1010 trial by the owner) confirms it.
 
-**Recommended next step for the owner:** make the verified QEMU binary
-from the run-15/16 lineage visible to this branch (e.g., re-tag a one-shot
-run from the PR #58 branch scope, or pin the QEMU binary SHA-256 produced
-by `lab/mt7621/build_qemu_mipsel.sh` as an explicit CI gate), then spend
-one corrective cycle on PR #59. The self-diagnosing delivery steps (81–91)
-will either pass through or pinpoint the layer.
+**Revised next step (18.11.2026):** the two QEMU failures are explained
+by the harness's emitted/expected marker mismatch below. Do **not** treat
+branch-scoped QEMU cache as a proven cause. A new joint QEMU cycle requires
+a fresh, explicit owner GO and a green host-only marker/plan gate; no
+QEMU binary rebuild or cache workaround is justified by runs 1–2 alone.
+
+## 8. Independent correction: mismatch in SSH answer markers (18.11.2026)
+
+A code review found why an SSH step could exit 0 while its expected
+marker was absent, without proving any failed IPK download:
+
+- The first download step printed `printf 'IPCP_%s\\n' IPC_IPK_DELIVERED`
+  which emits `IPCP_IPC_IPK_DELIVERED`, but expected exactly
+  `IPCP_IPK_DELIVERED`. Fixed in commit `2f859b3`.
+- A new host-only invariant compares each literal `IPCP_` marker
+  printed by a guest SSH command to the exact expected marker.
+- This gate discovered a second dormant mismatch: the ELF checksum
+  step printed `IPCP_IPC_ELF_PINNED` while expecting
+  `IPCP_ELF_PINNED`. Fixed in commit `0cceb2d`.
+- Host-only research workflow and publication-safety workflow passed
+  on commit `0cceb2d`. The native guest job was **SKIPPED** by design;
+  this does **not** turn the joint scenario into runtime PASS.
+
+Earlier speculation attributing the two failures to a rebuilt QEMU
+binary or branch-scoped cache should be regarded as **superseded and
+unsupported**. The joint Core+Panel lifecycle remains NOT_TESTED. Frozen
+IPKs, emulator and all release artifacts remain unchanged.
