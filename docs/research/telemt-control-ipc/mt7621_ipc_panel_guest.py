@@ -498,7 +498,7 @@ def scenario_for(emulator_root):
         guest_ssh("printf '%s  %s\\n' '" + IPC_ELF_SHA + "' " + IPC_BIN +
                   " > /opt/lab/ipc-elf.sha && "
                   "/opt/bin/busybox sha256sum -c /opt/lab/ipc-elf.sha >/dev/null "
-                  "&& printf 'IPCP_%s\\n' IPC_ELF_PINNED",
+                  "&& printf 'IPCP_%s\\n' ELF_PINNED",
                   "IPCP_ELF_PINNED"),
         synthetic_file_step(config, secret),
         guest_ssh(core_ready_command(), "IPCP_CORE_READY", 150),
