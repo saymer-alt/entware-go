@@ -159,6 +159,7 @@ def validate_guest_shell_and_custom_config(steps):
                for action in ("start", "stop", "restart")):
             service_posts += 1
             if ("Origin: " + PANEL_URL not in command
+                    or "Sec-Fetch-Site: same-origin" not in command
                     or "HTTP/[0-9.]+ 202" not in command
                     or "csrf_rejected" not in command):
                 raise ValueError(f"guest step {index}: unsafe service POST contract")
@@ -193,6 +194,7 @@ def panel_config_command(service_manager_block):
         "auth_header = \"\"\\n\\n"
         "[auth]\\nusername = \"labadmin\"\\npassword_hash = \"%s\"\\n\\n"
         "[store]\\ndriver = \"memory\"\\n\\n"
+        "[privileges]\\nmode = \"direct\"\\n\\n"
         "[host]\\n" + service_manager_block + "\\n' \"$h\" > " + PANEL_CONF +
         " && /opt/bin/busybox chmod 600 " + PANEL_CONF + " && "
         "printf 'IPCP_%s\\n' PANEL_CFG")
@@ -421,6 +423,7 @@ def gui_probe_steps():
         login_command(PANEL_COOKIE) + "; "
         "out=$(/opt/bin/busybox wget -qO- -S --post-data '{}' "
         "--header 'Content-Type: application/json' --header "
+        "'Sec-Fetch-Site: same-origin' --header "
         "\"Origin: " + PANEL_URL + "\" --header "
         "\"Cookie: panel_session=$c\" " + PANEL_URL +
         "/api/telemt/stop 2>&1); rc=$?; "
@@ -454,6 +457,7 @@ def gui_probe_steps():
         "[ -n \"$pp0\" ] || exit 72; "
         "out=$(/opt/bin/busybox wget -qO- -S --post-data '{}' "
         "--header 'Content-Type: application/json' --header "
+        "'Sec-Fetch-Site: same-origin' --header "
         "\"Origin: " + PANEL_URL + "\" --header "
         "\"Cookie: panel_session=$c\" " + PANEL_URL +
         "/api/telemt/start 2>&1); rc=$?; "
@@ -493,6 +497,7 @@ def gui_probe_steps():
         "[ -n \"$pp0\" ] && [ -n \"$oldp\" ] || exit 78; "
         "out=$(/opt/bin/busybox wget -qO- -S --post-data '{}' "
         "--header 'Content-Type: application/json' --header "
+        "'Sec-Fetch-Site: same-origin' --header "
         "\"Origin: " + PANEL_URL + "\" --header "
         "\"Cookie: panel_session=$c\" " + PANEL_URL +
         "/api/telemt/restart 2>&1); rc=$?; "
