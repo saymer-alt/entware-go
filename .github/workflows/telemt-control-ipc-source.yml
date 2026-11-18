@@ -1,0 +1,80 @@
+name: TeleMT legacy in-daemon IPC source candidate (no release)
+on:
+  pull_request:
+    branches: [gh-action-build]
+    paths:
+      - 'docs/research/telemt-control-ipc/**'
+      - '.github/workflows/telemt-control-ipc-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Skip duplicate Rust compilation when source matches the proven build
+        id: source-hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          module=$(git hash-object docs/research/telemt-control-ipc/local_control.rs)
+          patch=$(git hash-object docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch)
+          if [ "$module" = 'b0407a82be17bbd07993541d517416c545ba864e' ] && [ "$patch" = '0ef70b2d01971d710657c31d9bdf40f0a6817e9b' ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'EXACT_PREVIOUSLY_TESTED_SOURCE: PASS (host 5/5 on run 44049727106)'
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo 'SOURCE_CHANGED: fresh Rust checks required'
+          fi
+      - name: Check exact pinned source and apply both research patches
+        if: steps.source-hashes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=66708d2866f3f3a4541c4fa67984d408e71a8af4
+          git clone -q https://github.com/telemt/telemt.git "$RUNNER_TEMP/upstream"
+          cd "$RUNNER_TEMP/upstream"
+          git checkout -q "$expected"
+          test "$(git rev-parse HEAD)" = "$expected"
+          git apply --check "$GITHUB_WORKSPACE/docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch"
+          git apply "$GITHUB_WORKSPACE/docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch"
+          git apply --check "$GITHUB_WORKSPACE/docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch"
+          git apply "$GITHUB_WORKSPACE/docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch"
+          git diff --check
+          test -f src/daemon/local_control.rs
+          ! git diff --name-only | grep -qx 'src/daemon/pid_file.rs'
+          grep -q 'let (local_stop_tx, local_stop_rx)' src/maestro/orchestrator.rs
+          grep -q 'cmd.daemon_opts.control_socket.as_deref()' src/cli.rs
+          echo 'PINNED_SOURCE_AND_PATCH: PASS'
+      - name: Check dedicated Rust module formatting
+        if: steps.source-hashes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upstream"
+          rustfmt --edition 2024 --check src/daemon/local_control.rs
+          echo 'RUSTFMT_LOCAL_CONTROL: PASS'
+      - name: Compile host Rust tests without publishing any package
+        if: steps.source-hashes.outputs.changed == 'true'
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: '2'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upstream"
+          cargo check --locked --tests
+          echo 'HOST_CARGO_CHECK: PASS'
+      - name: Execute new control-socket unit tests on Linux host
+        if: steps.source-hashes.outputs.changed == 'true'
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: '2'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upstream"
+          cargo test --locked daemon::local_control::tests -- --test-threads=1
+          echo 'LOCAL_CONTROL_HOST_TESTS: PASS'
