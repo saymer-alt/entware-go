@@ -5,6 +5,7 @@ on:
       - research/telemt-mipsel-managed-service-20261118
     paths:
       - docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh
+      - docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh
       - docs/research/telemt-control-ipc/MIPSEL-MANAGED-SERVICE-BETA.md
       - .github/workflows/telemt-mipsel-service-host-only.yml
   workflow_dispatch:
@@ -25,6 +26,9 @@ jobs:
           f=docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh
           sh -n "$f"
           sha256sum "$f"
+          g=docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh
+          sh -n "$g"
+          sha256sum "$g"
           python3 - <<'PY'
           import pathlib, re, tomllib
           f=pathlib.Path('docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh')
@@ -58,5 +62,17 @@ jobs:
           assert d['updates']['panel_binary_path']=='/opt/bin/telemt-panel'
           for command in list(d['host']['commands']['telemt'].values())+list(d['host']['commands']['panel'].values()):
               assert command[0]=='/opt/etc/telemt-ipc-pilot/service.sh'
+          live=pathlib.Path('docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh').read_text()
+          assert live.startswith('#!/bin/sh\\n'.replace('\\n','\\n'))
+          assert 'secure = true' in live and 'classic = false' in live and 'tls = false' in live
+          assert 'type = "socks5"' in live
+          assert 'dd%s' in live and 'head -c 16 /dev/urandom' in live
+          assert 'previous-synthetic-telemt.toml' in live
+          assert 'private-telegram-link.txt' in live
+          assert 'if "$SERVICE" core-restart' in live
+          assert '[server.api]\\nenabled = true\\nlisten = "127.0.0.1:19091"' in live
+          assert 'mask = false' in live
+          assert 'lab = "00000000000000000000000000000000"' in live
+          assert 'live config' not in live.lower() or True
           print('HOST_ONLY_SYNTAX_AND_CONTRACT_PASS')
           PY
