@@ -1,5 +1,7 @@
 # Joint MT7621 acceptance: TeleMT IPC 3.5.17-1ipc2 + Panel Lite 1.0.0-rc.4
 
+> **FINAL JOINT QEMU RESULT (18.11.2026): PASS 66/66.** [GitHub Actions run #44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), HEAD `38ded8a152b44d7079429cdfd707ef5e7b3b4eca`; both jobs success; artifact `telemt-ipc-panel-mt7621-guest-evidence` (`report.json`, `junit.xml`). This supersedes the earlier BLOCKED / PARTIAL statuses below, which are retained as dated investigation history. **Physical KN-1010, real Telegram upstream, browser-click E2E and production deployment remain NOT_TESTED.** Nothing was merged, released or installed on real devices.
+
 Research document for Draft PR #59 (`research/telemt-ipc-panel-joint-20261117`).
 Timezone of every timestamp: Europe/Moscow (UTC+3), grounded in GitHub
 Actions timestamps. Session of 17.11.2026, ~22:15 → (closing time below).
@@ -138,7 +140,7 @@ wrapper restarted (gen=3), daemon — the one the GUI started — still alive.
 Every probe failure is a distinct fixed exit code and cannot mask the
 lifecycle results that ran before it.
 
-## 5. Result: **BLOCKED** — the joint guest lifecycle was not reached
+## 5. Historical result (17.11): **BLOCKED** — initial guest cycles (superseded)
 
 Both authorized guest cycles failed deterministically at the **first
 mirror-delivery step** (plan index 21, `IPCP_IPK_DELIVERED`), before any
@@ -277,3 +279,39 @@ Earlier speculation attributing the two failures to a rebuilt QEMU
 binary or branch-scoped cache should be regarded as **superseded and
 unsupported**. The joint Core+Panel lifecycle remains NOT_TESTED. Frozen
 IPKs, emulator and all release artifacts remain unchanged.
+
+
+## 9. Final accepted joint guest — 18 November 2026
+
+**Primary evidence:** [Actions run #44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918) (run #24, event: owner-approved one-shot label, subsequently removed), `native-guest=success`, `safety=success`. Exact entware-go HEAD: `38ded8a152b44d7079429cdfd707ef5e7b3b4eca`. The attached sanitized `report.json` was independently opened and counted: **66 `PASS` steps, 0 failures**, `outcome="PASS"`, `elapsed_seconds=371.73`, `failure=null`.
+
+The scenario retained the frozen upstream emulator (`64a446deaacb0bca10d6053781ff1f7ad4a29552`), IPKs and hashes from §2. Nothing was recompiled for this acceptance:
+
+| Verification | Result | Evidence/notes |
+|---|---|---|
+| Genuine Ported KeeneticOS MT7621/Linux 4.9 boot + Entware | **PASS** | Full native QEMU-system guest, not a host-only or user-mode smoke test |
+| IPC Core + Panel Lite RC4 package transfer, SHA-256/ELF and opkg | **PASS** | Both frozen IPKs installed as distinct packages |
+| IPC daemon opt-in secure socket, startup and Core API | **PASS** | `/proc/<pid>/exe` identifies `/opt/bin/telemt-ipc-lab`, accepted normal Core absent |
+| Panel Lite health, session login, wrong-password denial, Core API | **PASS** | Panel sees Core 3.5.17 as reachable |
+| IPC reload/stop/manual start while panel remains live | **PASS** | Same PID on reload, lost/recovered Core reachability |
+| Panel `custom` service mode and authenticated HTTP control | **PASS** | `/api/telemt/service` caps and **POST stop/start/restart** using browser-equivalent same-origin headers, HTTP 202 plus actual process/socket assertions |
+| Native firmware reboot and manual restoration | **PASS** | No accidental autostart; packages survive; independent restarts and auth work |
+| Safe teardown and OPKG rollback | **PASS** | Lab processes/listeners/sockets removed; both experimental packages removed |
+
+### Defects corrected before acceptance
+
+- `2f859b3`, `0cceb2d`: two SSH expected-vs-emitted marker mismatches; added pre-QEMU marker validator.
+- `940b983`, `be454fc`: four GUI command shebangs, shell/TOML host checks.
+- `9b29fd2`: bounded HTTP readiness after switching the panel to `custom` (resolved the earlier fresh-login exit 40).
+- `163c58a`, `290a270`: same-origin `Origin`/`Sec-Fetch-Site` browser headers and explicit `[privileges] mode="direct"` for the isolated root lab panel.
+- `ed942ee`, `b91c112`, `9b793cb`: GUI restart now waits for complete IPC socket teardown; added direct API restart verification and post-reboot HTTP readiness; 66 instead of original 65 checks.
+- `38ded8a`: HTTP failure status differentiation (including 401/403/404/409/502/503) for the sanitized failure code, no secrets exported.
+
+### Acceptance boundaries (not implicit PASS)
+
+- This is an **emulated Linux 4.9/QEMU MT7621** acceptance, not a physical KN-1010 test. The observed KN-1010 firmware at the time was **KeeneticOS 5.2 Beta 3**, not the Ported 5.1.8 guest image.
+- Test used loopback, synthetic config/secrets and an experimental IPC core; not real Telegram upstream, real users, WAN access, mobile clients, throughput or memory endurance.
+- Panel control via its **real HTTP API endpoints** was exercised end-to-end with process/socket ground truth; a browser automation script clicking the actual buttons was not part of this 66-step run.
+- No automatic daemon startup was installed. Neither experimental IPK is a production-ready feed/release. PR #58/#59 remain Draft until owner GO and physical hardware qualification.
+
+**Next stage:** read-only KN-1010 preflight and **owner-approved**, separately documented physical pilot with both pinned IPKs and safe rollback. A first physical trial must avoid any running production TeleMT/Panel Lite installation and must never replace live config, init scripts or network policies.
