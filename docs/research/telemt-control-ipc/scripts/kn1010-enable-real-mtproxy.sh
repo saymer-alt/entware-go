@@ -9,6 +9,9 @@ SERVICE=$KIT/service.sh
 CFG=/opt/etc/telemt-ipc-kn1010-socks5.toml
 BACKUP=$KIT/previous-synthetic-telemt.toml
 LINK=$KIT/private-telegram-link.txt
+ADMIN=$KIT/private-new-panel-password.txt
+PCONF=$KIT/panel.toml
+PANEL=/opt/bin/telemt-panel
 BB=/opt/bin/busybox
 fail() { echo "LIVE_SETUP_FAIL: $*" >&2; exit 1; }
 [ "$#" -eq 5 ] || fail "Usage: sh script BIND_IP PORT SOCKS5_IP:PORT PUBLIC_HOST USERNAME"
@@ -29,6 +32,7 @@ case "$USERNAME" in ''|*[!A-Za-z0-9_-]* ) fail "USERNAME contains unsafe charact
 [ -f "$KIT/panel.toml" ] || fail "managed Panel config absent"
 [ ! -e "$BACKUP" ] && [ ! -L "$BACKUP" ] || fail "backup exists: run only once"
 [ ! -e "$LINK" ] && [ ! -L "$LINK" ] || fail "link file already exists"
+[ ! -e "$ADMIN" ] && [ ! -L "$ADMIN" ] || fail "admin file already exists"
 "$BB" grep -q 'lab = "00000000000000000000000000000000"' "$CFG" ||
   fail "not the expected synthetic lab profile, refuse to overwrite"
 [ "$BIND_IP" = 0.0.0.0 ] ||
@@ -87,6 +91,18 @@ if "$SERVICE" core-restart; then
   printf 'tg://proxy?server=%s&port=%s&secret=dd%s\n' \
     "$PUBLIC_HOST" "$PORT" "$HEX" > "$LINK"
   chmod 600 "$LINK"
+  # The previous panel password was pasted into chat. Rotate it immediately,
+  # store the new value in an owner-only one-time handoff file.
+  PW=$("$BB" head -c 24 /dev/urandom | "$BB" base64 | "$BB" tr -d '\n')
+  PHASH=$(printf '%s\n' "$PW" | "$PANEL" hash-password)
+  [ -n "$PHASH" ] || fail "live Core ready, Panel password hash failed"
+  printf '%s\n' "$PW" > "$ADMIN"
+  chmod 600 "$ADMIN"
+  "$BB" sed -i "s|^password_hash = .*|password_hash = \"$PHASH\"|" "$PCONF"
+  chmod 600 "$PCONF"
+  "$SERVICE" panel-restart || fail "live Core ready; Panel restart requires diagnosis"
+  echo "PANEL_PASSWORD_ROTATED"
+  echo "PRIVATE_PANEL_PASSWORD_FILE=$ADMIN"
   echo "LIVE_CORE_READY"
   echo "PRIVATE_LINK_FILE=$LINK"
   echo "Read link LOCALLY, do not paste into chats/logs."
