@@ -12,6 +12,8 @@ SOCKET=$R/ctl/ctl.sock
 PPID=$R/panel.pid
 CLOG=/opt/var/log/telemt-mipsel-core.log
 PLOG=/opt/var/log/telemt-mipsel-panel.log
+CBOOT=$R/core-boot-id
+PBOOT=$R/panel-boot-id
 BB=/opt/bin/busybox
 I1=/opt/etc/init.d/S98telemt-mipsel
 I2=/opt/etc/init.d/S99telemt-mipsel-panel
@@ -31,21 +33,50 @@ panellive() {
     "$BB" tr '\000' '\n' < "/proc/$n/cmdline" |
       "$BB" grep -Fxq "$PCFG"
 }
+bootid() {
+  [ -r /proc/sys/kernel/random/boot_id ] || err "kernel boot_id unavailable"
+  cat /proc/sys/kernel/random/boot_id
+}
+recover_previous_boot_stale() {
+  marker=$1
+  pidfile=$2
+  socketfile=$3
+  [ -f "$marker" ] && [ ! -L "$marker" ] ||
+    err "stale process state without trusted boot marker"
+  oldboot=$(cat "$marker")
+  newboot=$(bootid)
+  [ -n "$oldboot" ] && [ -n "$newboot" ] &&
+    [ "$oldboot" != "$newboot" ] ||
+    err "stale process state in same boot; manual diagnosis required"
+  [ ! -L "$pidfile" ] && [ ! -L "$socketfile" ] ||
+    err "symlink in stale process state"
+  # Files are in the installer-owned 0700 directory. After a kernel reboot
+  # no old process survives. Never send a signal to a PID from stale files.
+  rm -f "$pidfile"
+  [ ! -e "$socketfile" ] || [ -S "$socketfile" ] ||
+    err "unexpected stale socket type"
+  rm -f "$socketfile"
+}
 startcore() {
   [ -f "$CCFG" ] && [ ! -L "$CCFG" ] || err "Core config absent/symlink"
   if corelive; then
     [ -S "$SOCKET" ] || err "running Core has no control socket"
     say CORE_READY; return 0
   fi
-  [ ! -e "$PID" ] && [ ! -e "$SOCKET" ] ||
-    err "stale PID/socket: manual diagnosis required"
+  if [ -e "$PID" ] || [ -e "$SOCKET" ]; then
+    recover_previous_boot_stale "$CBOOT" "$PID" "$SOCKET"
+  fi
   mkdir -p "$R/ctl" /opt/var/log
   chmod 700 "$R/ctl"
   HOME=/opt TMPDIR=/opt/tmp "$CORE" start --log-file "$CLOG" \
     --pid-file "$PID" --control-socket "$SOCKET" "$CCFG"
   n=0
   while [ "$n" -lt 90 ]; do
-    if corelive && [ -S "$SOCKET" ]; then say CORE_READY; return 0; fi
+    if corelive && [ -S "$SOCKET" ]; then
+      bootid > "$CBOOT"
+      chmod 600 "$CBOOT"
+      say CORE_READY; return 0
+    fi
     sleep 1; n=$((n+1))
   done
   err "Core startup timeout"
@@ -79,7 +110,9 @@ portbound() {
 startpanel() {
   [ -f "$PCFG" ] && [ ! -L "$PCFG" ] || err "Panel config absent/symlink"
   if panellive; then say PANEL_READY; return 0; fi
-  [ ! -e "$PPID" ] || err "stale Panel PID (manual diagnosis)"
+  if [ -e "$PPID" ]; then
+    recover_previous_boot_stale "$PBOOT" "$PPID" /dev/null
+  fi
   portbound && err "Panel port occupied by another process"
   mkdir -p /opt/var/log
   HOME=/opt TMPDIR=/opt/tmp "$PANEL" -config "$PCFG" \
@@ -88,7 +121,11 @@ startpanel() {
   printf '%s\n' "$n" > "$PPID"
   i=0
   while [ "$i" -lt 15 ]; do
-    if panellive && portbound; then say PANEL_READY; return 0; fi
+    if panellive && portbound; then
+      bootid > "$PBOOT"
+      chmod 600 "$PBOOT"
+      say PANEL_READY; return 0
+    fi
     sleep 1; i=$((i+1))
   done
   err "Panel startup timeout; inspect $PLOG"
