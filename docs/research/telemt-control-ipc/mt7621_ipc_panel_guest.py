@@ -33,6 +33,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -87,7 +88,8 @@ def marker_printf(name):
 def gui_scripts():
     """Four direct-argv custom service commands for the panel (upstream
     schema: absolute executable, no shell, all four required)."""
-    header = ("# Disposable MT7621 Entware-only custom service command for the\n"
+    header = ("#!/bin/sh\n"
+              "# Disposable MT7621 Entware-only custom service command for the\n"
               "# synthetic TeleMT IPC lab panel probe. Never installed on real\n"
               "# routers. Runs the pinned IPC client against the pinned control\n"
               "# socket only; no PID from any file is ever signalled.\n")
@@ -104,6 +106,25 @@ def gui_scripts():
         "exec /opt/lab/S99telemtlab-panel restart\n")
     return {"start": start, "stop": stop, "restart": restart,
             "panel_restart": panel_restart}
+
+
+def validate_gui_script_exec_contract():
+    """Panel custom manager execs argv[0] directly, not via a shell.
+
+    A script without an interpreter shebang passes source-plan validation but
+    fails at execve(2) with ENOEXEC. Also reject CRLF and syntax errors before
+    any expensive QEMU guest run, rather than relying on a live GUI click.
+    """
+    for name, script in gui_scripts().items():
+        if not script.startswith("#!/bin/sh\n"):
+            raise ValueError(f"GUI command {name} is missing #!/bin/sh")
+        if "\r" in script or not script.endswith("\n"):
+            raise ValueError(f"GUI command {name} must be LF-only")
+        parsed = subprocess.run(["/bin/sh", "-n"], input=script, text=True,
+                                capture_output=True, check=False)
+        if parsed.returncode != 0:
+            raise ValueError(f"GUI command {name}: sh -n failed: "
+                             + parsed.stderr[:200])
 
 
 def b64(text):
@@ -806,6 +827,7 @@ def main():
     panel_ipk = Path(args.panel_ipk_dir) / PANEL_NAME
     ipc_summary = audit_ipc_ipk(root, ipc_ipk)
     panel_summary = audit_panel_ipk(root, panel_ipk)
+    validate_gui_script_exec_contract()
     plan = scenario_for(root)
     steps = plan["steps"]
     validate_literal_ipcp_markers(steps)
