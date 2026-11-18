@@ -48,14 +48,16 @@ recover_previous_boot_stale() {
   [ -n "$oldboot" ] && [ -n "$newboot" ] &&
     [ "$oldboot" != "$newboot" ] ||
     err "stale process state in same boot; manual diagnosis required"
-  [ ! -L "$pidfile" ] && [ ! -L "$socketfile" ] ||
-    err "symlink in stale process state"
-  # Files are in the installer-owned 0700 directory. After a kernel reboot
-  # no old process survives. Never send a signal to a PID from stale files.
+  [ ! -L "$pidfile" ] || err "symlink PID file"
+  if [ "$socketfile" != "-" ]; then
+    [ ! -L "$socketfile" ] || err "symlink IPC socket"
+    [ ! -e "$socketfile" ] || [ -S "$socketfile" ] ||
+      err "unexpected stale socket type"
+  fi
+  # Files are in the installer-owned 0700 directory. After kernel reboot
+  # no old process survives. Never signal a PID from these stale files.
   rm -f "$pidfile"
-  [ ! -e "$socketfile" ] || [ -S "$socketfile" ] ||
-    err "unexpected stale socket type"
-  rm -f "$socketfile"
+  if [ "$socketfile" != "-" ]; then rm -f "$socketfile"; fi
 }
 startcore() {
   [ -f "$CCFG" ] && [ ! -L "$CCFG" ] || err "Core config absent/symlink"
@@ -111,7 +113,7 @@ startpanel() {
   [ -f "$PCFG" ] && [ ! -L "$PCFG" ] || err "Panel config absent/symlink"
   if panellive; then say PANEL_READY; return 0; fi
   if [ -e "$PPID" ]; then
-    recover_previous_boot_stale "$PBOOT" "$PPID" /dev/null
+    recover_previous_boot_stale "$PBOOT" "$PPID" "-"
   fi
   portbound && err "Panel port occupied by another process"
   mkdir -p /opt/var/log
