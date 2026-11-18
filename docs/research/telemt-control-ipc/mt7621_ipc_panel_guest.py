@@ -161,6 +161,7 @@ def validate_guest_shell_and_custom_config(steps):
             if ("Origin: " + PANEL_URL not in command
                     or "Sec-Fetch-Site: same-origin" not in command
                     or "HTTP/[0-9.]+ 202" not in command
+                    or "HTTP/[0-9.]+ 403" not in command
                     or "csrf_rejected" not in command):
                 raise ValueError(f"guest step {index}: unsafe service POST contract")
         if not isinstance(command, str):
@@ -435,7 +436,7 @@ def gui_probe_steps():
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
         "'service_action_unconfirmed' && exit 68; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q 'update_locked' "
-        "&& exit 69; exit 70; }; "
+        "&& exit 69; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 401' && exit 96; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 403' && exit 97; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (404|405)' && exit 98; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 409' && exit 99; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (500|502)' && exit 100; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 503' && exit 101; exit 70; }; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -Eq "
         "'HTTP/[0-9.]+ 202' || exit 77; "
         "ok=0; i=0; while [ \"$i\" -lt 15 ]; do "
@@ -469,7 +470,7 @@ def gui_probe_steps():
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
         "'service_action_unconfirmed' && exit 68; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q 'update_locked' "
-        "&& exit 69; exit 70; }; "
+        "&& exit 69; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 401' && exit 96; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 403' && exit 97; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (404|405)' && exit 98; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 409' && exit 99; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (500|502)' && exit 100; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 503' && exit 101; exit 70; }; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -Eq "
         "'HTTP/[0-9.]+ 202' || exit 77; "
         "ok=0; i=0; while [ \"$i\" -lt 20 ]; do "
@@ -509,7 +510,7 @@ def gui_probe_steps():
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
         "'manual_restart_required' && exit 67; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
-        "'update_locked' && exit 69; exit 70; }; "
+        "'update_locked' && exit 69; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 401' && exit 96; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 403' && exit 97; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (404|405)' && exit 98; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 409' && exit 99; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ (500|502)' && exit 100; printf '%s' \"$out\" | /opt/bin/busybox grep -Eq 'HTTP/[0-9.]+ 503' && exit 101; exit 70; }; "
         "printf '%s' \"$out\" | /opt/bin/busybox grep -Eq "
         "'HTTP/[0-9.]+ 202' || exit 77; "
         "ready=0; i=0; while [ \"$i\" -lt 30 ]; do "
