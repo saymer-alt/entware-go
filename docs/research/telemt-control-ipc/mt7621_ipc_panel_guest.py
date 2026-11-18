@@ -485,7 +485,7 @@ def scenario_for(emulator_root):
                   f"/opt/lab/ipc.ipk > /opt/lab/ipc.sha && "
                   f"{bb} sha256sum -c /opt/lab/ipc.sha >/dev/null || "
                   f"exit 86; "
-                  "printf 'IPCP_%s\\n' IPC_IPK_DELIVERED",
+                  "printf 'IPCP_%s\\n' IPK_DELIVERED",
                   "IPCP_IPK_DELIVERED", 300),
         guest_ssh("/opt/bin/opkg install /opt/lab/ipc.ipk "
                   ">/opt/lab/ipc-opkg.log 2>&1 && "
@@ -765,6 +765,29 @@ def scenario_for(emulator_root):
             "evidence": "KEENETIC_PORTED_EXPERIMENTAL", "steps": steps}
 
 
+def validate_literal_ipcp_markers(steps):
+    """Verify actual printf output matches each literal IPCP_ SSH expectation.
+
+    The first joint QEMU runs used printf 'IPCP_%s\n' IPC_IPK_DELIVERED,
+    which emitted IPCP_IPC_IPK_DELIVERED while the harness expected
+    IPCP_IPK_DELIVERED. Both guest runs therefore reported SSH exit 0 but
+    answer mismatch despite completing the preceding shell command.
+    """
+    pattern = r"printf 'IPCP_%s\\n' ([A-Z][A-Z0-9_]*)"
+    for index, step in enumerate(steps):
+        expect = step.get("expect", "")
+        if not isinstance(expect, str) or not expect.startswith("IPCP_"):
+            continue
+        command = step.get("send", "")
+        if not isinstance(command, str):
+            continue
+        emitted = {"IPCP_" + value for value in re.findall(pattern, command)}
+        if emitted and expect not in emitted:
+            raise ValueError(
+                f"joint step {index}: expected SSH marker {expect!r} "
+                f"but shell prints {sorted(emitted)!r}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--emulator-root", required=True)
@@ -785,6 +808,7 @@ def main():
     panel_summary = audit_panel_ipk(root, panel_ipk)
     plan = scenario_for(root)
     steps = plan["steps"]
+    validate_literal_ipcp_markers(steps)
     if not 60 <= len(steps) <= 75:
         raise ValueError("joint scenario step count drifted")
     labels = [s.get("expect") for s in steps]
