@@ -24,13 +24,13 @@ readpid() { [ -r "$1" ] && cat "$1" || :; }
 pidok() { case "$1" in ''|*[!0-9]*) return 1;; *) [ "$1" -gt 1 ];; esac; }
 exe() { [ -r "/proc/$1/exe" ] && readlink "/proc/$1/exe" 2>/dev/null || :; }
 corelive() {
-  n=$(readpid "$PID")
-  pidok "$n" && [ "$(exe "$n")" = "$CORE" ]
+  core_pid_probe=$(readpid "$PID")
+  pidok "$core_pid_probe" && [ "$(exe "$core_pid_probe")" = "$CORE" ]
 }
 panellive() {
-  n=$(readpid "$PPID")
-  pidok "$n" && [ "$(exe "$n")" = "$PANEL" ] &&
-    "$BB" tr '\000' '\n' < "/proc/$n/cmdline" |
+  panel_pid_probe=$(readpid "$PPID")
+  pidok "$panel_pid_probe" && [ "$(exe "$panel_pid_probe")" = "$PANEL" ] &&
+    "$BB" tr '\000' '\n' < "/proc/$panel_pid_probe/cmdline" |
       "$BB" grep -Fxq "$PCFG"
 }
 bootid() {
