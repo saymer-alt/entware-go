@@ -1,0 +1,77 @@
+name: TeleMT MIPSel managed service - host syntax only
+on:
+  push:
+    branches:
+      - research/telemt-mipsel-managed-service-20261118
+    paths:
+      - docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh
+      - docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh
+      - docs/research/telemt-control-ipc/MIPSEL-MANAGED-SERVICE-BETA.md
+      - .github/workflows/telemt-mipsel-service-host-only.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-and-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: POSIX shell syntax and isolated service invariants (NO routers, NO QEMU)
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh
+          sh -n "$f"
+          sha256sum "$f"
+          g=docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh
+          sh -n "$g"
+          sha256sum "$g"
+          python3 - <<'PY'
+          import pathlib, re, tomllib
+          f=pathlib.Path('docs/research/telemt-control-ipc/scripts/telemt-ipc-mipsel-pilot-service.sh')
+          s=f.read_text()
+          assert s.startswith('#!/bin/sh\n')
+          assert '\r' not in s
+          assert 'a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506' in s
+          assert '380cb5112b58538eafec9ae9fab27fb22c994fd36ce3130c541c5e11b29a40c8' in s
+          assert 'HOME=/opt "$CORE" stop --control-socket "$SOCK"' in s
+          assert 'HOME=/opt "$CORE" reload --control-socket "$SOCK"' in s
+          assert 'kill -KILL' not in s
+          assert 'rc.unslung restart' not in s
+          assert '"$CORE" stop --pid-file' not in s
+          assert 'port_busy && die "port 18082 occupied' in s
+          assert 'sha256sum "$CORE"' in s and 'sha256sum "$PANEL"' in s
+          assert 'enable-autostart' in s and 'disable-autostart' in s
+          match=re.search(r'cat > "\$PCONF" <<TOML\n(.*?)\nTOML', s, re.S)
+          assert match, 'managed Panel config heredoc missing'
+          cfg=match.group(1)
+          for key, val in {'$bind_ip':'127.0.0.1','$hash':'fake-bcrypt','$CLOG':'/opt/var/log/core.log',
+                           '$SELF':'/opt/etc/telemt-ipc-pilot/service.sh',
+                           '$CORE':'/opt/bin/telemt-ipc-lab','$PANEL':'/opt/bin/telemt-panel'}.items():
+              cfg=cfg.replace(key, val)
+          d=tomllib.loads(cfg)
+          assert d['host']['service_manager']=='custom'
+          assert d['host']['log_source']=='file'
+          assert d['privileges']['mode']=='direct'
+          assert d['host']['commands']['telemt'].keys() == {'start','stop','restart'}
+          assert d['host']['commands']['panel'].keys() == {'restart'}
+          assert d['updates']['telemt_binary_path']=='/opt/bin/telemt-ipc-lab'
+          assert d['updates']['panel_binary_path']=='/opt/bin/telemt-panel'
+          for command in list(d['host']['commands']['telemt'].values())+list(d['host']['commands']['panel'].values()):
+              assert command[0]=='/opt/etc/telemt-ipc-pilot/service.sh'
+          live=pathlib.Path('docs/research/telemt-control-ipc/scripts/kn1010-enable-real-mtproxy.sh').read_text()
+          assert live.splitlines()[0] == '#!/bin/sh'
+          assert 'secure = true' in live and 'classic = false' in live and 'tls = false' in live
+          assert 'type = "socks5"' in live
+          assert 'dd%s' in live and 'head -c 16 /dev/urandom' in live
+          assert 'previous-synthetic-telemt.toml' in live
+          assert 'private-telegram-link.txt' in live
+          assert 'if "$SERVICE" core-restart' in live
+          assert '[server.api]' in live and 'listen = "127.0.0.1:19091"' in live
+          assert 'mask = false' in live
+          assert 'lab = "00000000000000000000000000000000"' in live
+          print('HOST_ONLY_SYNTAX_AND_CONTRACT_PASS')
+          PY
