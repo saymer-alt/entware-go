@@ -1,6 +1,6 @@
 # KN-1010 / MT7621: первый физический тест TeleMT IPC (исследовательский пакет)
 
-**Состояние на 17.11.2026:** лабораторный QEMU-сценарий Ported KeeneticOS/Linux 4.9 пройден **63/63** (run [44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)); испытание на физическом KN-1010 **NOT_TESTED**.
+**Статус на 18.11.2026:** отдельно TeleMT IPC прошёл **63/63 PASS** ([run 44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)); **TeleMT IPC вместе с Panel Lite RC4 прошли 66/66 PASS** в QEMU Ported MT7621/Linux 4.9 ([run 44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), замороженные IPK). **Физический KN-1010, внешний Telegram и реальная браузерная автоматизация остаются NOT_TESTED.**
 
 ## 0. Границы испытания
 
@@ -129,7 +129,7 @@ test ! -e /opt/var/run/telemt-ipc-kn1010/ctl.sock && echo SOCKET_CLEAN
 
 ## 7. Panel Lite RC4: отдельная совместная проверка на localhost
 
-**Статус:** Panel Lite RC4 + **обычный Core** ранее 93/93 PASS в QEMU ([router-emulator PR #96](https://github.com/saymer-alt/router-emulator/pull/96)); **IPC-версия Core + Panel Lite вместе** на момент написания НЕ ПРОВЕРЕНЫ в QEMU. `service_manager = "none"` позволяет проверить веб-интерфейс и API-доступ к Core, но **не** проверяет кнопки управления Core в панели.
+**Статус:** Panel Lite RC4 + обычный Core — 93/93 PASS ([router-emulator PR #96](https://github.com/saymer-alt/router-emulator/pull/96)); **IPC-Core + Panel Lite RC4, включая управление Core из API панели через `custom`, reboot и opkg rollback — 66/66 PASS** ([joint run #44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918)). Инструкция ниже намеренно начинает с `service_manager = "none"`, чтобы безопасно изолировать аппаратную проверку HTTP и Core API. **Кнопки GUI на физическом роутере этот режим не включает.**
 
 Готовый экспериментальный Panel IPK: [workflow 43624729371, artifact `telemt-panel-lite-mipsel-experimental`](https://github.com/saymer-alt/entware-go/actions/runs/43624729371). Срок хранения до 21.11.2026. Имя внутри ZIP: `telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk`.
 
@@ -147,7 +147,7 @@ sha256sum telemt-panel-lite_1.0.0.rc.4-1_mipsel-3.4.ipk
 /opt/bin/telemt-panel version
 ```
 
-Использовать заранее запущенный синтетический IPC-Core из разделов 4–5, чей API прослушивает `127.0.0.1:19091`. Создать **отдельный** panel-config (не трогать штатный `/opt/etc/telemt-panel/config.toml`):
+**Важно:** раздел 5 заканчивается `stop` Core. Перед разделом 7 повторно запустить IPC-Core той же командой `start` из раздела 5 и убедиться в наличии сокета; иначе панель закономерно покажет `reachable:false`. Использовать синтетический IPC-Core, чей API прослушивает `127.0.0.1:19091`. Создать **отдельный** panel-config (не трогать штатный `/opt/etc/telemt-panel/config.toml`):
 
 ```sh
 umask 077
@@ -192,3 +192,24 @@ ssh -L 18082:127.0.0.1:18082 USER@ROUTER
 Открыть `http://127.0.0.1:18082`, войти `labadmin` с **тестовым** паролем `lab-test-change-afterwards`, проверить авторизацию, `/api/health`, статус Core `reachable:true` и версию `3.5.17`. Затем выполнить IPC `reload` Core, убедиться, что соединение панели сохраняется; выполнить IPC `stop`, убедиться, что панель показывает недоступность Core; запустить Core вручную заново и проверить `reachable:true`. Это **не тест внешнего Telegram upstream** и не тест API управления демоном из панели.
 
 В конце завершить панель через Ctrl+C, подтвердить отсутствие запущенного `telemt-panel`, затем при отсутствии других зависимостей `opkg remove telemt-panel-lite` и IPC-пакет по разделу 6. Не удалять чужие файлы, не менять init scripts и веб-панель рабочего роутера.
+
+
+## 8. Совместный QEMU PASS и границы физического приёмочного теста
+
+**Доказательство:** [run #44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), `report.json` имеет `outcome: PASS`, **66/66 шагов**. [Draft PR #59](https://github.com/saymer-alt/entware-go/pull/59) содержит полный сценарий; это уже не гипотеза совместимости, а проверенный MT7621 guest. Новые бинарники или новые хэши не нужны.
+
+На эмуляторе успешно прошли:
+
+- SHA-проверка и установка обеих отдельных IPK, no-autostart;
+- Panel health, login/negative login, Core 3.5.17 reachable;
+- IPC reload (с тем же PID), stop и повторный start при работающей панели;
+- `service_manager=custom`, три реальных HTTP POST через API панели (**stop/start/restart**) с Origin и Sec-Fetch-Site, каждый отвечает 202 и подтверждается PID/socket в Linux;
+- native reboot, ручной запуск после reboot, OPKG rollback и очистка.
+
+**Физический шаг 1:** выполнить только разделы 0–3, включая `opkg print-architecture`, `df -h /opt`, проверку уже установленных `telemt` / `telemt-panel-lite`, SHA256, и приложить обезличенный результат. Если устройство используется для других задач, остановиться до установки, а не менять чужие процессы.
+
+**Физический шаг 2 (только после preflight):** лабораторные разделы 4–7 на `127.0.0.1`, без WAN, real Telegram upstream, автозапуска, пользовательских логинов. По завершении остановить оба тестовых процесса, проверить `opkg remove`. Убедиться, что основной `/opt/bin/telemt`, если имеется, не затронут.
+
+**Физический шаг 3 (GUI-custom):** не подменять режим `none` на `custom` без специально подготовленных и проверенных четырёх скриптов управления и отдельного supervisor для панели. В эмуляторе такие скрипты созданы внутри одноразового лабораторного окружения (`/opt/lab`), **не** являются готовыми init-скриптами для KN-1010. Проверка настоящих кнопок требует дополнительного физического теста, хотя API совместимость в эмуляторе уже доказана.
+
+На момент предварительной проверки подключённый KN-1010 находился в сети под **KeeneticOS 5.2 Beta 3**, а QEMU использует Ported KeeneticOS 5.1.8. Различия `/opt`/прав доступа, 256 MB памяти, init и сетевого стека следует фиксировать как отдельные аппаратные результаты; QEMU PASS не равен production GO.
