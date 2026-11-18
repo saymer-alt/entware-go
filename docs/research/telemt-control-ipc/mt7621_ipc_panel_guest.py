@@ -473,6 +473,50 @@ def gui_probe_steps():
         "/opt/bin/busybox wget -qO- " + PANEL_URL + "/api/health >/dev/null "
         "2>&1 || exit 72; "
         "printf 'IPCP_%s\\n' GUI_START_OK")
+    # GUI restart must run the configured host command, not just return 202.
+    # Validate daemon replacement, exactly one live IPC binary and intact
+    # panel session/process on the same guest.
+    gui_restart = (
+        login_command(PANEL_COOKIE) + "; "
+        "pp0=$(/opt/bin/busybox cat " + PANEL_PID + " 2>/dev/null); "
+        "oldp=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
+        "[ -n \"$pp0\" ] && [ -n \"$oldp\" ] || exit 78; "
+        "out=$(/opt/bin/busybox wget -qO- -S --post-data '{}' "
+        "--header 'Content-Type: application/json' --header "
+        "\"Origin: " + PANEL_URL + "\" --header "
+        "\"Cookie: panel_session=$c\" " + PANEL_URL +
+        "/api/telemt/restart 2>&1); rc=$?; "
+        "[ \"$rc\" = 0 ] || { "
+        "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
+        "'csrf_rejected' && exit 76; "
+        "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
+        "'service_action_unconfirmed' && exit 68; "
+        "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
+        "'manual_restart_required' && exit 67; "
+        "printf '%s' \"$out\" | /opt/bin/busybox grep -q "
+        "'update_locked' && exit 69; exit 70; }; "
+        "printf '%s' \"$out\" | /opt/bin/busybox grep -Eq "
+        "'HTTP/[0-9.]+ 202' || exit 77; "
+        "ready=0; i=0; while [ \"$i\" -lt 30 ]; do "
+        "if [ -S " + CTL + " ] && [ -r " + PID + " ]; then "
+        "p=$(/opt/bin/busybox cat " + PID + " 2>/dev/null); "
+        "case \"$p\" in ''|*[!0-9]*) ;; *) "
+        "[ \"$p\" != \"$oldp\" ] && "
+        "[ \"$(/opt/bin/busybox readlink /proc/$p/exe 2>/dev/null)\" "
+        "= '" + IPC_BIN + "' ] && { ready=1; break; };; esac; fi; "
+        "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+        "[ \"$ready\" = 1 ] || exit 80; " +
+        ip_exe_count(IPC_BIN) + "; [ \"$n\" = 1 ] || exit 81; "
+        "pp1=$(/opt/bin/busybox cat " + PANEL_PID + " 2>/dev/null); "
+        "[ \"$pp0\" = \"$pp1\" ] && "
+        "[ \"$(/opt/bin/busybox readlink /proc/$pp1/exe 2>/dev/null)\" "
+        "= '" + PANEL_BIN + "' ] || exit 82; "
+        "info=$(/opt/bin/busybox wget -qO- --header "
+        "\"Cookie: panel_session=$c\" " + PANEL_URL +
+        "/api/telemt/info 2>/dev/null); "
+        "printf '%s' \"$info\" | /opt/bin/busybox grep -q "
+        "'\"reachable\":true' || exit 83; "
+        "printf 'IPCP_%s\\n' GUI_RESTART_OK")
     # Restore the proven service_manager="none" configuration; the daemon
     # started through the GUI must keep running untouched. The wrapper must
     # be stopped first: an idempotent start on a live worker prints no
@@ -491,6 +535,7 @@ def gui_probe_steps():
         guest_ssh(gui_caps, "IPCP_GUI_CAPS_OK", 120),
         guest_ssh(gui_stop, "IPCP_GUI_STOP_OK", 180),
         guest_ssh(gui_start, "IPCP_GUI_START_OK", 180),
+        guest_ssh(gui_restart, "IPCP_GUI_RESTART_OK", 180),
         guest_ssh_regex(gui_restore,
                         "telemtlab-panel-start gen=3 pid=[0-9]+", 180),
     ]
@@ -897,7 +942,8 @@ def main():
         "IPCP_PANEL_LISTENING", "IPCP_AUTH_OK", "IPCP_AUTH_NEGATIVE",
         "IPCP_INTEGRATION_OK", "IPCP_RELOAD_SAME_PID", "IPCP_CORE_LOSS",
         "IPCP_CORE_RECOVERY", "IPCP_GUI_CAPS_OK", "IPCP_GUI_STOP_OK",
-        "IPCP_GUI_START_OK", "IPCP_PRE_REBOOT_CLEAN",
+        "IPCP_GUI_START_OK", "IPCP_GUI_RESTART_OK",
+        "IPCP_PRE_REBOOT_CLEAN",
         "IPCP_REBOOT_NO_AUTOSTART", "IPCP_REBOOT_CORE_START",
         "IPCP_REBOOT_INTEGRATION", "IPCP_REBOOT_STOP_CLEAN",
         "IPCP_ROLLBACK_OK",
