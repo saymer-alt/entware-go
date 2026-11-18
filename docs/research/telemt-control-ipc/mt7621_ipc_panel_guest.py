@@ -378,7 +378,15 @@ def gui_probe_steps():
         "/opt/lab/S99telemtlab-panel stop || exit 63; "
         "/opt/bin/busybox rm -f " + PANEL_PID + "; " +
         fg_validate + "; " +
-        "out=$(/opt/lab/S99telemtlab-panel start) || exit 63; "
+        "out=$(/opt/lab/S99telemtlab-panel start) || exit 63; " +
+        # Wrapper start confirms process generation, not HTTP readiness.
+        "ready=0; i=0; while [ \"$i\" -lt 20 ]; do "
+        "body=$(/opt/bin/busybox wget -qO- " + PANEL_URL +
+        "/api/health 2>/dev/null) && "
+        "printf '%s' \"$body\" | /opt/bin/busybox grep -q "
+        "'\"status\":\"ok\"' && { ready=1; break; }; "
+        "/opt/bin/busybox sleep 1; i=$((i+1)); done; "
+        "[ \"$ready\" = 1 ] || exit 75; "
         "printf '%s\\n' \"$out\"")
     gui_caps = (
         login_command(PANEL_COOKIE) + "; "
