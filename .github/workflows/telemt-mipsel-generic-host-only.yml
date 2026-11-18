@@ -1,0 +1,80 @@
+name: TeleMT generic MIPSel install and service source gate (no release)
+on:
+  push:
+    branches:
+      - research/telemt-mipsel-managed-service-20261118
+    paths:
+      - docs/research/telemt-control-ipc/scripts/telemt-mipsel-install.sh
+      - docs/research/telemt-control-ipc/scripts/telemt-mipsel-service.sh
+      - docs/research/telemt-control-ipc/KN1913-MIPSEL-BETA-PILOT.md
+      - .github/workflows/telemt-mipsel-generic-host-only.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generic-host-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax, exact IPK pins, generated Core/Panel TOML and service isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-control-ipc/scripts
+          sh -n "$ROOT/telemt-mipsel-install.sh"
+          sh -n "$ROOT/telemt-mipsel-service.sh"
+          sha256sum "$ROOT/telemt-mipsel-install.sh" "$ROOT/telemt-mipsel-service.sh"
+          python3 - <<'PY'
+          import pathlib, re, tomllib
+          root=pathlib.Path("docs/research/telemt-control-ipc/scripts")
+          ins=(root/"telemt-mipsel-install.sh").read_text()
+          svc=(root/"telemt-mipsel-service.sh").read_text()
+          for s in (ins,svc):
+              assert s.startswith("#!/bin/sh\n") and "\r" not in s
+              assert "kn1010" not in s.lower()
+              assert "10.0.6.78" not in s
+              assert "/opt/bin/opkg update" not in s and "opkg upgrade" not in s
+          assert "fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa" in ins
+          assert "0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68" in ins
+          assert "a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506" in ins
+          assert "380cb5112b58538eafec9ae9fab27fb22c994fd36ce3130c541c5e11b29a40c8" in ins
+          assert "core-stop) stopcore" in svc
+          assert '"$CORE" stop --control-socket "$SOCKET"' in svc
+          assert '"$CORE" reload --control-socket "$SOCKET"' in svc
+          assert 'kill -KILL' not in svc
+          assert "uninstall) uninstall" in svc
+          assert 'disableboot' in svc and 'enableboot' in svc
+          assert "managed config" in svc.lower()
+          def cfg(name):
+              m=re.search('cat > "\\$R/'+name+r'" <<TOML\n(.*?)\nTOML',ins,re.S)
+              assert m, name
+              text=m.group(1)
+              for key,val in {
+                  '$R':'/opt/etc/telemt-mipsel','$HEX':'a'*32,'$HASH':'fake-password-hash',
+                  '$PANEL_BIND':'127.0.0.1','$PANEL_PORT':'18082','$CORE_BIN':'/opt/bin/telemt-ipc-lab',
+                  '$PANEL_BIN':'/opt/bin/telemt-panel','$PROXY_PORT':'13443',
+                  '$SOCKS':'10.5.0.1:7890','$SERVICE':'/opt/etc/telemt-mipsel/service.sh',
+              }.items():
+                  text=text.replace(key,val)
+              return tomllib.loads(text)
+          core=cfg("core.toml")
+          panel=cfg("panel.toml")
+          assert core['server']['port']==13443
+          assert core['server']['listeners'][0]['ip']=='0.0.0.0'
+          assert core['general']['modes']=={'classic':False,'secure':True,'tls':False}
+          assert core['server']['api']['listen']=='127.0.0.1:19091'
+          assert core['server']['api']['whitelist']==['127.0.0.1/32']
+          assert core['upstreams'][0]['address']=='10.5.0.1:7890'
+          assert core['access']['users']['home']=='a'*32
+          assert panel['telemt']['url']=='http://127.0.0.1:19091'
+          assert panel['host']['service_manager']=='custom'
+          assert panel['host']['log_source']=='file'
+          assert set(panel['host']['commands']['telemt'])=={'start','stop','restart'}
+          assert set(panel['host']['commands']['panel'])=={'restart'}
+          assert panel['updates']['telemt_binary_path']=='/opt/bin/telemt-ipc-lab'
+          assert panel['updates']['panel_binary_path']=='/opt/bin/telemt-panel'
+          assert panel['store']['driver']=='memory'
+          assert panel['privileges']['mode']=='direct'
+          print("GENERIC_MIPSEL_HOST_ONLY_PASS")
+          PY
