@@ -16,6 +16,8 @@ Does not overwrite old lab configs, existing S99telemt/S99telemt-panel, producti
 
 The service kit **requires these two packages to be installed first**; it is not yet a public one-command IPK downloader. It fails closed on an ELF checksum mismatch. These pins must not be silently replaced.
 
+The managed Panel config directs update binary paths to the **isolated lab executables**, not system `/bin/telemt`. Nevertheless **do not use the Panel Updates screen for this research pair**: upstream release assets do not include this IPC patch and the laboratory IPK pins will not be preserved by a generic updater.
+
 ## Transfer / local dry-run
 
 Copy \`scripts/telemt-ipc-mipsel-pilot-service.sh\` to \`/opt/tmp/telemt-ipc-mipsel-pilot-service.sh\` over a verified SSH/SFTP connection. On this KN-1010 Entware SSH is on **222**; verify the SSH host fingerprint independently before changing an existing known_hosts entry. If logged in through the already verified terminal, use that session.
