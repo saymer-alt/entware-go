@@ -89,3 +89,26 @@ This removes only scripts carrying the exact lab ownership marker. No package un
 - Do not classify as **public beta** until script is syntax-tested with `sh -n`, reviewed, exercised on physical KN-1010 (including GUI control, SSH disconnect, reboot, rollback), and signed/pinned artifacts are prepared.
 
 Relevant existing research: Draft PR #58 (Core IPC), Draft PR #59 (66/66 joint QEMU), Issue #51 (Linux 4.9 stop/reload).
+
+
+## 2026-11-18: first functional MTProxy (owner opt-in, not a public release)
+
+After the owner confirmed KN-1010 managed kit install and `service.sh start` + `status` both `CORE_READY` and `PANEL_READY` (actual router), the next target was to **serve real Telegram clients**, instead of synthetic loopback `lab`.
+
+Added `scripts/kn1010-enable-real-mtproxy.sh` on research branch with host-only CI [44377436309](https://github.com/saymer-alt/entware-go/actions/runs/44377436309): SHA-256 `98b605fcdea86c84c0df250350a97ef40149dda8ff8e25568f33b322cb52ac26` at commit `520a218113d9c86d5ad72310526969c81b4b50ec`. This script is **host-syntax-tested but has not yet been run on a router**, so errors must be reported and the rollback evaluated on real hardware.
+
+Only for the **already installed KN-1010 pilot**, not for KN-1913. Verify downloaded file SHA256, use `sh -n`, then:
+
+```sh
+sh /opt/tmp/kn1010-live.sh 0.0.0.0 13443 10.0.6.78:7890 192.168.107.1 home
+```
+
+The parameters are `BIND_IP LISTEN_PORT SOCKS5_IP:PORT LINK_HOST USERNAME`. It refuses unknown config, pre-existing backups/link files, malformed basic inputs, or mismatched pilot install; overwrites no system `telemt`. It replaces the synthetic Core profile with one real 128-bit random username secret, `classic=false`, `secure=true` (dd), `tls=false`, only SOCKS5 upstream, 256 concurrent connections and **local-only API**. A copy of the previous lab config stays in private `/opt/etc/telemt-ipc-pilot/previous-synthetic-telemt.toml`. A successful Core restart via **Unix IPC**, not PID kill, is required; on a failed restart it restores the prior config and attempts Core startup. Panel password leaked in earlier chat, so successful switch also rotates panel auth and restarts just Panel.
+
+Sensitive outputs are NOT printed:
+- `/opt/etc/telemt-ipc-pilot/private-telegram-link.txt` — `tg://proxy` link containing dd secret, root-only 0600.
+- `/opt/etc/telemt-ipc-pilot/private-new-panel-password.txt` — root-only 0600 password handoff, delete after securely storing in a password manager.
+
+**Ingress:** `0.0.0.0:13443` listens on all IPv4 router interfaces. This is deliberate for a live MTProxy listener, but it does **not** create WAN firewall rules, upstream NAT mapping, public DNS, or reverse proxy. From the upstream log, the router WAN is private `10.0.6.26`; direct mobile-internet clients need forwarded TCP/13443 through the upstream NAT and router's own ingress policy, or a separate VPS relay. `192.168.107.1` in the example is a **LAN/SSTP-only** first-hop link host, not a universal public host. Never expose Panel HTTP 18082 nor Core API 19091 on WAN. The proxy must be tested from a real Telegram client over the intended path before calling it live.
+
+Autostart can be explicitly enabled with `/opt/etc/telemt-ipc-pilot/service.sh enable-autostart`; that adds only lab-owned Entware S98/S99 scripts. It does not guarantee that an upstream NAT works or that router boots have been accepted. **Do not treat this opt-in switch as public beta, stable, or an already-deployed client proxy.**
