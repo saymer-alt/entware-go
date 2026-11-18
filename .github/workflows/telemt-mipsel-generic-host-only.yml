@@ -34,7 +34,7 @@ jobs:
               assert s.startswith("#!/bin/sh\n") and "\r" not in s
               assert "kn1010" not in s.lower()
               assert "10.0.6.78" not in s
-              assert "/opt/bin/opkg update" not in s and "opkg upgrade" not in s
+              assert not re.search(r"(?m)^\s*(?:/opt/bin/)?opkg\s+(?:update|upgrade)\b", s)
           assert "fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa" in ins
           assert "0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68" in ins
           assert "a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506" in ins
