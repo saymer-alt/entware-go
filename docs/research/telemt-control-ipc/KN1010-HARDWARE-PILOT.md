@@ -1,6 +1,6 @@
 # KN-1010 / MT7621: первый физический тест TeleMT IPC (исследовательский пакет)
 
-**Статус на 18.11.2026:** отдельно TeleMT IPC прошёл **63/63 PASS** ([run 44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)); **TeleMT IPC вместе с Panel Lite RC4 прошли 66/66 PASS** в QEMU Ported MT7621/Linux 4.9 ([run 44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), замороженные IPK). **Физический KN-1010, внешний Telegram и реальная браузерная автоматизация остаются NOT_TESTED.**
+**Статус на 18.11.2026:** отдельно TeleMT IPC прошёл **63/63 PASS** ([run 44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)); **TeleMT IPC вместе с Panel Lite RC4 прошли 66/66 PASS** в QEMU Ported MT7621/Linux 4.9 ([run 44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), замороженные IPK). **Физический KN-1010: IPC Core install/start/reload/stop PASS, SOCKS5 upstream and Panel Lite manual browser access PASS (18.11.2026); GUI custom Start/Stop/Restart, managed service persistence and reboot remain NOT_TESTED.**
 
 ## 0. Границы испытания
 
@@ -215,3 +215,19 @@ ssh -L 18082:127.0.0.1:18082 USER@ROUTER
 **Физический шаг 3 (GUI-custom):** не подменять режим `none` на `custom` без специально подготовленных и проверенных четырёх скриптов управления и отдельного supervisor для панели. В эмуляторе такие скрипты созданы внутри одноразового лабораторного окружения (`/opt/lab`), **не** являются готовыми init-скриптами для KN-1010. Проверка настоящих кнопок требует дополнительного физического теста, хотя API совместимость в эмуляторе уже доказана.
 
 На момент предварительной проверки подключённый KN-1010 находился в сети под **KeeneticOS 5.2 Beta 3**, а QEMU использует Ported KeeneticOS 5.1.8. Различия `/opt`/прав доступа, 256 MB памяти, init и сетевого стека следует фиксировать как отдельные аппаратные результаты; QEMU PASS не равен production GO.
+
+
+## 9. Hardware pilot results (owner-reported, 2026-11-18)
+
+**Scope:** physical Keenetic Giga KN-1010, MT7621 / Linux 4.9-ndm-5, KeeneticOS 5.2 Beta 3, Entware mipsel-3.4. These observations are direct SSH/browser outputs from the owner's test, not an independent connected device execution by CI.
+
+- Frozen IPKs SHA256 verified exactly: IPC \`fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa\`, Panel RC4 \`0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68\`. \`opkg install\` succeeded with expected versions and no dependency upgrades. Panel CLI \`version\` printed \`telemt-panel 1.0.0-rc.4 (lite: memory)\`.
+- IPC daemon launched with private \`/opt/var/run/telemt-ipc-kn1010/ctl.sock\` (parent 0700, socket 0600), API 127.0.0.1:19091 and MTProxy listener 127.0.0.1:13443; \`/proc/2316/exe\` matched exact lab binary; VmRSS ~18 MiB. Initial probe after 3 s missed socket because direct DC initialization required 37 s. Retest confirmed socket and both listeners.
+- Native \`telemt-ipc-lab reload --control-socket ...\`: immediate request accepted, exit 0, Core PID remained 2316 and control socket remained. Full config mutation was not asserted.
+- Native \`telemt-ipc-lab stop --control-socket ...\`: stop request accepted; owner observed exit of the verified Core process and unlink of the control socket (\`IPC_STOP_PASS\`). After restarting with new lab SOCKS5 config, PID 4416 matched binary and both listeners+IPC returned.
+- Only upstream is SOCKS5 \`10.0.6.78:7890\` (Mihomo), verified with curl exit 0. Owner's TeleMT log: \`via socks5://10.0.6.78:7890\`, all six named Telegram DC endpoints reachable during startup, startup time 6 s; Panel displayed healthy upstream 1/1, RTT 3 ms. Direct carrier connectivity had failed. These checks **do not** prove long-term Telegram client traffic, ME operation or real MTProxy usability.
+- Panel launched manually, listened on 192.168.107.1:18082, served real browser login, overview, users, pulse, upstream health and service page. Mode \`host.service_manager=none\`: GUI control **NOT_TESTED**. The same IP address is assigned on br0 and SSTP, therefore HTTP exposure is **not VPN-only**. The operator had exposed the original test password in chat; it must not be reused.
+- Foreground Panel stopped when SSH session closed. Attempted ad hoc detached start stopped with \`NOHUP_NOT_AVAILABLE\` **before changing its password/config or launching any process**. This is an environment issue, not evidence of Panel crash.
+- Core emitted \`Failed to update runtime log filter: subscriber no longer exists\` after successful initialization. Not yet fixed; track as low-priority runtime warning.
+
+**Next:** review [managed MIPSel service kit PR #60](https://github.com/saymer-alt/entware-go/pull/60) built on this research branch. Its host-only syntax/TOML gate is PASS, but the service kit is a new artifact needing physical lifecycle, GUI custom controls, logout persistence, boot and rollback tests. No public release or stable feed yet.
