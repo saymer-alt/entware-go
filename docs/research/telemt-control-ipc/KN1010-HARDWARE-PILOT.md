@@ -19,6 +19,8 @@ ELF SHA256 a83caf105dd77248de43c9e096f8248ce3851b322dfe6dd59a934801344d9506
 
 ## 2. Read-only preflight на KN-1010
 
+Сохранённый в research-ветке скрипт: [`scripts/kn1010-preflight-readonly.sh`](scripts/kn1010-preflight-readonly.sh). Он только читает сведения об устройстве, не выполняет установку и не меняет настройки. При ручном копировании на роутер запускается как `sh /opt/tmp/kn1010-preflight-readonly.sh`.
+
 Через SSH, до передачи/установки пакета:
 
 ```sh
