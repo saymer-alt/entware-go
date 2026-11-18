@@ -95,13 +95,21 @@ def gui_scripts():
               "# routers. Runs the pinned IPC client against the pinned control\n"
               "# socket only; no PID from any file is ever signalled.\n")
     start = header + (
-        "HOME=/opt/lab /opt/bin/telemt-ipc-lab start --log-file " + LOG +
+        "HOME=/opt/lab TMPDIR=/opt/lab /opt/bin/telemt-ipc-lab start --log-file " + LOG +
         " --pid-file " + PID + " --control-socket " + CTL + " " + CONF + "\n")
     stop = header + (
         "HOME=/opt/lab /opt/bin/telemt-ipc-lab stop --control-socket " +
         CTL + "\n")
     restart = header + (
         "/opt/lab/telemt-ipc-gui-stop || exit 1\n"
+        # IPC stop acknowledges a request; wait for the old socket to be
+        # unlinked before starting another daemon. Never signal via pidfile.
+        "i=0\n"
+        "while [ \"$i\" -lt 15 ] && [ -S /opt/var/run/telemt-ipc-lab/ctl.sock ]; do\n"
+        "  /opt/bin/busybox sleep 1\n"
+        "  i=$((i+1))\n"
+        "done\n"
+        "[ ! -e /opt/var/run/telemt-ipc-lab/ctl.sock ] || exit 1\n"
         "exec /opt/lab/telemt-ipc-gui-start\n")
     panel_restart = header + (
         "exec /opt/lab/S99telemtlab-panel restart\n")
