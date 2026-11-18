@@ -1,6 +1,6 @@
 # TeleMT MT7621 / Linux 4.9: in-daemon local stop/reload candidate
 
-**STATUS (17.11.2026): MIPSel experimental IPK 3.5.17-1ipc2 built reproducibly; native QEMU MT7621 Linux 4.9 acceptance 63/63 PASS (run 44154378735); physical KN-1010 NOT_TESTED.**
+**STATUS (18.11.2026): experimental MIPSel TeleMT IPC 3.5.17-1ipc2 separately passed QEMU 63/63 ([run #44154378735](https://github.com/saymer-alt/entware-go/actions/runs/44154378735)); jointly with Panel Lite RC4 passed real QEMU-system MT7621 Linux 4.9 **66/66** ([run #44335275918](https://github.com/saymer-alt/entware-go/actions/runs/44335275918), Draft PR #59). Physical KN-1010, live Telegram, browser-click E2E, and production release remain NOT_TESTED.**
 
 **Physical hardware pilot:** [KN1010-HARDWARE-PILOT.md](KN1010-HARDWARE-PILOT.md) — SHA256-pinned experimental IPK, read-only preflight, isolated localhost fixture and safe teardown. Research package only; do not replace live TeleMT or publish a feed.
 
@@ -19,7 +19,7 @@ This source patch adds an **explicit opt-in** local Unix socket to the running
 daemon and the existing `telemt stop/reload` CLI. It does not modify the
 existing `src/daemon/pid_file.rs` code or automatically intercept ENOSYS.
 
-## Proposed opt-in CLI (NOT available in existing IPKs)
+## Opt-in CLI — experimental `telemt-ipc-lab` only (not regular TeleMT IPKs)
 
 The parent directory must already exist, have mode 0700, be owned by the
 effective daemon UID, and contain no symlink parents.
@@ -32,8 +32,7 @@ mkdir -m 700 /opt/var/run/telemt-control
 /opt/bin/telemt stop --control-socket /opt/var/run/telemt-control/ctl.sock
 ```
 
-**Do NOT execute these commands against a production router or VPS.** No
-current IPK includes this option.
+**Do NOT execute these examples against a production router or VPS.** The option exists **only** in the experimental `/opt/bin/telemt-ipc-lab` package 3.5.17-1ipc2. The ordinary `/opt/bin/telemt` stable packages do not gain IPC support.
 
 ## Implementation boundaries
 
