@@ -5,6 +5,8 @@ on:
       - research/telemt-mipsel-managed-service-20261118
     paths:
       - .github/workflows/telemt-mipsel-kn1913-pilot-bundle.yml
+      - docs/research/telemt-control-ipc/scripts/telemt-mipsel-install.sh
+      - docs/research/telemt-control-ipc/scripts/telemt-mipsel-service.sh
   workflow_dispatch:
 
 permissions:
