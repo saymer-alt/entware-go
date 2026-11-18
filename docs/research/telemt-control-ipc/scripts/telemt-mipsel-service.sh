@@ -108,6 +108,20 @@ stoppanel() {
   done
   err "Panel still alive; no SIGKILL"
 }
+uninstall() {
+  [ -x "$CORE" ] && [ -x "$PANEL" ] ||
+    err "expected lab packages not installed; refusing destructive cleanup"
+  [ -f "$CCFG" ] && [ -f "$PCFG" ] ||
+    err "managed config missing; refusing uninstall"
+  # Stop only verified instances; do not remove other service scripts/packages.
+  stoppanel
+  stopcore
+  disableboot
+  /opt/bin/opkg remove telemt-panel-lite || err "Panel package removal failed"
+  /opt/bin/opkg remove telemt-ipc-lab || err "Core package removal failed"
+  say "UNINSTALLED_PACKAGES_CONFIG_PRESERVED"
+  say "Owner-only configs/secrets remain in $R for rollback inspection"
+}
 status() {
   if corelive && [ -S "$SOCKET" ]; then say CORE_READY; else say CORE_NOT_READY; fi
   if panellive && portbound; then say PANEL_READY; else say PANEL_NOT_READY; fi
@@ -152,7 +166,7 @@ disableboot() {
   done
   say BOOT_DISABLED
 }
-[ "$#" -eq 1 ] || err "command required: start|stop|status|core-start|core-stop|core-restart|core-reload|panel-start|panel-stop|panel-restart|enable-boot|disable-boot"
+[ "$#" -eq 1 ] || err "command required: start|stop|status|core-start|core-stop|core-restart|core-reload|panel-start|panel-stop|panel-restart|enable-boot|disable-boot|uninstall"
 case "$1" in
  start) startcore; startpanel;;
  stop) stoppanel; stopcore;;
@@ -167,5 +181,6 @@ case "$1" in
  panel-restart) stoppanel; startpanel;;
  enable-boot) enableboot;;
  disable-boot) disableboot;;
+ uninstall) uninstall;;
  *) err "unknown command";;
 esac
