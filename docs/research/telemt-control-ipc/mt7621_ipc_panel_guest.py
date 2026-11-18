@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from types import SimpleNamespace
 
 IPC_NAME = "telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk"
@@ -124,6 +125,33 @@ def validate_gui_script_exec_contract():
                                 capture_output=True, check=False)
         if parsed.returncode != 0:
             raise ValueError(f"GUI command {name}: sh -n failed: "
+                             + parsed.stderr[:200])
+
+
+def validate_guest_shell_and_custom_config(steps):
+    """Cheap host-only checks for commands before expensive QEMU execution."""
+    cfg = tomllib.loads("[host]\n" + PANEL_HOST_CUSTOM.replace("\\n", "\n") + "\n")
+    host = cfg["host"]
+    if host["service_manager"] != "custom":
+        raise ValueError("panel GUI manager must remain custom")
+    telemt = host["commands"]["telemt"]
+    panel = host["commands"]["panel"]
+    expected = {
+        "start": GUI_START, "stop": GUI_STOP, "restart": GUI_RESTART,
+    }
+    if (telemt != {name: [path] for name, path in expected.items()}
+            or panel != {"restart": [PANEL_GUI_RESTART]}):
+        raise ValueError("panel custom argv commands drifted")
+    for index, step in enumerate(steps):
+        if step.get("action") != "ssh":
+            continue
+        command = step.get("send", "")
+        if not isinstance(command, str):
+            raise ValueError(f"guest step {index} has no SSH command")
+        parsed = subprocess.run(["/bin/sh", "-n"], input=command + "\n",
+                                text=True, capture_output=True, check=False)
+        if parsed.returncode:
+            raise ValueError(f"guest step {index}: POSIX sh -n failed: "
                              + parsed.stderr[:200])
 
 
@@ -831,6 +859,7 @@ def main():
     plan = scenario_for(root)
     steps = plan["steps"]
     validate_literal_ipcp_markers(steps)
+    validate_guest_shell_and_custom_config(steps)
     if not 60 <= len(steps) <= 75:
         raise ValueError("joint scenario step count drifted")
     labels = [s.get("expect") for s in steps]
