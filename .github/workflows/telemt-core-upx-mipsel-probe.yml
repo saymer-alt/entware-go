@@ -59,6 +59,7 @@ jobs:
           pathlib.Path("work/telemt-original").write_bytes(elf)
           PY
           cp work/telemt-original work/telemt-stripped
+          chmod 0755 work/telemt-stripped
           mipsel-linux-gnu-strip --strip-unneeded work/telemt-stripped
           mipsel-linux-gnu-readelf -h work/telemt-stripped > dist/elf-header.txt
           mipsel-linux-gnu-readelf -l work/telemt-stripped > dist/elf-program-headers.txt
