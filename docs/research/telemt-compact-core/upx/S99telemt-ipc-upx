@@ -95,6 +95,8 @@ case "$1" in
   status) status;;
   enable-boot)
     [ -f "$CFG" ] && [ ! -L "$CFG" ] || die "configure first"
+    [ ! -x /opt/etc/init.d/S99telemt-ipc-compact-ram ] ||
+      die "disable old RAM2 boot script before enabling UPX boot"
     "$BB" chmod 755 /opt/etc/init.d/S99telemt-ipc-upx
     msg AUTOSTART_ENABLED;;
   disable-boot)
