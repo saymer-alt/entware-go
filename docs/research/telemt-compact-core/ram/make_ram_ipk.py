@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from make_compact_ipk import tarball, unpack_frozen_ipk
 
 NAME = "telemt-ipc-compact-ram"
-VERSION = "3.5.17-1ipc2ram1"
+VERSION = "3.5.17-1ipc2ram2"
 SOURCE_SHA = "fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa"
 # 16MiB fixed KAS headroom plus 0.75 MiB for xz/liblzma dependencies and opkg state.
 RESERVE_KIB = 16384
@@ -30,7 +30,7 @@ def run(a):
     loader = (scripts / "telemt-compact-ram-loader.sh").read_bytes()
     assert loader.startswith(b"#!/bin/sh") and b"ELF_KIB_PLACEHOLDER" in loader
     loader = loader.replace(b"ELF_KIB_PLACEHOLDER", str(math.ceil(len(stripped)/1024)).encode())
-    service = (scripts / "S98telemt-ipc-compact-ram").read_bytes()
+    service = (scripts / "S99telemt-ipc-compact-ram").read_bytes()
     configurator = (scripts / "telemt-compact-ram-configure").read_bytes()
     assert service.startswith(b"#!/bin/sh") and configurator.startswith(b"#!/bin/sh")
     expected = hashlib.sha256(stripped).hexdigest().encode() + b"\n"
@@ -81,7 +81,7 @@ exit 0
         ("./opt/share/doc/telemt-ipc-compact-ram/", b"", 0o755, True),
         ("./opt/bin/telemt-ipc-compact-ram", loader, 0o755, False),
         ("./opt/bin/telemt-compact-ram-configure", configurator, 0o755, False),
-        ("./opt/etc/init.d/S98telemt-ipc-compact-ram", service, 0o644, False),
+        ("./opt/etc/init.d/S99telemt-ipc-compact-ram", service, 0o644, False),
         ("./opt/share/telemt-compact-ram/telemt.xz", xz, 0o644, False),
         ("./opt/share/telemt-compact-ram/telemt.sha256", expected, 0o644, False),
         ("./opt/share/doc/telemt-ipc-compact-ram/LICENSE.TELEMT.txt",
@@ -97,7 +97,7 @@ exit 0
         contents=outer.extractfile("./data.tar.gz").read()
     with tarfile.open(fileobj=io.BytesIO(contents),mode="r:gz") as inner:
         assert inner.extractfile("./opt/share/telemt-compact-ram/telemt.xz").read()==xz
-        assert inner.getmember("./opt/etc/init.d/S98telemt-ipc-compact-ram").mode==0o644
+        assert inner.getmember("./opt/etc/init.d/S99telemt-ipc-compact-ram").mode==0o644
     print(f"ORIGINAL_ELF_BYTES={len(original)}")
     print(f"STRIPPED_ELF_BYTES={len(stripped)}")
     print(f"XZ_ON_FLASH_BYTES={len(xz)}")
