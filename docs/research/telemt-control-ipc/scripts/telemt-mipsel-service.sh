@@ -59,6 +59,23 @@ recover_previous_boot_stale() {
   rm -f "$pidfile"
   if [ "$socketfile" != "-" ]; then rm -f "$socketfile"; fi
 }
+socks_wait() {
+  # Bounded local readiness wait for the configured SOCKS5 upstream before
+  # the Core daemon is started.  KN-1913 lesson (S99telemt-ipc-upx, 9b1f0ed):
+  # Mihomo may listen as dual-stack :::PORT, so netstat has no separate IPv4
+  # LISTEN row; accept 127.0.0.1/0.0.0.0/::: forms.  This is a local netstat
+  # probe only — never an external GitHub/Telegram request.
+  port=$("$BB" sed -n 's/^address = "[0-9.]*:\([0-9][0-9]*\)"$/\1/p' "$CCFG" | "$BB" head -n 1)
+  case "$port" in ''|*[!0-9]*) return 0;; esac
+  n=0
+  while ! netstat -lnt 2>/dev/null | "$BB" grep -Eq \
+    "(^|[[:space:]])(127\.0\.0\.1:$port|0\.0\.0\.0:$port|:::$port)[[:space:]]"; do
+    [ "$n" -lt 60 ] ||
+      err "SOCKS5 upstream port $port not listening after 60s; start Core manually once the upstream is up"
+    sleep 2; n=$((n+2))
+  done
+  say "SOCKS5_UPSTREAM_READY port=$port waited=${n}s"
+}
 startcore() {
   [ -f "$CCFG" ] && [ ! -L "$CCFG" ] || err "Core config absent/symlink"
   if corelive; then
@@ -70,6 +87,7 @@ startcore() {
   fi
   mkdir -p "$R/ctl" /opt/var/log
   chmod 700 "$R/ctl"
+  socks_wait
   HOME=/opt TMPDIR=/opt/tmp "$CORE" start --log-file "$CLOG" \
     --pid-file "$PID" --control-socket "$SOCKET" "$CCFG"
   n=0

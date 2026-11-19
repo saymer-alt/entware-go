@@ -30,12 +30,54 @@ ipcheck() {
   [ "$1" = 0.0.0.0 ] || [ "$1" = 127.0.0.1 ] ||
     ip -4 addr show | "$BB" grep -Fq "inet $1/"
 }
-[ "$#" -eq 5 ] || fail "Usage: sh install.sh CORE.ipk PANEL.ipk SOCKS5_IP:PORT PUBLIC_HOST PANEL_BIND_IP"
+# NAND/RAM preflight (KN-1913 lesson, Issue #64): the Core ELF is ~23 MiB and
+# the Panel adds more; installing without free-space evidence can leave the
+# device in an unbootable half-state.  Required NAND = both IPK control
+# Installed-Size fields + a 7 MiB safety reserve + 512 KiB overhead.
+SPARE_KIB=7168
+OVERHEAD_KIB=512
+RAM_MIN_KIB=8192
+RAM_WARN_KIB=24576
+ipk_installed_kib() {
+  ctrl=$("$BB" tar -xzOf "$1" ./control.tar.gz 2>/dev/null |
+    "$BB" tar -xzO ./control 2>/dev/null) ||
+    return 1
+  sz=$(printf '%s\n' "$ctrl" | "$BB" sed -n 's/^Installed-Size: \([0-9][0-9]*\)$/\1/p' | "$BB" head -n 1)
+  case "$sz" in ''|*[!0-9]*) return 1;; esac
+  printf '%s' "$sz"
+}
+nand_check() {
+  free_kib=$(df -k /opt | "$BB" awk 'END {print $4}')
+  case "$free_kib" in ''|*[!0-9]*) fail "unable to measure /opt free space";; esac
+  c=$(ipk_installed_kib "$IPK1") || fail "cannot read Core IPK Installed-Size"
+  p=$(ipk_installed_kib "$IPK2") || fail "cannot read Panel IPK Installed-Size"
+  needed=$((c + p + SPARE_KIB + OVERHEAD_KIB))
+  [ "$free_kib" -ge "$needed" ] ||
+    fail "NAND flash guard: free=${free_kib}KiB required=${needed}KiB (7MiB reserve; see Issue #64)"
+  ok "NAND_OK free=${free_kib}KiB required=${needed}KiB"
+}
+ram_check() {
+  avail=$("$BB" awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+  case "$avail" in ''|*[!0-9]*) fail "unable to read MemAvailable";; esac
+  [ "$avail" -ge "$RAM_MIN_KIB" ] ||
+    fail "RAM guard: MemAvailable=${avail}KiB below minimum ${RAM_MIN_KIB}KiB"
+  [ "$avail" -ge "$RAM_WARN_KIB" ] ||
+    ok "RAM_TIGHT: MemAvailable=${avail}KiB; Core+Panel+Mihomo jointly ran at ~19-23MiB on KN-1913 — not a 24/7 guarantee"
+  ok "RAM_OK available=${avail}KiB"
+}
+[ "$#" -eq 5 ] || [ "$#" -eq 6 ] ||
+  fail "Usage: sh install.sh CORE.ipk PANEL.ipk SOCKS5_IP:PORT PUBLIC_HOST PANEL_BIND_IP [--reuse-config]"
 IPK1=$1
 IPK2=$2
 SOCKS=$3
 PUBLIC_HOST=$4
 PANEL_BIND=$5
+REUSE_CONFIG=
+if [ "$#" -eq 6 ]; then
+  [ "$6" = "--reuse-config" ] ||
+    fail "unknown option: $6 (only --reuse-config is supported)"
+  REUSE_CONFIG=$6
+fi
 PROXY_PORT=13443
 PANEL_PORT=18082
 [ "$(id -u)" = 0 ] || fail "run as Entware root"
@@ -44,7 +86,15 @@ PANEL_PORT=18082
   fail "not Entware mipsel-3.4"
 [ -d /proc ] && [ -d /opt/var ] || fail "/proc or /opt/var missing"
 [ -d "$R" ] || [ ! -e "$R" ] || fail "install root is not a directory"
-[ ! -L "$R" ] && [ ! -e "$R" ] || fail "existing install / symlink: no overwrite"
+if [ -n "$REUSE_CONFIG" ]; then
+  [ ! -L "$R" ] || fail "install root is a symlink"
+  [ -d "$R" ] || fail "--reuse-config requires the managed config directory $R"
+  [ -f "$R/core.toml" ] && [ ! -L "$R/core.toml" ] &&
+    [ -f "$R/panel.toml" ] && [ ! -L "$R/panel.toml" ] ||
+    fail "--reuse-config requires existing core.toml and panel.toml; use a fresh install instead"
+else
+  [ ! -L "$R" ] && [ ! -e "$R" ] || fail "existing install / symlink: no overwrite"
+fi
 [ ! -e "$CORE_BIN" ] && [ ! -L "$CORE_BIN" ] ||
   fail "Core executable already exists; abort to avoid overwriting"
 [ ! -e "$PANEL_BIN" ] && [ ! -L "$PANEL_BIN" ] ||
@@ -65,14 +115,18 @@ available 19091 || fail "Core API port already used"
 
 hashmatch "$IPK1" "$CORE_IPK_HASH" || fail "Core IPK SHA256 mismatch"
 hashmatch "$IPK2" "$PANEL_IPK_HASH" || fail "Panel IPK SHA256 mismatch"
+nand_check
+ram_check
 D=$("$BB" dirname "$0")
 [ -f "$D/telemt-mipsel-service.sh" ] && [ ! -L "$D/telemt-mipsel-service.sh" ] ||
   fail "missing telemt-mipsel-service.sh alongside installer"
 
-HEX=$("$BB" head -c 16 /dev/urandom | "$BB" hexdump -v -e '1/1 "%02x"')
-PW=$("$BB" head -c 24 /dev/urandom | "$BB" base64 | "$BB" tr -d '\n')
-[ "$(printf '%s' "$HEX" | "$BB" wc -c)" -eq 32 ] || fail "secret RNG failed"
-[ -n "$PW" ] || fail "password RNG failed"
+if [ -z "$REUSE_CONFIG" ]; then
+  HEX=$("$BB" head -c 16 /dev/urandom | "$BB" hexdump -v -e '1/1 "%02x"')
+  PW=$("$BB" head -c 24 /dev/urandom | "$BB" base64 | "$BB" tr -d '\n')
+  [ "$(printf '%s' "$HEX" | "$BB" wc -c)" -eq 32 ] || fail "secret RNG failed"
+  [ -n "$PW" ] || fail "password RNG failed"
+fi
 
 # Packages are explicitly pinned and never installed via opkg upgrade/feed.
 # A fresh router is required to prevent overwriting an existing Panel install.
@@ -82,12 +136,13 @@ ok "installing verified local IPKs (no opkg update)"
 hashmatch "$CORE_BIN" "$CORE_HASH" || fail "installed Core ELF differs from pin"
 hashmatch "$PANEL_BIN" "$PANEL_HASH" || fail "installed Panel ELF differs from pin"
 
-HASH=$(printf '%s\n' "$PW" | "$PANEL_BIN" hash-password)
-[ -n "$HASH" ] || fail "bcrypt password generation failed"
 mkdir -p "$R" "$R/ctl" /opt/var/log /opt/var/run
 chmod 700 "$R" "$R/ctl"
 cp "$D/telemt-mipsel-service.sh" "$SERVICE"
 chmod 700 "$SERVICE"
+if [ -z "$REUSE_CONFIG" ]; then
+  HASH=$(printf '%s\n' "$PW" | "$PANEL_BIN" hash-password)
+  [ -n "$HASH" ] || fail "bcrypt password generation failed"
 cat > "$R/core.toml" <<TOML
 [general]
 use_middle_proxy = false
@@ -168,10 +223,13 @@ printf 'tg://proxy?server=%s&port=%s&secret=dd%s\n' \
 printf '%s\n' "$PW" > "$R/private-panel-password.txt"
 chmod 600 "$R/core.toml" "$R/panel.toml" \
   "$R/private-telegram-link.txt" "$R/private-panel-password.txt"
+else
+  ok "REUSING_CONFIG: existing core.toml/panel.toml, secrets and Telegram link preserved; nothing regenerated"
+fi
 mkdir -p /opt/var/lib/telemt-mipsel-panel
 chmod 700 /opt/var/lib/telemt-mipsel-panel
 
-ok "config created; starting both services"
+ok "config ready; starting both services"
 "$SERVICE" start || fail "start failed; files retained for diagnosis; boot not enabled"
 ok "STATUS_BEGIN"
 "$SERVICE" status
