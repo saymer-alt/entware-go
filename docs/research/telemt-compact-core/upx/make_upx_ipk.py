@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from make_compact_ipk import tarball, unpack_frozen_ipk
 
 PACKAGE = "telemt-ipc-upx"
-VERSION = "3.5.17-1ipc2upx1"
+VERSION = "3.5.17-1ipc2upx2"
 SPARE_KIB = 7168  # 7MiB reserve for controlled experiment
 OVERHEAD_KIB = 512
 

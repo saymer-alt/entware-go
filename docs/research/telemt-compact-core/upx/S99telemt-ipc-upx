@@ -38,8 +38,12 @@ start() {
     die "TCP 13443 already occupied (stop old RAM Core first)"
   fi
   # KAS can still be bringing up Mihomo after Entware boot begins.
+  # Mihomo can expose a dual-stack wildcard as :::7890, with IPv4-mapped
+  # loopback clients on KN-1913. netstat then has no separate IPv4 LISTEN.
+  # This is only socket readiness; actual SOCKS5 egress must be tested separately.
   n=0
-  while ! netstat -lnt 2>/dev/null | "$BB" grep -Eq '127\.0\.0\.1:7890[[:space:]]|0\.0\.0\.0:7890[[:space:]]'; do
+  while ! netstat -lnt 2>/dev/null | "$BB" grep -Eq \
+    '(^|[[:space:]])(127\.0\.0\.1:7890|0\.0\.0\.0:7890|:::7890)[[:space:]]'; do
     [ "$n" -lt 60 ] || die "SOCKS5 127.0.0.1:7890 not listening after 60s"
     sleep 2
     n=$((n+2))

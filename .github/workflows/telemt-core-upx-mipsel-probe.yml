@@ -98,7 +98,8 @@ jobs:
           ROOT=docs/research/telemt-compact-core
           python3 -m py_compile "$ROOT/upx/make_upx_ipk.py"
           sh -n "$ROOT/upx/S99telemt-ipc-upx"
-          OUT=dist/telemt-ipc-upx_3.5.17-1ipc2upx1_mipsel-3.4.ipk
+          python3 "$ROOT/upx/test_socks5_listener.py"
+          OUT=dist/telemt-ipc-upx_3.5.17-1ipc2upx2_mipsel-3.4.ipk
           python3 "$ROOT/upx/make_upx_ipk.py" \
             --original-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
             --stripped-elf work/telemt-stripped \
@@ -127,7 +128,7 @@ jobs:
           Before trial:
             sh /opt/etc/init.d/S99telemt-ipc-compact-ram disable-boot
           Install package (after copying via WinSCP to /opt/tmp):
-            opkg install ./telemt-ipc-upx_3.5.17-1ipc2upx1_mipsel-3.4.ipk
+            opkg install ./telemt-ipc-upx_3.5.17-1ipc2upx2_mipsel-3.4.ipk
           Switch to new binary:
             sh /opt/etc/init.d/S99telemt-ipc-compact-ram stop
             sh /opt/etc/init.d/S99telemt-ipc-upx start
