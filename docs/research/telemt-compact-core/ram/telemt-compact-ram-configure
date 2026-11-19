@@ -5,7 +5,7 @@ umask 077
 R=/opt/etc/telemt-compact-ram
 BB=/opt/bin/busybox
 BIN=/opt/bin/telemt-ipc-compact-ram
-CLI=/opt/etc/init.d/S98telemt-ipc-compact-ram
+CLI=/opt/etc/init.d/S99telemt-ipc-compact-ram
 fail() { echo "TELEMT_COMPACT_SETUP_FAILED: $*" >&2; exit 1; }
 [ "$#" -eq 2 ] || fail "Usage: telemt-compact-ram-configure SOCKS5_IPV4:PORT TELEGRAM_REACHABLE_HOST_OR_IP"
 UP=$1
