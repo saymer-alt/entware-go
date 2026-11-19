@@ -129,6 +129,53 @@ class MihomoTests(unittest.TestCase):
         self.assertIn("needs.check-version.outputs.prune == 'true'", workflow)
         self.assertIn('--keep-old', workflow)
 
+    def test_workflow_revision_aware_plan_contract(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / '.github/workflows/build-mihomo.yml').read_text()
+        self.assertIn('--expected-release "$RELEASE"', workflow)
+        self.assertIn('PKG_RELEASE', workflow)
+        self.assertIn('inputs.publish != false', workflow)
+        # No-publish dispatch guard must only ever *skip* feed mutation; the
+        # build matrix itself must stay unconditional so validation dispatches
+        # still produce the full six-package artifact set.
+        build = workflow.split('  build:')[1].split('\n  publish-latest-release:')[0]
+        self.assertNotIn('inputs.publish', build)
+
+
+class ExpectedReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.api = API()
+        self.api.assets = [a for a in self.api.assets if not a['name'].startswith('mihomo_')]
+        for index, variant in enumerate(sorted(expected_variants('mihomo'))):
+            self.api.assets.append(asset(filename('1.19.32-2', variant), identity=20+index))
+
+    def test_complete_stale_release_is_not_a_candidate(self):
+        self.assertEqual(len(complete_candidate(self.api.release(), '1.19.32', 'mihomo', 2)), 6)
+        self.assertFalse(complete_candidate(self.api.release(), '1.19.32', 'mihomo', 3))
+
+    def test_matching_release_with_partial_newer_still_not_candidate(self):
+        self.api.assets.append(asset(filename('1.19.32-3', 'mipsel-3.4'), identity=90))
+        self.assertFalse(complete_candidate(self.api.release(), '1.19.32', 'mihomo', 3))
+
+    def test_matching_release_complete_and_cleanup_only_older_revisions(self):
+        for variant in expected_variants('mihomo'):
+            (self.root / filename('1.19.32-3', variant)).write_bytes(b'new-' + variant.encode())
+        self.assertFalse(complete_candidate(self.api.release(), '1.19.32', 'mihomo', 3))
+        publish(self.api, self.root, '1.19.32', 'mihomo', keep_old=True)
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(len(complete_candidate(self.api.release(), '1.19.32', 'mihomo', 3)), 6)
+        prune_complete(self.api, '1.19.32')
+        self.assertEqual([a['name'] for a in self.api.assets if a['name'].startswith('mihomo_')],
+                         sorted(filename('1.19.32-3', v) for v in expected_variants('mihomo')))
+
+    def test_invalid_expected_release_rejected(self):
+        for bad in (0, -1, '2', 2.0):
+            with self.assertRaises(PublicationError):
+                complete_candidate(self.api.release(), '1.19.32', 'mihomo', bad)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -188,9 +188,11 @@ def prune_verified(api, release_id, old, actual, desired, package):
         raise PublicationError('Final publication verification failed')
 
 
-def complete_candidate(release, version, package):
+def complete_candidate(release, version, package, expected_release=None):
     if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
         raise PublicationError('Invalid stable upstream version')
+    if expected_release is not None and (type(expected_release) is not int or expected_release < 1):
+        raise PublicationError('Invalid expected package release')
     target = tuple(map(int, version.split('.')))
     groups = {}
     for name, asset in scoped(release, package).items():
@@ -201,6 +203,10 @@ def complete_candidate(release, version, package):
             groups.setdefault(key, {})[name] = asset
     # Never prune a partially published newer package release in favour of an older one.
     if not groups:
+        return {}
+    # A complete set of a stale package revision does not satisfy a revision-aware
+    # plan: the Makefile PKG_RELEASE bumped without a new upstream tag must rebuild.
+    if expected_release is not None and max(groups)[3] != expected_release:
         return {}
     candidate = groups[max(groups)]
     variants = {package_key(name, package)[1] for name in candidate}
@@ -225,11 +231,13 @@ if __name__ == '__main__':
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--keep-old', action='store_true')
     parser.add_argument('--verify-only', action='store_true')
+    parser.add_argument('--expected-release', type=int, default=None,
+                        help='Plan against the exact PKG_RELEASE from the package Makefile')
     args = parser.parse_args()
     try:
         if args.plan:
             release = GitHub().release()
-            candidate = complete_candidate(release, args.version, args.package)
+            candidate = complete_candidate(release, args.version, args.package, args.expected_release)
             complete = bool(candidate)
             cleanup = complete and bool(scoped(release, args.package).keys() - candidate.keys())
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
