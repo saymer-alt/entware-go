@@ -1,0 +1,184 @@
+name: TeleMT MIPSel compact Core-only IPK (no release/feed)
+on:
+  push:
+    branches:
+      - research/telemt-compact-core-only-mipsel-20261119
+    paths:
+      - 'docs/research/telemt-compact-core/**'
+      - '.github/workflows/telemt-compact-core-mipsel.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  compact-core-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static safety and no unexpected binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-compact-core
+          python3 -m py_compile "$ROOT/make_compact_ipk.py"
+          sh -n "$ROOT/scripts/S98telemt-ipc-compact"
+          sh -n "$ROOT/scripts/telemt-compact-configure"
+          grep -q 'enable-boot' "$ROOT/scripts/S98telemt-ipc-compact"
+          grep -q 'classic = false' "$ROOT/scripts/telemt-compact-configure"
+          grep -q 'secure = true' "$ROOT/scripts/telemt-compact-configure"
+          grep -q 'enabled = false' "$ROOT/scripts/telemt-compact-configure"
+          test "$(git hash-object docs/research/telemt-control-ipc/local_control.rs)" = 950a60416868a6a1d54e17abbe4b4242367fcc2e
+          test "$(git hash-object docs/research/telemt-control-ipc/telemt-3.5.17-daemon-control.patch)" = 4d61949995b93184acac66c111b5d8c538c6bb68
+          echo 'STATIC_SOURCE_GATE_PASS'
+      - name: Fetch immutable accepted original IPC Core from GitHub Actions
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-ipc-lab-mipsel-3.4
+          run-id: 44139876820
+          github-token: ${{ github.token }}
+          path: frozen
+      - name: Cross-strip only, do not rebuild Rust or modify original artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends binutils-mipsel-linux-gnu file
+          mkdir -p work dist
+          SRC=frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk
+          printf '%s  %s\n' \
+            fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa \
+            "$SRC" | sha256sum -c -
+          SRC="$SRC" python3 - <<'PY'
+          import os, io, pathlib, tarfile
+          outer=pathlib.Path(os.environ['SRC']).read_bytes()
+          with tarfile.open(fileobj=io.BytesIO(outer),mode='r:gz') as ipk:
+              data=ipk.extractfile('./data.tar.gz').read()
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as tar:
+              binary=tar.extractfile('./opt/bin/telemt-ipc-lab').read()
+          assert binary[:4] == b'\x7fELF'
+          pathlib.Path('work/original').write_bytes(binary)
+          PY
+          cp work/original work/compact
+          mipsel-linux-gnu-strip --strip-unneeded work/compact
+          test "$(stat -c%s work/compact)" -lt "$(stat -c%s work/original)"
+          mipsel-linux-gnu-readelf -h work/compact | grep 'Machine:.*MIPS'
+          mipsel-linux-gnu-readelf -l work/compact | grep 'interpreter: /opt/lib/ld.so.1'
+          mipsel-linux-gnu-readelf -A work/original > work/original.abi
+          mipsel-linux-gnu-readelf -A work/compact > work/compact.abi
+          diff -u work/original.abi work/compact.abi
+          mipsel-linux-gnu-readelf -d work/original | grep '(NEEDED)' > work/original.needed
+          mipsel-linux-gnu-readelf -d work/compact | grep '(NEEDED)' > work/compact.needed
+          diff -u work/original.needed work/compact.needed
+          echo 'CROSS_STRIP_MIPS_ABI_AND_LIBRARIES_PASS'
+      - name: Build safe standalone Core-only IPK with init service
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-compact-core
+          OUT=dist/telemt-ipc-compact_3.5.17-1ipc2c1_mipsel-3.4.ipk
+          python3 "$ROOT/make_compact_ipk.py" \
+            --frozen-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
+            --stripped-elf work/compact \
+            --scripts "$ROOT/scripts" \
+            --output "$OUT" | tee dist/METRICS.txt
+          tar tzf "$OUT"
+          tar xOzf "$OUT" ./control.tar.gz | tar tzf -
+          tar xOzf "$OUT" ./data.tar.gz | tar tzf -
+          sha256sum "$OUT" > dist/SHA256SUMS
+          test "$(stat -c%s "$OUT")" -lt "$(stat -c%s frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk)"
+          cat > dist/README-KN1913.txt <<'TXT'
+          UNOFFICIAL MIPSEL KN-1913 CORE-ONLY (experimental) — NOT a beta.1 replacement
+          No Telemt Panel, no changes to KAS, Mihomo or existing /opt/bin/telemt.
+          Binary is CROSS-STRIPPED from accepted frozen IPC lab Core 3.5.17-1ipc2.
+          After a verified SHA-256 check, copy the IPK to /opt/tmp via WinSCP.
+          Your router's internal NAND had 23.2 MiB free before this build.
+          The package contains a PREINST check requiring uncompressed ELF bytes
+          PLUS 16 MiB of remaining flash: if it fails, do not bypass its safety
+          guard. Do not remove KAS or Mihomo to make space.
+          Installing does NOT generate default credentials or start the server.
+          
+          Verify and install (only AFTER confirming actual space):
+            cd /opt/tmp
+            sha256sum -c SHA256SUMS
+            opkg install ./telemt-ipc-compact_3.5.17-1ipc2c1_mipsel-3.4.ipk
+          To configure a real SOCKS5 and Telegram client:
+            /opt/bin/telemt-compact-configure 127.0.0.1:7890 89.222.249.70
+          Prior to use, validate SOCKS5 egress. KAS imported YAML was skipped
+          during the previous session; a listening port alone is NOT enough.
+          The configurator does not print the secret; read the link locally:
+            cat /opt/etc/telemt-compact/private-telegram-link.txt
+          Manual start, stop, status:
+            sh /opt/etc/init.d/S98telemt-ipc-compact start
+            sh /opt/etc/init.d/S98telemt-ipc-compact status
+          Autostart only after real Telegram client test:
+            sh /opt/etc/init.d/S98telemt-ipc-compact enable-boot
+          No WAN firewall opening is done. TCP/13443 requires separate safe
+          firewall policy; NEVER expose control socket or WAN administration.
+          STOP. This branch is RESEARCH and has not been hardware-tested.
+          TXT
+          echo 'COMPACT_CORE_ONLY_IPK_CANDIDATE_COMPLETE'
+      - name: Build experimental low-flash XZ-in-NAND, verified ELF-in-/tmp IPK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-compact-core
+          python3 -m py_compile "$ROOT/ram/make_ram_ipk.py"
+          sh -n "$ROOT/ram/telemt-compact-ram-loader.sh"
+          sh -n "$ROOT/ram/S99telemt-ipc-compact-ram"
+          sh -n "$ROOT/ram/telemt-compact-ram-configure"
+          xz -T1 -7e --check=crc32 -k work/compact
+          xz -t work/compact.xz
+          OUT=dist/telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
+          python3 "$ROOT/ram/make_ram_ipk.py" \
+            --frozen-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
+            --stripped-elf work/compact \
+            --xz-payload work/compact.xz \
+            --scripts "$ROOT/ram" \
+            --license "$ROOT/LICENSE.TELEMT.txt" \
+            --output "$OUT" | tee dist/RAM_METRICS.txt
+          tar tzf "$OUT"
+          tar xOzf "$OUT" ./control.tar.gz | tar tzf -
+          tar xOzf "$OUT" ./data.tar.gz | tar tzf -
+          sha256sum "$OUT" >> dist/SHA256SUMS
+          cat > dist/README-KN1913-RAM.txt <<'TXT'
+          EXPERIMENTAL COMPACT CORE-ONLY XZ NAND + /tmp RAM EXECUTABLE.
+          This is not a general-purpose or tested-for-production package.
+          No panel, no config or auto-start on installation.
+          IPK: telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
+          Original frozen IPC Core 3.5.17-1ipc2; cross-stripped, then XZ-packed.
+          Built-in preinst requires persistent free flash for XZ payload,
+          16MiB KAS/Mihomo reserve and 0.75MiB xz/liblzma dependency estimate.
+          Entware auto-installs xz dependency (if feed is reachable).
+          At runtime the 23MiB ELF is unpacked into kernel /tmp tmpfs;
+          before launch, script checks /tmp executable, free RAM, sha256.
+          This increases RAM use and has NOT been accepted on KN-1913 hardware.
+
+          VERIFY SHA256SUMS locally before uploading via WinSCP to /opt/tmp.
+          DO NOT INSTALL until physical /tmp noexec and RAM preflight are checked.
+          DO NOT copy BOTH packages to /opt/tmp simultaneously (KAS tmpfs=20MB).
+          Do not publish Telegram secrets in logs or messages.
+
+          After owner approves and checks are met:
+            opkg install ./telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
+            /opt/bin/telemt-compact-ram-configure 127.0.0.1:7890 89.222.249.70
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram start
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram status
+          Read private Telegram link LOCALLY:
+            cat /opt/etc/telemt-compact-ram/private-telegram-link.txt
+          Only after a real client test:
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram enable-boot
+          No firewall/port-forwarding is created by this package.
+          First prove 127.0.0.1:7890 SOCKS5 actually exits to Telegram.
+          TXT
+          echo 'EXPERIMENTAL_XZ_ON_FLASH_RAM_EXECUTABLE_IPK_COMPLETE'
+      - name: Upload downloadable experimental IPK and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: telemt-ipc-compact-core-only-kn1913-experimental
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error

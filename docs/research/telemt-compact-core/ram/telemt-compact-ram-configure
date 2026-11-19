@@ -1,0 +1,77 @@
+#!/bin/sh
+# One-time local secure Core-only setup. Never prints secrets.
+set -eu
+umask 077
+R=/opt/etc/telemt-compact-ram
+BB=/opt/bin/busybox
+BIN=/opt/bin/telemt-ipc-compact-ram
+CLI=/opt/etc/init.d/S99telemt-ipc-compact-ram
+fail() { echo "TELEMT_COMPACT_SETUP_FAILED: $*" >&2; exit 1; }
+[ "$#" -eq 2 ] || fail "Usage: telemt-compact-ram-configure SOCKS5_IPV4:PORT TELEGRAM_REACHABLE_HOST_OR_IP"
+UP=$1
+PUB=$2
+[ -x "$BIN" ] && [ -f "$CLI" ] || fail "install compact Core IPK first"
+[ ! -e "$R" ] && [ ! -L "$R" ] ||
+  fail "config directory exists, refusing to overwrite keys"
+printf '%s\n' "$UP" | "$BB" grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$' ||
+  fail "SOCKS5 address must be IPV4:PORT"
+case "$PUB" in
+  ''|*[!A-Za-z0-9.-]* ) fail "invalid Telegram hostname/IP";;
+esac
+[ "$PUB" != "." ] || fail "invalid public host"
+[ -d /opt/var/run ] && [ -d /opt/var/log ] ||
+  fail "Entware runtime tmpfs not mounted"
+if netstat -lnt 2>/dev/null | "$BB" grep -Eq ':13443[[:space:]]'; then
+  fail "TCP 13443 already bound"
+fi
+SECRET=$("$BB" head -c 16 /dev/urandom | "$BB" hexdump -v -e '1/1 "%02x"')
+[ "$(printf '%s' "$SECRET" | "$BB" wc -c)" -eq 32 ] ||
+  fail "failed to generate secure 128-bit secret"
+"$BB" mkdir -p "$R"
+"$BB" chmod 700 "$R"
+cat > "$R/core.toml" <<TOML
+[general]
+use_middle_proxy = false
+log_level = "normal"
+quota_state_path = "/opt/var/run/telemt-ipc-compact-ram-quotas.json"
+
+[general.modes]
+classic = false
+secure = true
+tls = false
+
+[server]
+port = 13443
+max_connections = 128
+
+[[server.listeners]]
+ip = "0.0.0.0"
+
+[server.api]
+enabled = false
+listen = "127.0.0.1:19091"
+whitelist = ["127.0.0.1/32"]
+
+[access.users]
+home = "$SECRET"
+
+[censorship]
+mask = false
+
+[[upstreams]]
+type = "socks5"
+address = "$UP"
+weight = 1
+enabled = true
+ipv4 = true
+ipv6 = false
+TOML
+printf 'tg://proxy?server=%s&port=13443&secret=dd%s\n' \
+  "$PUB" "$SECRET" > "$R/private-telegram-link.txt"
+"$BB" chmod 600 "$R/core.toml" "$R/private-telegram-link.txt"
+echo "TELEMT_COMPACT: PROFILE_CONFIGURED"
+echo "TELEMT_COMPACT: LINK_FILE=$R/private-telegram-link.txt (root only)"
+echo "TELEMT_COMPACT: DO NOT SEND USER SECRET TO CHAT"
+echo "TELEMT_COMPACT: RUN: sh $CLI start"
+echo "TELEMT_COMPACT: AFTER A REAL CLIENT TEST: sh $CLI enable-boot"
+echo "TELEMT_COMPACT: EXTERNAL TCP/13443 FIREWALL RULE NOT CREATED"

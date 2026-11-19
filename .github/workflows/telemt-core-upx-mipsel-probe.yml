@@ -1,0 +1,153 @@
+name: TeleMT KN1913 MIPSel UPX native ELF research probe
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/telemt-compact-core-only-mipsel-20261119
+    paths:
+      - '.github/workflows/telemt-core-upx-mipsel-probe.yml'
+      - 'docs/research/telemt-compact-core/upx/**'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  upx-native:
+    name: Test UPX on frozen TeleMT 3.5.17 IPC2 MIPSel ELF (NO RELEASE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download frozen Core and verify hash
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-ipc-lab-mipsel-3.4
+          run-id: 44139876820
+          github-token: ${{ github.token }}
+          path: frozen
+      - name: Install cross-binutils and official UPX 5.3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends binutils-mipsel-linux-gnu file
+          curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            https://github.com/upx/upx/releases/download/v5.3.0/upx-5.3.0-amd64_linux.tar.xz \
+            -o /tmp/upx.tar.xz
+          printf '%s  %s\n' \
+            79cea8a50b6fa102d10c7b79a419cd77dead3cc2d78661de2dc5e5815dc505c1 \
+            /tmp/upx.tar.xz | sha256sum -c -
+          tar -xJf /tmp/upx.tar.xz -C /tmp
+          /tmp/upx-5.3.0-amd64_linux/upx --version
+      - name: Extract and strip verified TeleMT ELF; one UPX compatibility test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work dist
+          PKG=frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk
+          printf '%s  %s\n' \
+            fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa \
+            "$PKG" | sha256sum -c -
+          PKG="$PKG" python3 - <<'PY'
+          import io,os,pathlib,tarfile
+          src=pathlib.Path(os.environ['PKG']).read_bytes()
+          with tarfile.open(fileobj=io.BytesIO(src),mode="r:gz") as t:
+            data=t.extractfile("./data.tar.gz").read()
+          with tarfile.open(fileobj=io.BytesIO(data),mode="r:gz") as t:
+            elf=t.extractfile("./opt/bin/telemt-ipc-lab").read()
+          assert elf[:4] == b"\x7fELF"
+          pathlib.Path("work/telemt-original").write_bytes(elf)
+          PY
+          cp work/telemt-original work/telemt-stripped
+          chmod 0755 work/telemt-stripped
+          mipsel-linux-gnu-strip --strip-unneeded work/telemt-stripped
+          mipsel-linux-gnu-readelf -h work/telemt-stripped > dist/elf-header.txt
+          mipsel-linux-gnu-readelf -l work/telemt-stripped > dist/elf-program-headers.txt
+          mipsel-linux-gnu-readelf -d work/telemt-stripped > dist/elf-dynamic.txt
+          file work/telemt-stripped | tee dist/elf-type.txt
+          echo "STRIPPED_ELF_BYTES=$(stat -c%s work/telemt-stripped)" | tee -a dist/METRICS.txt
+          UPX=/tmp/upx-5.3.0-amd64_linux/upx
+          set +e
+          "$UPX" -9 -o work/telemt-upx work/telemt-stripped >dist/upx-pack.txt 2>&1
+          rc=$?
+          set -e
+          cat dist/upx-pack.txt
+          echo "UPX_PACK_EXIT=$rc" | tee -a dist/METRICS.txt
+          if [ "$rc" -eq 0 ]; then
+            echo "UPX_PACKED_ELF_BYTES=$(stat -c%s work/telemt-upx)" | tee -a dist/METRICS.txt
+            "$UPX" -t work/telemt-upx 2>&1 | tee dist/upx-test.txt
+            "$UPX" -d -o work/telemt-unpacked work/telemt-upx 2>&1 | tee dist/upx-unpack.txt
+            cmp work/telemt-stripped work/telemt-unpacked
+            echo "UPX_ROUNDTRIP_IDENTICAL_PASS" | tee -a dist/METRICS.txt
+            mipsel-linux-gnu-readelf -h work/telemt-upx > dist/upx-elf-header.txt
+            file work/telemt-upx | tee dist/upx-file-type.txt
+            sha256sum work/telemt-stripped work/telemt-upx >> dist/METRICS.txt
+          else
+            echo "UPX_UNSUPPORTED_THIS_ELF_FAIL_CLOSED" | tee -a dist/METRICS.txt
+          fi
+          echo "No router files changed; no new executable approved for deployment" >> dist/METRICS.txt
+      - name: Build guarded native-flash Core-only IPK if UPX pack worked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s work/telemt-upx ] || [ ! -s work/telemt-unpacked ]; then
+            echo 'UPX_PACK_FAILED: no IPK generated' >> dist/METRICS.txt
+            exit 0
+          fi
+          ROOT=docs/research/telemt-compact-core
+          python3 -m py_compile "$ROOT/upx/make_upx_ipk.py"
+          sh -n "$ROOT/upx/S99telemt-ipc-upx"
+          python3 "$ROOT/upx/test_socks5_listener.py"
+          OUT=dist/telemt-ipc-upx_3.5.17-1ipc2upx2_mipsel-3.4.ipk
+          python3 "$ROOT/upx/make_upx_ipk.py" \
+            --original-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
+            --stripped-elf work/telemt-stripped \
+            --upx-elf work/telemt-upx \
+            --unpacked-elf work/telemt-unpacked \
+            --init-script "$ROOT/upx/S99telemt-ipc-upx" \
+            --license "$ROOT/LICENSE.TELEMT.txt" \
+            --output "$OUT" | tee -a dist/METRICS.txt
+          tar xOzf "$OUT" ./control.tar.gz | tar tzf -
+          tar xOzf "$OUT" ./data.tar.gz | tar tzf -
+          sha256sum "$OUT" | tee dist/SHA256SUMS
+          cat > dist/README-UPX-KN1913.txt <<'TXT'
+          EXPERIMENTAL NATIVELY EXECUTABLE UPX-PACKED TELEMT CORE 3.5.17-1ipc2
+          For Entware mipsel-3.4 on KN-1913 only; NOT a stable release.
+          Stored as /opt/bin/telemt-ipc-upx on UBIFS; NO /tmp 23MiB ELF copy.
+          Keeps existing /opt/etc/telemt-compact-ram/core.toml and user secret.
+          No Panel; no existing binary/config touched; S99telemt-ipc-upx
+          initially MODE 0644, so cannot auto-start before explicit enable.
+          Requires existing RAM2 profile from /opt/bin/telemt-compact-ram-configure.
+          Does not change KeeneticOS firewall, bypass, WAN or router settings.
+          Preinst requires roughly 7MiB UPX + 7MiB spare NAND (no UBIFS savings).
+          This is a controlled swap of two implementations, NOT two listeners.
+          
+          VERIFY SHA256SUMS and /opt free space first.
+          DO NOT STOP KAS/Mihomo/Mihomo watchdog.
+          Before trial:
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram disable-boot
+          Install package (after copying via WinSCP to /opt/tmp):
+            opkg install ./telemt-ipc-upx_3.5.17-1ipc2upx2_mipsel-3.4.ipk
+          Switch to new binary:
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram stop
+            sh /opt/etc/init.d/S99telemt-ipc-upx start
+            sh /opt/etc/init.d/S99telemt-ipc-upx status
+          Verify :13443 LISTEN and startup DCs via SOCKS5; test real Telegram.
+          Revert on failure:
+            sh /opt/etc/init.d/S99telemt-ipc-upx stop
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram start
+          Only when verified:
+            sh /opt/etc/init.d/S99telemt-ipc-upx enable-boot
+          The old RAM2 package is a fallback. Do not uninstall it until
+          checking boot cycle and a real Telegram client test.
+          CAUTION: UPX -t and unpack/compare PASS are not proof of compatible
+          MIPS runtime on physical kernel 4.9; possible segfault or memory OOM.
+          Keep ssh/LAN recovery access. Validate storage and memory carefully.
+          TXT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telemt-mipsel-upx-native-ipk-experimental
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
