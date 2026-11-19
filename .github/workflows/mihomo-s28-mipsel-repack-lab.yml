@@ -1,0 +1,87 @@
+name: Mihomo S28 MIPSel immutable UPX package candidate (no publish)
+on:
+  push:
+    branches:
+      - fix/mihomo-s28-upx-package-20261119
+    paths:
+      - 'mihomo/Makefile'
+      - 'scripts/research_repack_mihomo_s28.py'
+      - '.github/workflows/mihomo-s28-mipsel-repack-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  mipsel-s28-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static Mihomo package and init contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/research_repack_mihomo_s28.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          text=Path('mihomo/Makefile').read_text()
+          assert 'PKG_RELEASE:=3' in text
+          assert '$(INSTALL_BIN) ./files/S28mihomo $(1)/opt/etc/init.d' in text
+          assert '$(INSTALL_BIN) ./files/S99mihomo' not in text
+          assert '$(STAGING_DIR_HOST)/bin/upx -9 --lzma' in text
+          assert 'PKG_MIRROR_HASH:=skip' not in text
+          current=Path('mihomo/files/S28mihomo').read_bytes()
+          assert hashlib.sha256(current).hexdigest() == '06ba8f6abe78a3b109d2037c902d826085d5a4814cf4b4aca0d135b22a7b86d9'
+          assert Path('mihomo/files/S99mihomo').read_bytes()==current
+          print('MIHOMO_UPSTREAM_S28_KAS_SHA_AND_PREEXISTING_UPX_PASS')
+          PY
+      - name: Fetch exact existing mipsel-3.4 release IPK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          url=https://github.com/saymer-alt/entware-go/releases/download/latest/mihomo_1.19.34-2_mipsel-3.4.ipk
+          curl -fLsS --retry 2 --retry-delay 2 --connect-timeout 10 --max-time 90 "$url" -o out/old.ipk
+          printf '%s  %s\n' \
+            290c0802e60b12e38eb43f58656de3d8f0de317532a0bb67d2dda30b80fdadf6 \
+            out/old.ipk | sha256sum -c -
+      - name: Repack native S28 candidate without changing already-UPX Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          new=out/mihomo_1.19.34-3_mipsel-3.4.ipk
+          python3 scripts/research_repack_mihomo_s28.py out/old.ipk "$new" | tee out/ACCEPTANCE.txt
+          tar -tzf "$new" | tee out/outer-list.txt
+          tar -xOzf "$new" ./control.tar.gz | tar -tzf - | tee out/control-list.txt
+          tar -xOzf "$new" ./data.tar.gz | tar -tzf - | tee out/payload-list.txt
+          test "$(grep -c 'opt/etc/init.d/S28mihomo' out/payload-list.txt)" -eq 1
+          ! grep -q 'opt/etc/init.d/S99mihomo' out/payload-list.txt
+          sha256sum "$new" > out/SHA256SUMS
+          cat > out/KN1913_S28_TEST_README.txt <<'TXT'
+          MIHOMO MIPSEL 1.19.34-3 S28 LAB CANDIDATE — DO NOT USE AS PRODUCTION RELEASE.
+          Source is the exact already-UPX-packaged 1.19.34-2 mipsel-3.4 IPK.
+          SHA256 source pinned and verified. NO modification to executable bytes
+          or /opt/etc/mihomo/config.yaml; only package version and S99->S28 init rename.
+          KEEP THE OLD PACKAGE AND CONFIG BACKUP BEFORE TRYING AN UPGRADE.
+          This file is only a test artifact. No opkg installation on hardware
+          or boot test was performed as part of this workflow.
+
+          Important: existing opkg package ownership must remove S99 on upgrade.
+          If BOTH S28 and S99 are executable afterward, KAS correctly FAILS CLOSED.
+          NEVER just chmod, delete or alias scripts without inspecting ownership.
+          Do not reinstall KAS; KAS stable already supports S28/S99 resolution.
+          Current TeleMT Core depends on local SOCKS5 127.0.0.1:7890;
+          do not interrupt Mihomo on a remotely accessed router.
+          Do not publish this artifact to the shared latest feed.
+          TXT
+          rm out/old.ipk
+      - name: Upload isolated candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-1.19.34-3-mipsel-3.4-S28-LAB-ONLY
+          path: out/
+          retention-days: 7
+          if-no-files-found: error
