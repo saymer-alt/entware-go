@@ -6,6 +6,7 @@ on:
       - research/telemt-compact-core-only-mipsel-20261119
     paths:
       - '.github/workflows/telemt-core-upx-mipsel-probe.yml'
+      - 'docs/research/telemt-compact-core/upx/**'
 permissions:
   contents: read
   actions: read
