@@ -1,0 +1,94 @@
+#!/bin/sh
+# Unofficial TeleMT IPC 3.5.17 MIPSel compact Core-only service, no Panel.
+# "start" runs only when explicitly invoked; boot executes this script only
+# when the owner changes its mode to 0755 after successful client tests.
+set -eu
+R=/opt/etc/telemt-compact-ram
+BIN=/opt/bin/telemt-ipc-compact-ram
+RUN_EXE=/tmp/telemt-ipc-compact-ram/telemt-ipc-compact-ram
+CFG=$R/core.toml
+PID=/opt/var/run/telemt-ipc-compact-ram.pid
+DIR=/opt/var/run/telemt-ipc-compact-ram
+SOCK=$DIR/ctl.sock
+LOG=/opt/var/log/telemt-ipc-compact-ram.log
+BB=/opt/bin/busybox
+msg() { echo "TELEMT_COMPACT: $*"; }
+die() { msg "ERROR: $*" >&2; exit 1; }
+readpid() { [ -r "$PID" ] && "$BB" cat "$PID" || :; }
+validpid() { case "$1" in ''|*[!0-9]*) return 1;; *) [ "$1" -gt 1 ];; esac; }
+exe() { [ -e "/proc/$1/exe" ] && "$BB" readlink "/proc/$1/exe" 2>/dev/null || :; }
+live() {
+  _pid=$(readpid)
+  validpid "$_pid" && [ "$(exe "$_pid")" = "$RUN_EXE" ]
+}
+start() {
+  [ -x "$BIN" ] || die "binary not installed"
+  [ -f "$CFG" ] && [ ! -L "$CFG" ] ||
+    { msg "NOT_CONFIGURED: use /opt/bin/telemt-compact-ram-configure first"; return 0; }
+  [ ! -L "$DIR" ] && [ ! -L "$PID" ] || die "symlink in runtime state"
+  "$BB" mkdir -p "$DIR" /opt/var/log
+  "$BB" chmod 700 "$DIR"
+  if live; then
+    [ -S "$SOCK" ] || die "running Core has no IPC control socket"
+    msg CORE_READY; return 0
+  fi
+  [ ! -e "$PID" ] && [ ! -e "$SOCK" ] ||
+    die "unowned/stale runtime state, refusing unsafe cleanup (pid/socket)"
+  HOME=/opt TMPDIR=/opt/tmp "$BIN" start --log-file "$LOG" \
+    --pid-file "$PID" --control-socket "$SOCK" "$CFG" ||
+    die "Core start command failed"
+  count=0
+  while [ "$count" -lt 90 ]; do
+    if live && [ -S "$SOCK" ]; then msg CORE_READY; return 0; fi
+    sleep 1
+    count=$((count+1))
+  done
+  die "Core startup timeout; check $LOG"
+}
+stop() {
+  if ! live; then
+    [ ! -e "$SOCK" ] || die "unowned IPC socket, manual recovery required"
+    msg CORE_STOPPED; return 0
+  fi
+  [ -S "$SOCK" ] || die "missing Core-owned IPC socket"
+  previous=$(readpid)
+  HOME=/opt "$BIN" stop --control-socket "$SOCK" ||
+    die "IPC stop request failed"
+  count=0
+  while [ "$count" -lt 30 ]; do
+    if [ "$(exe "$previous")" != "$RUN_EXE" ] && [ ! -e "$SOCK" ]; then
+      msg CORE_STOPPED
+      return 0
+    fi
+    sleep 1
+    count=$((count+1))
+  done
+  die "IPC shutdown not confirmed; never SIGKILL by PID"
+}
+status() {
+  if live && [ -S "$SOCK" ]; then msg CORE_READY; else msg CORE_NOT_READY; fi
+  if [ -f "$CFG" ]; then msg PROFILE_CONFIGURED; else msg PROFILE_NOT_CONFIGURED; fi
+  if [ -x /opt/etc/init.d/S98telemt-ipc-compact-ram ]; then
+    msg AUTOSTART_ENABLED
+  else
+    msg AUTOSTART_DISABLED
+  fi
+}
+[ "$#" -eq 1 ] || die "Usage: $0 start|stop|restart|reload|status|enable-boot|disable-boot"
+case "$1" in
+  start) start;;
+  stop) stop;;
+  restart) stop; start;;
+  reload)
+    live && [ -S "$SOCK" ] || die "Core is not running"
+    HOME=/opt "$BIN" reload --control-socket "$SOCK";;
+  status) status;;
+  enable-boot)
+    [ -f "$CFG" ] && [ ! -L "$CFG" ] || die "configure first"
+    "$BB" chmod 755 /opt/etc/init.d/S98telemt-ipc-compact-ram
+    msg AUTOSTART_ENABLED;;
+  disable-boot)
+    "$BB" chmod 644 /opt/etc/init.d/S98telemt-ipc-compact-ram
+    msg AUTOSTART_DISABLED;;
+  *) die "unknown command";;
+esac
