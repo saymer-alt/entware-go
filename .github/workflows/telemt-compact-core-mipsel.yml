@@ -128,11 +128,11 @@ jobs:
           ROOT=docs/research/telemt-compact-core
           python3 -m py_compile "$ROOT/ram/make_ram_ipk.py"
           sh -n "$ROOT/ram/telemt-compact-ram-loader.sh"
-          sh -n "$ROOT/ram/S98telemt-ipc-compact-ram"
+          sh -n "$ROOT/ram/S99telemt-ipc-compact-ram"
           sh -n "$ROOT/ram/telemt-compact-ram-configure"
           xz -T1 -7e --check=crc32 -k work/compact
           xz -t work/compact.xz
-          OUT=dist/telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+          OUT=dist/telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
           python3 "$ROOT/ram/make_ram_ipk.py" \
             --frozen-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
             --stripped-elf work/compact \
@@ -148,7 +148,7 @@ jobs:
           EXPERIMENTAL COMPACT CORE-ONLY XZ NAND + /tmp RAM EXECUTABLE.
           This is not a general-purpose or tested-for-production package.
           No panel, no config or auto-start on installation.
-          IPK: telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+          IPK: telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
           Original frozen IPC Core 3.5.17-1ipc2; cross-stripped, then XZ-packed.
           Built-in preinst requires persistent free flash for XZ payload,
           16MiB KAS/Mihomo reserve and 0.75MiB xz/liblzma dependency estimate.
@@ -163,14 +163,14 @@ jobs:
           Do not publish Telegram secrets in logs or messages.
 
           After owner approves and checks are met:
-            opkg install ./telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+            opkg install ./telemt-ipc-compact-ram_3.5.17-1ipc2ram2_mipsel-3.4.ipk
             /opt/bin/telemt-compact-ram-configure 127.0.0.1:7890 89.222.249.70
-            sh /opt/etc/init.d/S98telemt-ipc-compact-ram start
-            sh /opt/etc/init.d/S98telemt-ipc-compact-ram status
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram start
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram status
           Read private Telegram link LOCALLY:
             cat /opt/etc/telemt-compact-ram/private-telegram-link.txt
           Only after a real client test:
-            sh /opt/etc/init.d/S98telemt-ipc-compact-ram enable-boot
+            sh /opt/etc/init.d/S99telemt-ipc-compact-ram enable-boot
           No firewall/port-forwarding is created by this package.
           First prove 127.0.0.1:7890 SOCKS5 actually exits to Telegram.
           TXT
