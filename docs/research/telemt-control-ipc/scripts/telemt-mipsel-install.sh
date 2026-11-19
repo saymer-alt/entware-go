@@ -225,6 +225,7 @@ chmod 600 "$R/core.toml" "$R/panel.toml" \
   "$R/private-telegram-link.txt" "$R/private-panel-password.txt"
 else
   ok "REUSING_CONFIG: existing core.toml/panel.toml, secrets and Telegram link preserved; nothing regenerated"
+  ok "ARGS_IGNORED_IN_REUSE: SOCKS5 endpoint, PUBLIC_HOST and PANEL_BIND were validated but NOT applied; edit $R/core.toml and $R/panel.toml to change them"
 fi
 mkdir -p /opt/var/lib/telemt-mipsel-panel
 chmod 700 /opt/var/lib/telemt-mipsel-panel
