@@ -75,7 +75,14 @@ jobs:
 
   prune-complete:
     needs: check-version
-    if: needs.check-version.outputs.update == 'false' && needs.check-version.outputs.prune == 'true' && inputs.publish != false
+    # Publish gate: automatic push/schedule runs keep the default (publish),
+    # a manual dispatch opts out with publish=false. The previous guard
+    # compared the null input on push/schedule against boolean false; loose
+    # equality coerces both to 0, so publication was skipped forever there.
+    if: >-
+      needs.check-version.outputs.update == 'false' &&
+      needs.check-version.outputs.prune == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish == true)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -260,7 +267,11 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     needs: [check-version, preflight, build]
-    if: needs.check-version.outputs.update == 'true' && inputs.publish != false
+    # Same publish gate as prune-complete: push/schedule keep the default,
+    # workflow_dispatch publish=false builds artifacts only.
+    if: >-
+      needs.check-version.outputs.update == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish == true)
     permissions:
       contents: write
     env:

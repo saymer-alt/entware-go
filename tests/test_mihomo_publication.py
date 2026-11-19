@@ -134,12 +134,37 @@ class MihomoTests(unittest.TestCase):
         workflow = (root / '.github/workflows/build-mihomo.yml').read_text()
         self.assertIn('--expected-release "$RELEASE"', workflow)
         self.assertIn('PKG_RELEASE', workflow)
-        self.assertIn('inputs.publish != false', workflow)
         # No-publish dispatch guard must only ever *skip* feed mutation; the
         # build matrix itself must stay unconditional so validation dispatches
         # still produce the full six-package artifact set.
         build = workflow.split('  build:')[1].split('\n  publish-latest-release:')[0]
         self.assertNotIn('inputs.publish', build)
+
+    def test_workflow_publish_gate_by_event_type(self):
+        # GitHub loose equality coerces null and boolean false to 0, so a
+        # guard comparing the (undefined) push/schedule input against false
+        # would skip publication on every automatic run. The correct gate
+        # short-circuits on the event name first and only then demands an
+        # explicit publish=true from a manual dispatch.
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / '.github/workflows/build-mihomo.yml').read_text()
+        gate = "(github.event_name != 'workflow_dispatch' || inputs.publish == true)"
+        for name in ('prune-complete', 'publish-latest-release'):
+            job = workflow.split('  '+name+':')[1].split('\n  preflight:')[0]
+            self.assertIn(gate, job)
+        self.assertNotIn('inputs.publish != false', workflow)
+        # pull_request never appears as a trigger, so a PR can neither build
+        # nor publish; push/schedule must remain the automatic channels.
+        triggers = workflow.split('jobs:')[0]
+        self.assertNotIn('pull_request', triggers)
+        self.assertIn('workflow_dispatch:', triggers)
+        self.assertIn('push:', triggers)
+        self.assertIn('schedule:', triggers)
+        # The dispatch input defaults to true and is a real boolean, so
+        # `inputs.publish == true` compares payload booleans, not strings.
+        input_block = triggers.split('publish:')[1].split('push:')[0]
+        self.assertIn('type: boolean', input_block)
+        self.assertIn('default: true', input_block)
 
 
 class ExpectedReleaseTests(unittest.TestCase):
