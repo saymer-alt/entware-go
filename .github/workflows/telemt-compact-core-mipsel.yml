@@ -121,10 +121,64 @@ jobs:
           STOP. This branch is RESEARCH and has not been hardware-tested.
           TXT
           echo 'COMPACT_CORE_ONLY_IPK_CANDIDATE_COMPLETE'
+      - name: Build experimental low-flash XZ-in-NAND, verified ELF-in-/tmp IPK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-compact-core
+          python3 -m py_compile "$ROOT/ram/make_ram_ipk.py"
+          sh -n "$ROOT/ram/telemt-compact-ram-loader.sh"
+          sh -n "$ROOT/ram/S98telemt-ipc-compact-ram"
+          sh -n "$ROOT/ram/telemt-compact-ram-configure"
+          xz -T1 -7e --check=crc32 -k work/compact
+          xz -t work/compact.xz
+          OUT=dist/telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+          python3 "$ROOT/ram/make_ram_ipk.py" \
+            --frozen-ipk frozen/telemt-ipc-lab_3.5.17-1ipc2_mipsel-3.4.ipk \
+            --stripped-elf work/compact \
+            --xz-payload work/compact.xz \
+            --scripts "$ROOT/ram" \
+            --license "$ROOT/LICENSE.TELEMT.txt" \
+            --output "$OUT" | tee dist/RAM_METRICS.txt
+          tar tzf "$OUT"
+          tar xOzf "$OUT" ./control.tar.gz | tar tzf -
+          tar xOzf "$OUT" ./data.tar.gz | tar tzf -
+          sha256sum "$OUT" >> dist/SHA256SUMS
+          cat > dist/README-KN1913-RAM.txt <<'TXT'
+          EXPERIMENTAL COMPACT CORE-ONLY XZ NAND + /tmp RAM EXECUTABLE.
+          This is not a general-purpose or tested-for-production package.
+          No panel, no config or auto-start on installation.
+          IPK: telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+          Original frozen IPC Core 3.5.17-1ipc2; cross-stripped, then XZ-packed.
+          Built-in preinst requires persistent free flash for XZ payload,
+          16MiB KAS/Mihomo reserve and 0.75MiB xz/liblzma dependency estimate.
+          Entware auto-installs xz dependency (if feed is reachable).
+          At runtime the 23MiB ELF is unpacked into kernel /tmp tmpfs;
+          before launch, script checks /tmp executable, free RAM, sha256.
+          This increases RAM use and has NOT been accepted on KN-1913 hardware.
+
+          VERIFY SHA256SUMS locally before uploading via WinSCP to /opt/tmp.
+          DO NOT INSTALL until physical /tmp noexec and RAM preflight are checked.
+          DO NOT copy BOTH packages to /opt/tmp simultaneously (KAS tmpfs=20MB).
+          Do not publish Telegram secrets in logs or messages.
+
+          After owner approves and checks are met:
+            opkg install ./telemt-ipc-compact-ram_3.5.17-1ipc2ram1_mipsel-3.4.ipk
+            /opt/bin/telemt-compact-ram-configure 127.0.0.1:7890 89.222.249.70
+            sh /opt/etc/init.d/S98telemt-ipc-compact-ram start
+            sh /opt/etc/init.d/S98telemt-ipc-compact-ram status
+          Read private Telegram link LOCALLY:
+            cat /opt/etc/telemt-compact-ram/private-telegram-link.txt
+          Only after a real client test:
+            sh /opt/etc/init.d/S98telemt-ipc-compact-ram enable-boot
+          No firewall/port-forwarding is created by this package.
+          First prove 127.0.0.1:7890 SOCKS5 actually exits to Telegram.
+          TXT
+          echo 'EXPERIMENTAL_XZ_ON_FLASH_RAM_EXECUTABLE_IPK_COMPLETE'
       - name: Upload downloadable experimental IPK and checksum
         uses: actions/upload-artifact@v4
         with:
-          name: telemt-ipc-compact-mipsel-kn1913-experimental
+          name: telemt-ipc-compact-core-only-kn1913-experimental
           path: dist/
           retention-days: 7
           if-no-files-found: error
