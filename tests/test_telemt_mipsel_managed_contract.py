@@ -70,5 +70,42 @@ class ReuseConfigContractTests(unittest.TestCase):
         self.assertIn("ARGS_IGNORED_IN_REUSE", self.src)
 
 
+class UpdateWithErrorContractTests(unittest.TestCase):
+    """A failed or interrupted update must never leave a silently
+    overwritable state: every preflight runs before the first mutation,
+    a partially installed retry aborts instead of overwriting, and no
+    config or secrets are written before both packages are verified."""
+
+    def setUp(self):
+        self.src = INSTALL.read_text(encoding="utf-8")
+
+    def test_preflight_completes_before_first_mutation(self):
+        first_install = self.src.index('opkg install "$IPK1"')
+        for needle in ('hashmatch "$IPK1"', 'hashmatch "$IPK2"',
+                       "nand_check", "ram_check",
+                       'available "$PROXY_PORT"', 'available "$PANEL_PORT"',
+                       "available 19091"):
+            pos = self.src.index(needle)
+            self.assertLess(pos, first_install,
+                            f"must precede the first opkg install: {needle}")
+
+    def test_partially_installed_state_refuses_silent_overwrite(self):
+        # After a mid-install failure (e.g. Core installed, Panel failed) the
+        # Core binary exists, so a retry must hit the explicit abort instead
+        # of silently replacing the half-installed set.
+        abort = self.src.index("Core executable already exists; abort to avoid overwriting")
+        installs = self.src.index('opkg install "$IPK1"')
+        self.assertLess(abort, installs)
+        self.assertIn("Panel executable already exists; abort to avoid overwriting", self.src)
+        self.assertIn("init script name already exists", self.src)
+
+    def test_config_directory_only_created_after_both_packages_verified(self):
+        installs = self.src.index('opkg install "$IPK2"')
+        elf_verify = self.src.index("installed Core ELF differs from pin")
+        config = self.src.index('mkdir -p "$R"')
+        self.assertLess(installs, elf_verify)
+        self.assertLess(elf_verify, config)
+
+
 if __name__ == "__main__":
     unittest.main()
