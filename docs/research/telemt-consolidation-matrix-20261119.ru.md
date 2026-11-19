@@ -40,7 +40,7 @@
 ### 2.3 КАНИДАТЫ — переносить целенаправленно, не всё сразу
 
 - **PR #68 (новый, из `research/telemt-compact-core-only-mipsel-20261119`)** — единственное место с UPX/XZ-упаковкой TeleMT, `S98/S99` init-скриптами, NAND preinst-гвами и исправлением `:::7890` + 10 регрессионных кейсов. Нулевое отставание от tip. Требуется: QEMU-гостевая приёмка нового SHA (router-emulator MT7621, pinned-artifact паттерн), затем owner GO.
-- **PR #63 → #60**: PR #63 — строгий superset PR #60 (+publish-beta1 workflow, лицензии, release notes). Мержить #63 после тривиального merge с `5e3940c`; #60 закрывать как включённый (или merge #60 и обновлять #63 — но двойная работа не нужна).
+- **PR #63 → #60 → #70** (уточнено merge-base сверкой 20.11.2026): head `#60` (`research/telemt-mipsel-managed-service-20261118`) **целиком содержится** в head `#70` (`research/telemt-mipsel-managed-preflight-20261119`) — merge-base --is-ancestor подтверждён; head `#60` при этом НЕ предок `#63` (ветки разошлись, прежняя формулировка «#63 — строгий superset #60» относилась к более раннему состоянию #60). Порядок: merge `#63` (trivial merge с текущим tip main) → merge `#70` (привносит всё содержимое #60) → закрыть `#60` как включённый со ссылкой на merge-commit `#70`.
 - **PR #33** — единственный generic ARM64 updater/installer; не пересекается с MIPSel-каналом по файлам. Требует rebase (74 коммита позади); низкий приоритет относительно MIPSel.
 - **PR #66** (handoff docs) — готов к merge после OWNER GO, либо включить в docs-PR консолидации.
 
@@ -68,7 +68,7 @@
 
 1. **Mihomo S28 — ВЫПОЛНЕНО 19.11.2026**: PR #65 + #67 merged (5e21262) с фиксом гейта публикации → owner GO → автосборка run 44587763950 опубликовала `-3` в `latest` (keep-old, полная матрица, чужие пакеты целы); `-2` вычищен и сохранён в архивном релизе mihomo-1.19.34-2; план после публикации `update=false`. QEMU-приёмка отдельно BLOCKED (router-emulator PR #112) и не была условием публикации.
 2. **TeleMT UPX2**: PR #68 → QEMU-приёмка UPX2 SHA (не начата) → beta-канал (не `latest`).
-3. **beta.1 → beta.2**: PR #63 (merge с tip) — после решения по UPX1→UPX2 upgrade-пути (NAND-план, Issue #64).
+3. **beta.1 → beta.2**: PR #63 (merge с tip) — после решения по UPX1→UPX2 upgrade-пути (NAND-план, Issue #64). Подготовка beta.2 (profiles, vehicle-паттерн, offline-регрессии, honest gaps): `docs/research/telemt-beta2-prep-20261120.ru.md` в этом PR.
 4. **Managed kit**: синхронизировать `:::7890`-регрессию в installer-профиль, затем приёмка.
 5. **Закрыть superseded**: #40/#41/#42/#43/#46/#47 закрыты 19.11.2026 (каждый — с комментарием, куда перенесена работа и чем подтверждено: #43 — blob патча 5773ddd2 byte-identical; #46⊂#47⊂#48 — git merge-base). #60 — после мержа #63 (требует GO на merge TeleMT).
 6. **ARM64**: ничего не менять; PR #33 rebase отдельным шагом.
