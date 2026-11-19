@@ -35,7 +35,7 @@ def main(a):
     assert service.startswith(b"#!/bin/sh")
     assert b"/opt/etc/telemt-compact-ram" in service
     assert b"S99telemt-ipc-upx" in service
-    assert b"S99telemt-ipc-compact-ram" not in service
+    assert b"S99telemt-ipc-compact-ram" in service, "missing dual-boot guard"
     installed_bytes = len(packed) + len(service) + len(license_text)
     needed_kib = math.ceil(installed_bytes / 1024) + SPARE_KIB + OVERHEAD_KIB
     preinst = f"""#!/bin/sh
