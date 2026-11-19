@@ -8,10 +8,10 @@
 |---|---|---|---|---|
 | `latest` (shared feed) | `telemt_3.5.17-1` | aarch64-3.10 | стабильно работает; официальные ELF + license; без init/Panel | не трогать |
 | `latest` (shared feed) | `telemt-panel-lite_1.0.0.rc.4-1` | aarch64-3.10 | стабильно работает | не трогать |
-| `latest` (shared feed) | `mihomo_1.19.34-2` (6 вариантов) | все | исправный предыдущий комплект; ** ships S99** | сохранить до проверки `-3` |
-| готов к публикации | `mihomo_1.19.34-3` (6 вариантов, S28) | все | SDK-матрица PASS (run 44565066188), статика 6/6 PASS, KN-1913 физический upgrade PASS, QEMU-приёмка BLOCKED на секрет | нужен owner GO + (желательно) TELEMT_IPK_TOKEN прогон |
+| архив | `mihomo_1.19.34-2` (6 вариантов, S99) | все | исправный предыдущий комплект; вычищен из `latest` после публикации `-3` (keep-old flow); полный комплект + SHA256SUMS сохранены в релизе **mihomo-1.19.34-2** для отката | ссылка на тег, не на `/releases/latest` |
+| `latest` (shared feed) — **опубликовано 19.11.2026** | `mihomo_1.19.34-3` (6 вариантов, S28) | все | SDK-матрица PASS (run 44565066188 = байты релиза, run 44587763950 публикация), статика 6/6 PASS против опубликованных байтов, digest'ы совпали с лидом GitHub; KN-1913 физический upgrade PASS — для **LAB repackage**, байты которого отличаются от SDK-комплекта | QEMU-гостевая приёмка: BLOCKED (см. раздел 2.1); plan после публикации `update=false` |
 | prerelease `telemt-mipsel-v3.5.17-beta.1` | Core IPC + Panel Lite + kit | mipsel-3.4 | Core IPC/Panel — PR #58/#62 QEMU 66/66; beta.1 published 18.11 | KN-1913 NAND недостаточно; universal kit не для KN-1913 |
-| канал UPX (PR #68) | `telemt-ipc-upx_3.5.17-1ipc2upx2` | mipsel-3.4 | CI 10/10; хост-регрессии :::7890 8/8; **на железо не ставился** | beta-канал, не `latest` |
+| канал UPX (PR #68) | `telemt-ipc-upx_3.5.17-1ipc2upx2` | mipsel-3.4 | CI pass; хост-регрессии :::7890 — 10/10 кейсов (`test_socks5_listener.py`); **на железо не ставился** | beta-канал, не `latest` |
 | managed kit (PR #60 + PR #70) | installer + service | mipsel-3.4 | сценарная приёмка IPC/Panel есть; preflight NAND/RAM добавлены в #70, не испытаны | свежие установки / `--reuse-config` |
 | ARM64 updater (PR #33) | `telemt/entware-manager.sh` | aarch64-3.10 | не интегрирован, 74 коммита позади | отдельный шаг |
 
@@ -21,7 +21,7 @@
 
 ### 2.1 Mihomo (S28, все архитектуры)
 
-Обновление `-2` → `-3` (физически проверено на KN-1913, mipsel):
+Обновление `-2` → `-3` (механика upgrade физически проверена на KN-1913 с **LAB repackage** `-3` mipsel; опубликованный SDK `-3` имеет другие байты — аппаратный тест одного комплекта не переносится на другой):
 
 ```
 opkg update не требуется: ставим локальный проверенный IPK
@@ -33,7 +33,7 @@ opkg install /path/mihomo_1.19.34-3_<arch>.ipk
 /etc/init.d/S28mihomo restart
 ```
 
-Откат `-3` → `-2` (проверено в QEMU-сценарии, шаг ROLLBACK_V2_OK):
+Откат `-3` → `-2` (механика `--force-downgrade` стандартна; QEMU-сценарий с шагом ROLLBACK_V2_OK подготовлен, гостевой прогон **BLOCKED**: в эмулируемом MT7621 процесс mihomo завершается до открытия порта — классифицировано диагностикой run 44606829890, подозрение UPX-распаковка под TCG; физический откат на железе — NOT_TESTED):
 
 ```
 opkg install --force-downgrade /path/mihomo_1.19.34-2_<arch>.ipk
@@ -73,8 +73,9 @@ start-order policy, upstream ee4b689). UPX compression preserved.
 mihomo_1.19.34-3_{aarch64-3.10,armv7-3.2,mips-3.4,mipsel-3.4,x64-3.2}.ipk
 mihomo_nohf_1.19.34-3_armv7-3.2.ipk
 SHA256SUMS in the release notes / commit message. The previous complete
-1.19.34-2 set stays available until this set is verified, then pruned by the
-standard keep-old flow.
+1.19.34-2 set was pruned from `latest` by the standard keep-old flow after
+this set was verified; the full -2 kit + SHA256SUMS stay available in the
+`mihomo-1.19.34-2` archive release for --force-downgrade rollback.
 
 ## Install / Usage
 
@@ -84,9 +85,12 @@ as config.yaml-opkg). Rollback: opkg install --force-downgrade <1.19.34-2 ipk>.
 
 ## Verification / Compatibility
 
-Full SDK matrix PASS (run 44565066188). Static acceptance 6/6: S28 present,
-no S99, ELF arch/endianness per variant, UPX marker, byte-identical init.
-Physical MIPSel upgrade -2 -> -3 verified on KN-1913 (PR #66 docs).
+Full SDK matrix PASS (run 44565066188; published bytes are byte-identical
+to that validation set). Static acceptance 6/6 against the published
+assets: S28 present, no S99, ELF arch/endianness per variant, UPX marker,
+byte-identical init. Physical MIPSel upgrade -2 -> -3 verified on KN-1913
+with the LAB repackage (PR #66 docs); QEMU guest acceptance BLOCKED —
+emulated startup exits before bind (router-emulator PR #112).
 ```
 
 Публикация — только штатным `build-mihomo.yml` после merge PR #67 (revision-aware plan сам увидит `update=true`); набор/verify/prune — существующими механизмами `publish_ipks.py`.
