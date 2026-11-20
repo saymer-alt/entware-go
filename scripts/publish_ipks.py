@@ -89,13 +89,13 @@ def starter(asset):
 
 
 def assert_latest_pointer(api, release_id):
-    """Fail closed while GitHub's latest-release endpoint misses the rolling feed.
+    """Read-only diagnostic for GitHub's latest-release discovery pointer.
 
-    /releases/latest sorts non-draft non-prerelease releases by created_at, so a
-    newer rollback or archive release silently hijacks the pointer away from the
-    `latest` feed even though the feed itself stays intact (issue #71). Every
-    publication refuses to mutate anything until the pointer is repaired with
-    one-off make_latest metadata patches — no tags, assets or history change.
+    The rolling package feed is addressed explicitly by releases/tags/latest.
+    GitHub's /releases/latest is a separate discovery/UI pointer and can point
+    to a newer rollback archive (issue #71). This check deliberately does NOT
+    gate package uploads, pruning, or verify-only operations: an unrelated
+    metadata error must not interrupt a validated, tag-scoped publication.
     """
     latest = api.latest_pointer()
     resolved = latest.get('tag_name') if isinstance(latest, dict) else None
@@ -103,10 +103,8 @@ def assert_latest_pointer(api, release_id):
             or latest.get('draft') is not False or latest.get('prerelease') is not False
             or latest.get('id') != release_id):
         raise PublicationError(
-            "GitHub /releases/latest resolves to %r, not the rolling 'latest' feed; repair "
-            'the latest-release pointer before publishing: PATCH make_latest=false on the '
-            'hijacking release and make_latest=true on the latest release (issue #71, '
-            'release checklist)' % resolved)
+            "GitHub /releases/latest resolves to %r, not the rolling 'latest' feed; "
+            'diagnose and repair release metadata separately (issue #71)' % resolved)
 
 
 def scoped(release, package):
@@ -154,7 +152,6 @@ def publish(api, directory, version, package='beszel-agent', keep_old=False):
         raise PublicationError('Incomplete or inconsistent package set')
     candidate = next(iter(keys))
     baseline = api.release()
-    assert_latest_pointer(api, baseline['id'])
     old = scoped(baseline, package)
     if any(package_key(name, package)[0] > candidate for name in old):
         raise PublicationError('Refusing publication over a newer package set')
@@ -240,7 +237,6 @@ def complete_candidate(release, version, package, expected_release=None):
 
 def prune_complete(api, version, package='mihomo'):
     baseline = api.release()
-    assert_latest_pointer(api, baseline['id'])
     desired = complete_candidate(baseline, version, package)
     if not desired:
         raise PublicationError('No complete verified candidate for cleanup-only retry')
@@ -281,7 +277,6 @@ if __name__ == '__main__':
             release = GitHub().release()
             if not complete_candidate(release, args.version, args.package):
                 raise PublicationError('No complete verified candidate')
-            assert_latest_pointer(GitHub(), release['id'])
         elif args.prune_only:
             prune_complete(GitHub(), args.version, args.package)
         else:
