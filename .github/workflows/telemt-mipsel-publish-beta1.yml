@@ -1,0 +1,113 @@
+# Manual GO is a separate marker file pushed to the release branch.
+# This workflow never touches "latest", the production Entware feed or live routers.
+name: Publish unofficial TeleMT IPC MIPSel 3.5.17 beta.1 prerelease
+on:
+  push:
+    branches:
+      - release/telemt-mipsel-3.5.17-beta.1
+    paths:
+      - 'release/telemt-mipsel-beta.1/GO-BETA1.flag'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: telemt-mipsel-v3.5.17-beta.1-prerelease
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    if: github.repository == 'saymer-alt/entware-go' && github.ref == 'refs/heads/release/telemt-mipsel-3.5.17-beta.1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact reviewed source, license, and installer pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-control-ipc
+          TARGET=release/telemt-mipsel-beta.1
+          test "$(git hash-object "$ROOT/local_control.rs")" = 950a60416868a6a1d54e17abbe4b4242367fcc2e
+          test "$(git hash-object "$ROOT/telemt-3.5.17-daemon-control.patch")" = 4d61949995b93184acac66c111b5d8c538c6bb68
+          test "$(git hash-object docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch)" = 5773ddd2d212d3bea5e1936e038d87ce2bc66b11
+          test "$(git hash-object "$ROOT/scripts/telemt-mipsel-install.sh")" = c03b56ca8c19b4c9b7db58832159f54194cff2cd
+          test "$(git hash-object "$ROOT/scripts/telemt-mipsel-service.sh")" = dca7b0fedcf3ec920065ee0238bec9f7e5ebf607
+          sh -n "$ROOT/scripts/telemt-mipsel-install.sh"
+          sh -n "$ROOT/scripts/telemt-mipsel-service.sh"
+          test -s "$TARGET/LICENSE.TELEMT.txt"
+          test -s "$TARGET/LICENSE.PANEL.txt"
+          test -s "$TARGET/RELEASE_NOTES.md"
+          test "$(cat "$TARGET/GO-BETA1.flag")" = "PUBLISH_TELEMT_MIPSEL_BETA1_ONLY"
+          grep -q "Не официальный релиз" "$TARGET/RELEASE_NOTES.md"
+          grep -q 'LICENSE 3.3' "$TARGET/LICENSE.TELEMT.txt"
+          grep -q "MIT License" "$TARGET/LICENSE.PANEL.txt"
+          echo 'RELEASE_SOURCE_LICENSE_AND_SCRIPT_GATE_PASS'
+      - name: Download accepted immutable IPC Core IPK
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-ipc-lab-mipsel-3.4
+          run-id: 44139876820
+          github-token: ${{ github.token }}
+          path: frozen-core
+      - name: Download accepted immutable Panel Lite RC4 IPK
+        uses: actions/download-artifact@v4
+        with:
+          name: telemt-panel-lite-mipsel-experimental
+          run-id: 43624729371
+          github-token: ${{ github.token }}
+          path: frozen-panel
+      - name: Build independently checksummed unofficial beta.1 ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=docs/research/telemt-control-ipc
+          TARGET=release/telemt-mipsel-beta.1
+          mkdir -p out/telemt-mipsel-beta.1
+          BUNDLE=out/telemt-mipsel-beta.1
+          test "$(find frozen-core -type f -name 'telemt-ipc-lab_*.ipk' | wc -l)" = 1
+          test "$(find frozen-panel -type f -name 'telemt-panel-lite_*.ipk' | wc -l)" = 1
+          cp "$(find frozen-core -type f -name 'telemt-ipc-lab_*.ipk')" "$BUNDLE/"
+          cp "$(find frozen-panel -type f -name 'telemt-panel-lite_*.ipk')" "$BUNDLE/"
+          c=$(find "$BUNDLE" -maxdepth 1 -name 'telemt-ipc-lab_*.ipk' -printf '%f')
+          p=$(find "$BUNDLE" -maxdepth 1 -name 'telemt-panel-lite_*.ipk' -printf '%f')
+          (cd "$BUNDLE"; printf '%s  %s\n' \
+            fbf5ef4c2cad4a564483c29a584986623181574b798ec5b787cdc93c27e15daa "$c" | sha256sum -c -)
+          (cd "$BUNDLE"; printf '%s  %s\n' \
+            0236dfb076b14b129a6392de49f287838a11aebe7681e092084d4ce87e771e68 "$p" | sha256sum -c -)
+          cp "$ROOT/scripts/telemt-mipsel-install.sh" "$ROOT/scripts/telemt-mipsel-service.sh" "$BUNDLE/"
+          cp "$TARGET/RELEASE_NOTES.md" "$TARGET/LICENSE.TELEMT.txt" "$TARGET/LICENSE.PANEL.txt" "$BUNDLE/"
+          cp "$ROOT/local_control.rs" "$ROOT/telemt-3.5.17-daemon-control.patch" "$BUNDLE/"
+          cp docs/research/telemt-mipsle-ipk-3517/telemt-3.5.17-mipsle-atomic64-compat.patch "$BUNDLE/"
+          cd "$BUNDLE"
+          sha256sum -- *.ipk *.sh *.md *.txt *.rs *.patch > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cd ..
+          zip -q -X -r telemt-mipsel-v3.5.17-beta.1.zip telemt-mipsel-beta.1
+          sha256sum telemt-mipsel-v3.5.17-beta.1.zip > telemt-mipsel-v3.5.17-beta.1.zip.sha256
+          ls -lh telemt-mipsel-v3.5.17-beta.1.zip
+          echo 'BETA1_ZIP_FROZEN_PINS_PASS'
+      - name: Publish ONLY a separate GitHub prerelease tag, never latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=telemt-mipsel-v3.5.17-beta.1
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Beta tag already exists; refusing to overwrite any release or assets"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "out/telemt-mipsel-v3.5.17-beta.1.zip" \
+            "out/telemt-mipsel-v3.5.17-beta.1.zip.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Unofficial TeleMT IPC 3.5.17 + Panel Lite RC4 for Entware MIPSel — beta.1" \
+            --notes-file release/telemt-mipsel-beta.1/RELEASE_NOTES.md \
+            --prerelease --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease,isDraft,url,assets
+          echo 'UNOFFICIAL_BETA1_PRERELEASE_PUBLISHED'
