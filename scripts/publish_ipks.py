@@ -48,6 +48,9 @@ class GitHub:
         release['assets'] = assets
         return release
 
+    def latest_pointer(self):
+        return self.api('releases/latest')
+
     def upload(self, file):
         result = subprocess.run(['gh', 'release', 'upload', 'latest', str(file),
                                  '--repo', self.repo], capture_output=True, text=True)
@@ -83,6 +86,25 @@ def expected_variants(package):
 def starter(asset):
     return (asset.get('state') == 'starter' and type(asset.get('size')) is int
             and asset['size'] == 0 and asset.get('digest') is None)
+
+
+def assert_latest_pointer(api, release_id):
+    """Read-only diagnostic for GitHub's latest-release discovery pointer.
+
+    The rolling package feed is addressed explicitly by releases/tags/latest.
+    GitHub's /releases/latest is a separate discovery/UI pointer and can point
+    to a newer rollback archive (issue #71). This check deliberately does NOT
+    gate package uploads, pruning, or verify-only operations: an unrelated
+    metadata error must not interrupt a validated, tag-scoped publication.
+    """
+    latest = api.latest_pointer()
+    resolved = latest.get('tag_name') if isinstance(latest, dict) else None
+    if (resolved != 'latest' or not isinstance(latest, dict)
+            or latest.get('draft') is not False or latest.get('prerelease') is not False
+            or latest.get('id') != release_id):
+        raise PublicationError(
+            "GitHub /releases/latest resolves to %r, not the rolling 'latest' feed; "
+            'diagnose and repair release metadata separately (issue #71)' % resolved)
 
 
 def scoped(release, package):
@@ -224,8 +246,8 @@ def prune_complete(api, version, package='mihomo'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('directory')
-    parser.add_argument('version')
+    parser.add_argument('directory', nargs='?')
+    parser.add_argument('version', nargs='?')
     parser.add_argument('--package', choices=('beszel-agent', 'mihomo'), default='beszel-agent')
     parser.add_argument('--prune-only', action='store_true')
     parser.add_argument('--plan', action='store_true')
@@ -233,9 +255,17 @@ if __name__ == '__main__':
     parser.add_argument('--verify-only', action='store_true')
     parser.add_argument('--expected-release', type=int, default=None,
                         help='Plan against the exact PKG_RELEASE from the package Makefile')
+    parser.add_argument('--check-latest', action='store_true',
+                        help='read-only latest-release pointer check, no mutation')
     args = parser.parse_args()
+    if not args.check_latest and (not args.directory or not args.version):
+        parser.error('directory and version are required (or pass --check-latest)')
     try:
-        if args.plan:
+        if args.check_latest:
+            api = GitHub()
+            release = api.release()
+            assert_latest_pointer(api, release['id'])
+        elif args.plan:
             release = GitHub().release()
             candidate = complete_candidate(release, args.version, args.package, args.expected_release)
             complete = bool(candidate)
@@ -244,7 +274,8 @@ if __name__ == '__main__':
                 output.write('update=' + ('false' if complete else 'true') + '\n')
                 output.write('prune=' + ('true' if cleanup else 'false') + '\n')
         elif args.verify_only:
-            if not complete_candidate(GitHub().release(), args.version, args.package):
+            release = GitHub().release()
+            if not complete_candidate(release, args.version, args.package):
                 raise PublicationError('No complete verified candidate')
         elif args.prune_only:
             prune_complete(GitHub(), args.version, args.package)

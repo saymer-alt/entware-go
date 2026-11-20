@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from publish_ipks import PublicationError, publish
+from publish_ipks import PublicationError, assert_latest_pointer, publish, prune_complete
 
 
 def asset(name, data=b'old', identity=1):
@@ -29,6 +29,9 @@ class API:
         if self.reads == self.mutate_at:
             self.assets.append(asset('beszel-agent_0.19.0-1_mips-3.4.ipk', identity=99))
         return dict(id=42, tag_name='latest', draft=False, prerelease=False, assets=copy.deepcopy(self.assets))
+
+    def latest_pointer(self):
+        return dict(id=42, tag_name='latest', draft=False, prerelease=False)
 
     def asset(self, identity):
         return copy.deepcopy(next(a for a in self.assets if a['id'] == identity))
@@ -136,6 +139,76 @@ class PublicationTests(unittest.TestCase):
             self.run_publish()
         self.assertEqual(self.api.uploads + self.api.deleted, [])
 
+
+class LatestPointerTests(unittest.TestCase):
+    """Issue #71: latest-release discovery is separate from the tag-scoped
+    package feed. Diagnose pointer drift without interrupting safe publishing."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for arch in ('aarch64-3.10', 'mips-3.4', 'mipsel-3.4'):
+            (self.root / f'beszel-agent_0.18.8-1_{arch}.ipk').write_bytes(b'new-' + arch.encode())
+        self.api = API()
+
+    def hijack(self):
+        self.api.latest_pointer = lambda: dict(
+            id=451747987, tag_name='mihomo-1.19.34-2', draft=False, prerelease=False)
+
+    def test_hijacked_pointer_fails_diagnostic_without_mutation(self):
+        self.hijack()
+        before = copy.deepcopy(self.api.assets)
+        with self.assertRaises(PublicationError) as caught:
+            assert_latest_pointer(self.api, self.api.release()['id'])
+        self.assertIn('mihomo-1.19.34-2', str(caught.exception))
+        self.assertEqual(self.api.assets, before)
+        self.assertEqual(self.api.uploads + self.api.deleted, [])
+
+    def test_hijacked_pointer_does_not_block_tag_scoped_publication(self):
+        self.hijack()
+        publish(self.api, self.root, '0.18.8')
+        self.assertEqual(self.api.deleted, [1, 2, 3])
+        self.assertEqual(len(self.api.uploads), 3)
+        self.assertTrue(any(a['name'] == 'mihomo_1.19.32-2_mips-3.4.ipk'
+                            for a in self.api.assets))
+
+    def test_hijacked_pointer_does_not_block_verified_cleanup(self):
+        publish(self.api, self.root, '0.18.8', keep_old=True)
+        self.assertEqual(self.api.deleted, [])
+        self.hijack()
+        prune_complete(self.api, '0.18.8', package='beszel-agent')
+        self.assertEqual(self.api.deleted, [1, 2, 3])
+        self.assertEqual(len(self.api.uploads), 3)
+
+    def test_stale_pointer_release_id_rejected_by_diagnostic(self):
+        self.api.latest_pointer = lambda: dict(
+            id=999999, tag_name='latest', draft=False, prerelease=False)
+        with self.assertRaises(PublicationError):
+            assert_latest_pointer(self.api, self.api.release()['id'])
+
+    def test_draft_prerelease_and_invalid_pointer_responses_rejected(self):
+        for bad in (dict(id=42, tag_name='latest', draft=True, prerelease=False),
+                    dict(id=42, tag_name='latest', draft=False, prerelease=True),
+                    dict(id=42, tag_name='some-other-tag', draft=False, prerelease=False),
+                    'not-a-release-object'):
+            self.api.latest_pointer = lambda bad=bad: bad
+            with self.assertRaises(PublicationError):
+                assert_latest_pointer(self.api, self.api.release()['id'])
+
+    def test_pointer_api_failure_does_not_break_feed_but_diagnostic_fails(self):
+        def unavailable():
+            raise PublicationError('HTTP 503 from releases/latest')
+        self.api.latest_pointer = unavailable
+        with self.assertRaises(PublicationError):
+            assert_latest_pointer(self.api, self.api.release()['id'])
+        publish(self.api, self.root, '0.18.8')
+        self.assertEqual(len(self.api.uploads), 3)
+
+    def test_matching_pointer_accepts_diagnostic_and_publication(self):
+        assert_latest_pointer(self.api, self.api.release()['id'])
+        publish(self.api, self.root, '0.18.8')
+        self.assertEqual(self.api.deleted, [1, 2, 3])
 
 if __name__ == '__main__':
     unittest.main()
