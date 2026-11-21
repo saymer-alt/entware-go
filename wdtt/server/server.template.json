@@ -1,0 +1,7 @@
+{
+  "listen": "127.0.0.1:56000",
+  "wg_endpoint": "127.0.0.1:56001",
+  "server_public_key": "REPLACE_WITH_PUBLIC_KEY_OF_PREPROVISIONED_TEST_WG",
+  "dns": "10.66.66.1",
+  "database_file": "/absolute/private/server-db.json"
+}

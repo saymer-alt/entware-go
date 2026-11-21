@@ -1,0 +1,6 @@
+{
+  "dependency_notice_scope_review": false,
+  "server_authentication_review": false,
+  "real_turn_dtls_wireguard_pair": false,
+  "experimental_install_rollback_acceptance": false
+}

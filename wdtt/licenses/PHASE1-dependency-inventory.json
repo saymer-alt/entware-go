@@ -1,0 +1,459 @@
+{
+  "target": "linux/arm64 CGO0",
+  "scope": "Actually imported Go dependency modules, root license file inventory; not legal compatibility approval or native/subdirectory audit",
+  "modules": [
+    {
+      "module": "github.com/andybalholm/brotli",
+      "version": "v1.2.0",
+      "go_mod_sha256": "9836ed7059e6b6be9d42e666c866deea8646d5815216fcf6216966074744cb1f",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/armon/go-socks5",
+      "version": "v0.0.0-20160902184237-e75332964ef5",
+      "go_mod_sha256": "787f5f98ab21174f71164cab8eea65125e60aa72f5d7517e12e08e7b8eecccd2",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "831892cd31b9eef0311bb1de9014527ef5d3592eed7add1f9f829510d2065e62",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bdandy/go-errors",
+      "version": "v1.2.2",
+      "go_mod_sha256": "18a907f51e7d3c74e5e165d98620a1e23ac95a13b1592d13fd28a43e4b4c1272",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "71ada5129d06db993e203bfb0b5e050a303bcd781a9ee039b78e1b114d829d92",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bdandy/go-socks4",
+      "version": "v1.2.3",
+      "go_mod_sha256": "a93e3c6c31818dd6b16837f9a1965dc13ab937268720a4778e05ccfc92ef8139",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "6b71997d78ed23a071c23063b1b9a4c81438587059b5ff23b625ad2865e82b08",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bogdanfinn/fhttp",
+      "version": "v0.6.8",
+      "go_mod_sha256": "7a12e81c7bd457169d6023ef90568ff09bd059caedf2d361e50a2911e1e873c2",
+      "licenses": []
+    },
+    {
+      "module": "github.com/bogdanfinn/quic-go-utls",
+      "version": "v1.0.9-utls",
+      "go_mod_sha256": "7f50706bdde1d590dff8a206c97c6df5756b75ac366dd0d1e86af10729e1b520",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bogdanfinn/tls-client",
+      "version": "v1.14.0",
+      "go_mod_sha256": "1f3e2ab3b1c2d62cb4fae205e59525cfd4f78e3bc487f87206989e81efb23903",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "7dab9a4dd66987fbe576d53c1ee047c193725df6f4fac67de315a127417fd151",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bogdanfinn/utls",
+      "version": "v1.7.7-barnius",
+      "go_mod_sha256": "10dce7d09181106ffd5e6cb396acc8c65981d94c46ff7e2f43ec0db3b1096b21",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/bogdanfinn/websocket",
+      "version": "v1.5.5-barnius",
+      "go_mod_sha256": "c00d03402aba46a2c448cfd6b2aa6d0baa1d14dd4eb0d267a7cf48b994c85950",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "2be1b548b0387ca8948e1bb9434e709126904d15f622cc2d0d8e7f186e4d122d",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/cbeuw/connutil",
+      "version": "v1.0.1",
+      "go_mod_sha256": "2eb931f72086692b84591c2e42318096b6b8708228f6aa3e023ebd14d7ae0e2b",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "first_pass_text_markers": [
+            "Apache-2.0"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/google/btree",
+      "version": "v1.1.2",
+      "go_mod_sha256": "671a2227c5628cbb94ce027ab4232858c4f0dd0cbb98aaa83d7a265d7ec194d7",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "first_pass_text_markers": [
+            "Apache-2.0"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "go_mod_sha256": "73da47b6338b00a082fd451aa35a3273d3adc09b8e9bba98dab01091e402af6e",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/hoaxisr/awg-manager/awgmproto",
+      "version": "v0.1.1",
+      "go_mod_sha256": "64490b6d0aa44dcbe4a0775d98031180c2988a9a8e6bbcbb281f3fe8fac2cbe7",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "7edaedccfc5bb62f4764c2f673e234d1b05af30441410b0c59a3d8fd1a361ae3",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/klauspost/compress",
+      "version": "v1.18.2",
+      "go_mod_sha256": "a62dd291671bd2cbbe6e194312b641a7cdb3c62202fd1e48a16e6bf8c259c867",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "0d9e582ee4bff57bf1189c9e514e6da7ce277f9cd3bc2d488b22fbb39a6d87cf",
+          "first_pass_text_markers": [
+            "MIT",
+            "Apache-2.0",
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/dtls/v3",
+      "version": "v3.1.2",
+      "go_mod_sha256": "002a7671d9c05b7aae947a85efea4a2dd0f3ea816a20a1c952601710b9fce634",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "6483daf6c8aa2c8192528e60be098aa82dd18f6d7b96dc8246f4f7c3333fbf3f",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/logging",
+      "version": "v0.2.4",
+      "go_mod_sha256": "bfbce8d81a9eaf0b1ba6d3c4d0a58f7e7d6d1be06bec518db96f62f7feeb3d6f",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "87272dba8c4fcf57101a3195f4f53f7b010b6e153b9b0977bb1a3f91acddf691",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/randutil",
+      "version": "v0.1.0",
+      "go_mod_sha256": "2a2b0f630a629b3c9f4bfd02db3263a9b474bb8d48d19a52daeb98f5056dc321",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "badaf9bc72e71d5a70e7604c636b5b7adf79b9cafc188688438105d2b1e54722",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/stun/v3",
+      "version": "v3.1.1",
+      "go_mod_sha256": "91ce250dd49c793371dad8faeadc5fe04285f0d423251f2c30396a6d6f1669e6",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "87272dba8c4fcf57101a3195f4f53f7b010b6e153b9b0977bb1a3f91acddf691",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/transport/v4",
+      "version": "v4.0.1",
+      "go_mod_sha256": "7e8b6a9c16e30843f7f7962742c7b435b83b8d039cee052ac53651d2e5368a17",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "87272dba8c4fcf57101a3195f4f53f7b010b6e153b9b0977bb1a3f91acddf691",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/pion/turn/v5",
+      "version": "v5.0.2",
+      "go_mod_sha256": "1014edf5cc20f05e64379974ff7fac685d8576959adb35f0d399bda9e7357e05",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "6483daf6c8aa2c8192528e60be098aa82dd18f6d7b96dc8246f4f7c3333fbf3f",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/quic-go/qpack",
+      "version": "v0.6.0",
+      "go_mod_sha256": "7cdce4a0772f217deb859f405b7d58c84d909fcdab5e547e3e3d3aeb1148e641",
+      "licenses": [
+        {
+          "file": "LICENSE.md",
+          "sha256": "1b6a897efd39b20b3cdce8cd306160d115dbded39d855ceeffe21dc11e4d53df",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/tam7t/hpkp",
+      "version": "v0.0.0-20160821193359-2b70b4024ed5",
+      "go_mod_sha256": "3c46a0967ac872b7b3b4447172f12ec2e6f96a314c856431dd4b979ee32087e5",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "4bb26fa8c1309c72442dcd6f113951b493a725cb14b13a446a219dcdb219f21e",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "github.com/wlynxg/anet",
+      "version": "v0.0.5",
+      "go_mod_sha256": "369638e1ee3561f2601ea5552b1df7267cfe3bc68d41955f0d8176eac045ce8b",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "6b8970dbe36fe214fd02b438c06daee19897708e435d761ecd18adc9ef7e7a05",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/crypto",
+      "version": "v0.46.0",
+      "go_mod_sha256": "89305830a1cd4c1c42601b8d22b7f37b5166a092823fd195e9d41e79ac56d11e",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/net",
+      "version": "v0.48.0",
+      "go_mod_sha256": "6c73f852a18bfd280a960e8dae1fa9192c3d3c55f199371faedff56b666747d5",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/sys",
+      "version": "v0.45.0",
+      "go_mod_sha256": "57f4393ea18d5446a12363b35c23a616d843fa1669c7121a70a2bc3a9677d665",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/text",
+      "version": "v0.36.0",
+      "go_mod_sha256": "86c0688242bcb49da2542310eddd4294ad603455130410fe4870004cbb84fc2d",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.org/x/time",
+      "version": "v0.10.0",
+      "go_mod_sha256": "226a6cc982bae02ff1e168de8c3e45a2f3f986c69edbc1f416c58b6081ef262e",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+          "first_pass_text_markers": [
+            "BSD-style"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "golang.zx2c4.com/wireguard",
+      "version": "v0.0.0-20260522210424-ecfc5a8d5446",
+      "go_mod_sha256": "87e5574c17f1c8d3badd9195d933237c289c07b5813f4e60ceae36c7b270e288",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "91276db973f25602d1aa43491f59cbc84cb88e6f151e1d0cc82a755563ce0195",
+          "first_pass_text_markers": [
+            "MIT"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "gvisor.dev/gvisor",
+      "version": "v0.0.0-20250503011706-39ed1f5ac29c",
+      "go_mod_sha256": "f5b790d00657ce9be811d116ac1ea0cd99518e21da38d29c5659b1d4777d6e82",
+      "licenses": [
+        {
+          "file": "LICENSE",
+          "sha256": "5af94223052169198cfa2195455b7d87209d9aa0fff4705822f328b4b272facb",
+          "first_pass_text_markers": [
+            "MIT",
+            "Apache-2.0"
+          ],
+          "review": "Root text markers only; scope/version/vendor/exceptions require review"
+        }
+      ]
+    },
+    {
+      "module": "wg-turn-client",
+      "version": null,
+      "go_mod_sha256": "1b4fe8433da72474eab991bb10e15826442c21dca1708e288336b53d4ce30a90",
+      "licenses": []
+    }
+  ],
+  "module_count": 31,
+  "go_lzo_imports": [],
+  "packages_count": 408
+}

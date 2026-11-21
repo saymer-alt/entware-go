@@ -1,0 +1,9 @@
+--- FAIL: TestRejectWrongAUTH (0.01s)
+    server_auth_test.go:71: AUTH boundary forwarding=true want=false
+--- FAIL: TestRejectUnknownDevice (0.00s)
+    server_auth_test.go:71: AUTH boundary forwarding=true want=false
+--- FAIL: TestRejectNoAUTH (0.00s)
+    server_auth_test.go:71: AUTH boundary forwarding=true want=false
+FAIL
+FAIL	wg-turn-client	0.018s
+FAIL
